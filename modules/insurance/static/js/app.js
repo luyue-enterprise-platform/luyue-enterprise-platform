@@ -530,8 +530,25 @@ function handleFiles(files) {
         showToast('请选择图片或PDF文件（JPG/PNG/BMP/TIF/PDF）');
         return;
     }
-    selectedFiles = valid;
-    renderFileList();
+    // ===== 追加模式：避免重复（同名+同大小） =====
+    var added = 0;
+    for (var j = 0; j < valid.length; j++) {
+        var f = valid[j];
+        var dup = selectedFiles.some(function (sf) {
+            return sf.name === f.name && sf.size === f.size;
+        });
+        if (dup) continue;
+        selectedFiles.push(f);
+        added++;
+    }
+    if (added > 0) {
+        renderFileList();
+        if (added < valid.length) {
+            showToast('已添加 ' + added + ' 个文件，跳过 ' + (valid.length - added) + ' 个重复文件');
+        }
+    } else if (valid.length > 0) {
+        showToast('所选文件已全部存在（重复）');
+    }
 }
 
 function renderFileList() {
@@ -539,20 +556,43 @@ function renderFileList() {
     fileItems.innerHTML = '';
     for (var i = 0; i < selectedFiles.length; i++) {
         var li = document.createElement('li');
+        li.className = 'file-list-item';
         var sizeKB = (selectedFiles[i].size / 1024).toFixed(1);
         var path = selectedFiles[i]._relativePath || selectedFiles[i].webkitRelativePath || selectedFiles[i].name;
-        li.textContent = path + '  (' + sizeKB + ' KB)';
+        li.innerHTML = '<span class="file-path">' + esc(path) + '</span>' +
+            '<span class="file-size">(' + sizeKB + ' KB)</span>' +
+            '<button class="btn-remove" onclick="removeInsuranceFile(' + i + ')" title="删除此文件">✕</button>';
         fileItems.appendChild(li);
     }
     fileList.style.display = 'block';
 }
 
-// ===== 清空 =====
+// ===== 单条删除 =====
+function removeInsuranceFile(idx) {
+    selectedFiles.splice(idx, 1);
+    if (selectedFiles.length === 0) {
+        fileList.style.display = 'none';
+    } else {
+        renderFileList();
+    }
+    fileInput.value = '';
+    fileInputSingle.value = '';
+}
+
+// ===== 清空全部 =====
 btnClear.addEventListener('click', function() {
+    if (selectedFiles.length === 0) {
+        showToast('当前没有选中文件');
+        return;
+    }
+    if (!confirm('确定要清空所有已选文件吗？共 ' + selectedFiles.length + ' 个')) {
+        return;
+    }
     selectedFiles = [];
     fileList.style.display = 'none';
     fileInput.value = '';
     fileInputSingle.value = '';
+    showToast('已清空所有文件');
 });
 
 // ===== 上传并处理 =====

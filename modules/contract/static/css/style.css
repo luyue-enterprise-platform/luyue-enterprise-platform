@@ -266,6 +266,36 @@ body {
     white-space: nowrap;
 }
 
+.file-remove {
+    background: transparent;
+    border: 1px solid #E0E0E0;
+    color: #999;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.2s;
+    padding: 0;
+    margin-left: 2px;
+}
+
+.file-remove:hover {
+    background: #FF4D4F;
+    color: white;
+    border-color: #FF4D4F;
+}
+
+.file-list-header > div {
+    display: inline-flex;
+    gap: 8px;
+}
+
 /* ===== 按钮 ===== */
 .btn-primary {
     background: var(--primary);

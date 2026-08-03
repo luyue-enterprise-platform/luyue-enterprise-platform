@@ -242,7 +242,96 @@ def extract_periods(text):
             if p:
                 periods.append(p)
 
+    # 模式6：表格型医保证明（"缴费年度 | 缴费月份" 多列多行）
+    # 识别特征：文档同时包含"参保状态"、"经办机构"或"总缴费月数"，且有大量 (YYYY, MM) 数字对
+    if not periods:
+        periods.extend(_extract_period_from_table(text))
+
     return periods
+
+
+def _extract_period_from_table(text):
+    """
+    表格型医保证明识别（如"城镇职工基本医疗保险参保缴费证明"）：
+    表格列出每一年（3列）和对应缴费月份（3列），月份为0表示未缴费。
+    提取所有"YYYY年MM月"对（MM>0），最早月份作为起始，最晚月份作为截止。
+
+    Args:
+        text: OCR识别的全文文本
+
+    Returns:
+        list of (start_ym, end_ym) tuples，如果无法识别返回空列表
+    """
+    # 表格型识别的特征关键词（同时出现多个才视为表格型）
+    table_indicators = ['参保状态', '经办机构', '总缴费月数', '现缴费单位名称', '个人编号']
+    indicator_count = sum(1 for kw in table_indicators if kw in text)
+    if indicator_count < 2:
+        return []  # 特征不足，按非表格处理
+
+    # 按行扫描：每行通常格式为 "YYYY MM"（年份+月份），或 "YYYY 0"（未缴费）
+    lines = text.split('\n')
+    paid_months = []
+    # 也支持整行空格分隔的多列场景
+    full_text = text.replace('\n', ' ')
+
+    # 模式A：同行 "YYYY  MM"（空格分隔，月份非0）
+    # 允许多列配对（3对/行）
+    for line in lines:
+        # 找所有4位年份
+        year_matches = list(re.finditer(r'\b(\d{4})\b', line))
+        for i, ym in enumerate(year_matches):
+            year = int(ym.group(1))
+            if not (1990 <= year <= 2050):
+                continue
+            # 在当前年份右侧找1-2位月份数字
+            rest = line[ym.end():]
+            # 月份通常紧跟一个或多个空格
+            m = re.search(r'\s+(\d{1,2})\b', rest)
+            if m:
+                try:
+                    month = int(m.group(1))
+                except ValueError:
+                    continue
+                # 只收集月份为1-12且非0的有效缴费记录
+                if 1 <= month <= 12:
+                    paid_months.append((year, month))
+
+    # 模式B：跨行的 "YYYY\nMM" 形式（OCR经常把每列单独识别）
+    if not paid_months:
+        for i, line in enumerate(lines):
+            year_match = re.match(r'\s*(\d{4})\s*$', line)
+            if year_match:
+                year = int(year_match.group(1))
+                if not (1990 <= year <= 2050):
+                    continue
+                # 在后续若干行查找月份（最多找5行）
+                for j in range(1, min(6, len(lines) - i)):
+                    next_line = lines[i + j].strip()
+                    m = re.match(r'^(\d{1,2})\s*月?$', next_line)
+                    if m:
+                        try:
+                            month = int(m.group(1))
+                        except ValueError:
+                            continue
+                        if 1 <= month <= 12:
+                            paid_months.append((year, month))
+                        break
+
+    if not paid_months:
+        return []
+
+    # 去重
+    paid_months = list(set(paid_months))
+
+    # 取最早年份最早月份、最晚年份最晚月份
+    earliest = min(paid_months, key=lambda x: (x[0], x[1]))
+    latest = max(paid_months, key=lambda x: (x[0], x[1]))
+
+    if earliest == latest:
+        return []  # 只有1个月，不构成区间
+
+    start_ym = (f'{earliest[0]:04d}-{earliest[1]:02d}', f'{latest[0]:04d}-{latest[1]:02d}')
+    return [start_ym]
 
 
 def get_full_period(text):

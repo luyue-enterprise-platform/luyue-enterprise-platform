@@ -70,7 +70,10 @@
                 <div class="file-list" id="fileList" style="display:none;">
                     <div class="file-list-header">
                         <span id="fileCount"></span>
-                        <button class="btn-ghost btn-sm" onclick="clearFiles()">清空</button>
+                        <div>
+                            <button class="btn-ghost btn-sm" onclick="document.getElementById('fileInput').click();">+ 添加更多</button>
+                            <button class="btn-ghost btn-sm" onclick="clearFiles()">清空全部</button>
+                        </div>
                     </div>
                     <div class="file-items" id="fileItems"></div>
                 </div>

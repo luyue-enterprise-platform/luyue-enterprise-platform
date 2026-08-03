@@ -47,7 +47,7 @@ dropzone.addEventListener('dragleave', function (e) {
 dropzone.addEventListener('drop', function (e) {
     e.preventDefault();
     dropzone.classList.remove('dragover');
-    addFiles(e.dataTransfer.files);
+    // 真正的 drop 处理在底部"支持文件夹拖拽"区域统一处理
 });
 
 fileInput.addEventListener('change', function () {
@@ -109,6 +109,9 @@ function removeFile(idx) {
 }
 
 function clearFiles() {
+    if (selectedFiles.length > 0 && !confirm('确定要清空所有已选文件吗？共 ' + selectedFiles.length + ' 个')) {
+        return;
+    }
     selectedFiles = [];
     document.getElementById('fileList').style.display = 'none';
     hideActionAndResult();
@@ -385,24 +388,23 @@ dropzone.addEventListener('drop', function (e) {
     dropzone.classList.remove('dragover');
 
     var items = e.dataTransfer.items;
-    if (!items) {
+    if (!items || !items[0] || typeof items[0].webkitGetAsEntry !== 'function') {
         addFiles(e.dataTransfer.files);
         return;
     }
 
-    var pending = [];
+    var entries = [];
     for (var i = 0; i < items.length; i++) {
-        var entry = items[i].webkitGetAsEntry ? items[i].webkitGetAsEntry() : null;
-        if (entry) {
-            pending.push(entry);
-        }
+        var entry = items[i].webkitGetAsEntry();
+        if (entry) entries.push(entry);
     }
 
-    if (pending.length === 0) {
+    if (entries.length === 0) {
         addFiles(e.dataTransfer.files);
         return;
     }
 
+    // 递归读取文件夹
     var allFiles = [];
     function processEntry(entry) {
         if (entry.isFile) {
@@ -410,24 +412,33 @@ dropzone.addEventListener('drop', function (e) {
                 entry.file(function (file) {
                     allFiles.push(file);
                     resolve();
-                });
+                }, function () { resolve(); });
             });
         } else if (entry.isDirectory) {
             return new Promise(function (resolve) {
                 var dirReader = entry.createReader();
-                dirReader.readEntries(function (entries) {
-                    var promises = entries.map(function (e) { return processEntry(e); });
-                    Promise.all(promises).then(resolve);
-                });
+                function readBatch() {
+                    dirReader.readEntries(function (entries) {
+                        if (entries.length === 0) {
+                            resolve();
+                            return;
+                        }
+                        var promises = entries.map(function (e) { return processEntry(e); });
+                        Promise.all(promises).then(readBatch);
+                    }, function () { resolve(); });
+                }
+                readBatch();
             });
         }
         return Promise.resolve();
     }
 
-    Promise.all(pending.map(function (entry) { return processEntry(entry); }))
+    Promise.all(entries.map(function (entry) { return processEntry(entry); }))
         .then(function () {
             if (allFiles.length > 0) {
                 addFiles(allFiles);
+            } else {
+                addFiles(e.dataTransfer.files);
             }
         });
 });

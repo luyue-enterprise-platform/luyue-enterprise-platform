@@ -179,15 +179,34 @@ function addFiles(fileList) {
 function renderFileList() {
     document.getElementById('fileList').style.display = 'block';
     document.getElementById('fileCount').textContent = '共 ' + selectedFiles.length + ' 个文件';
-    document.getElementById('fileItems').innerHTML = selectedFiles.map(function (item) {
+    document.getElementById('fileItems').innerHTML = selectedFiles.map(function (item, idx) {
         var fileName = item.file ? item.file.name : (item.name || '未知文件');
         var folderBadge = item.folder
             ? '<span class="folder-badge" title="来自文件夹: ' + esc(item.folder) + '">📁 ' + esc(item.folder) + '</span>'
             : '';
         return '<span class="file-tag">' + folderBadge +
             '<span>' + getFileIcon(fileName) + '</span>' +
-            '<span class="file-name" title="' + esc(fileName) + '">' + esc(fileName) + '</span></span>';
+            '<span class="file-name" title="' + esc(fileName) + '">' + esc(fileName) + '</span>' +
+            '<span class="file-remove" onclick="removeContractFile(' + idx + ')" title="删除此文件">✕</span>' +
+            '</span>';
     }).join('');
+}
+
+// ===== 单条删除 =====
+function removeContractFile(idx) {
+    var item = selectedFiles[idx];
+    selectedFiles.splice(idx, 1);
+    // 如果删除的是通过文件夹选择的文件，并且当前selectedFiles中没有其他文件夹来源文件，则清空pickId
+    var hasFolderFile = selectedFiles.some(function (it) { return it.fromFolder; });
+    if (!hasFolderFile) {
+        pickId = null;
+    }
+    if (selectedFiles.length === 0) {
+        clearFiles();
+    } else {
+        renderFileList();
+        checkReady();
+    }
 }
 
 function getFileIcon(name) {
@@ -197,6 +216,9 @@ function getFileIcon(name) {
 }
 
 function clearFiles() {
+    if (selectedFiles.length > 0 && !confirm('确定要清空所有已选文件吗？共 ' + selectedFiles.length + ' 个')) {
+        return;
+    }
     selectedFiles = [];
     pickId = null;
     document.getElementById('fileList').style.display = 'none';
@@ -218,7 +240,9 @@ function pickFolder() {
     showToast('正在打开文件夹选择对话框...', 'info');
 
     fetch('/contract/api/pick_folder', { method: 'POST' })
-        .then(function (r) { return r.json(); })
+        .then(function (r) {
+            return r.json();
+        })
         .then(function (data) {
             if (data.cancelled) {
                 return;
@@ -228,20 +252,33 @@ function pickFolder() {
                 return;
             }
             if (data.ok) {
-                // 设置文件夹选择模式
+                // ===== 追加模式：将新选择的文件夹中的文件追加到 selectedFiles =====
+                // pickId 只保留最后一个（最近一次文件夹选择）
                 pickId = data.pick_id;
-                // 构建元数据条目（无 File 对象）
-                selectedFiles = data.files.map(function (f) {
-                    return {
+                // 去除之前通过"选择文件夹"添加的所有条目（pickId 只能指向一个文件夹）
+                selectedFiles = selectedFiles.filter(function (it) { return !it.fromFolder; });
+                // 添加新文件夹的文件
+                var added = 0;
+                for (var i = 0; i < data.files.length; i++) {
+                    var f = data.files[i];
+                    var dup = selectedFiles.some(function (sf) {
+                        var sfn = sf.file ? sf.file.name : sf.name;
+                        var sfs = sf.file ? sf.file.size : sf.size;
+                        return sfn === f.name && sfs === (f.size || 0);
+                    });
+                    if (dup) continue;
+                    selectedFiles.push({
                         file: null,
                         name: f.name,
                         folder: f.folder || null,
-                        size: f.size || 0
-                    };
-                });
+                        size: f.size || 0,
+                        fromFolder: true
+                    });
+                    added++;
+                }
                 renderFileList();
                 checkReady();
-                showToast('已选择文件夹: ' + data.folder_name + '，共 ' + data.count + ' 个文件', 'success');
+                showToast('已选择文件夹: ' + data.folder_name + '，新增 ' + added + ' 个文件（' + data.count + ' 个）', 'success');
             }
         })
         .catch(function (err) {
