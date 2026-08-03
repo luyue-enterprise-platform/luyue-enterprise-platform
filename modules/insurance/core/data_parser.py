@@ -421,7 +421,10 @@ def parse_ocr_result(text):
 
 def group_by_person(records):
     """
-    将多条OCR解析记录按人员分组（姓名+身份证号）
+    将多条OCR解析记录按人员分组
+
+    分组策略：优先按身份证号分组（花名册身份证号与社保图片身份证号一致），
+    身份证号为空时按姓名匹配到已有分组或新建分组。
 
     Args:
         records: list of parse_ocr_result()返回的dict
@@ -434,36 +437,74 @@ def group_by_person(records):
     """
     persons = {}
 
+    def _merge_insurance(person_key, ins_type, period):
+        """合并险种时间段到指定人员"""
+        if not period:
+            return
+        if ins_type in persons[person_key]['insurances']:
+            old_start, old_end = persons[person_key]['insurances'][ins_type]
+            def ym_key(ym):
+                y, m = map(int, ym.split('-'))
+                return y * 12 + m
+            new_start = min(old_start, period[0], key=ym_key)
+            new_end = max(old_end, period[1], key=ym_key)
+            persons[person_key]['insurances'][ins_type] = (new_start, new_end)
+        else:
+            persons[person_key]['insurances'][ins_type] = period
+
+    # 第一轮：按身份证号分组（仅有身份证号的记录）
+    # 同时建立 姓名 -> 分组key 的映射，供无身份证号的记录回退匹配
+    name_to_key = {}
+
     for rec in records:
         if not rec['name'] or not rec['insurance_type']:
             continue
 
-        # 用姓名作为分组key（身份证号可能OCR不准）
-        key = rec['name']
-        if key not in persons:
-            persons[key] = {
-                'name': rec['name'],
-                'idcard': rec['idcard'],
-                'insurances': {}
-            }
-        else:
-            # 更新身份证号（如果当前为空）
-            if not persons[key]['idcard'] and rec['idcard']:
-                persons[key]['idcard'] = rec['idcard']
+        idcard = rec['idcard']
+        name = rec['name']
 
-        ins_type = rec['insurance_type']
-        period = rec['period']
-        if period:
-            # 如果同一险种有多条记录，取并集（最早起始到最晚截止）
-            if ins_type in persons[key]['insurances']:
-                old_start, old_end = persons[key]['insurances'][ins_type]
-                def ym_key(ym):
-                    y, m = map(int, ym.split('-'))
-                    return y * 12 + m
-                new_start = min(old_start, period[0], key=ym_key)
-                new_end = max(old_end, period[1], key=ym_key)
-                persons[key]['insurances'][ins_type] = (new_start, new_end)
-            else:
-                persons[key]['insurances'][ins_type] = period
+        if idcard:
+            key = f'id:{idcard}'
+            if key not in persons:
+                persons[key] = {
+                    'name': name,
+                    'idcard': idcard,
+                    'insurances': {}
+                }
+            # 记录姓名到key的映射
+            if name and name not in name_to_key:
+                name_to_key[name] = key
+            _merge_insurance(key, rec['insurance_type'], rec['period'])
+
+    # 第二轮：无身份证号的记录，按姓名匹配到已有分组
+    for rec in records:
+        if not rec['name'] or not rec['insurance_type']:
+            continue
+
+        idcard = rec['idcard']
+        name = rec['name']
+
+        if idcard:
+            continue  # 已在第一轮处理
+
+        # 按姓名匹配到已有分组
+        if name and name in name_to_key:
+            key = name_to_key[name]
+            # 补填身份证号（如果之前为空）
+            if not persons[key]['idcard'] and idcard:
+                persons[key]['idcard'] = idcard
+            _merge_insurance(key, rec['insurance_type'], rec['period'])
+        else:
+            # 无法匹配到已有分组，新建（以姓名为key）
+            key = f'nm:{name}'
+            if key not in persons:
+                persons[key] = {
+                    'name': name,
+                    'idcard': '',
+                    'insurances': {}
+                }
+                if name and name not in name_to_key:
+                    name_to_key[name] = key
+            _merge_insurance(key, rec['insurance_type'], rec['period'])
 
     return list(persons.values())

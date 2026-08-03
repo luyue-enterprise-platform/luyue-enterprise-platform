@@ -353,3 +353,28 @@ def match_person_to_roster(name, roster):
             return item
 
     return None
+
+
+def match_person_to_roster_by_idcard(idcard, name, roster):
+    """
+    优先按身份证号匹配花名册，身份证号为空时回退到姓名匹配
+
+    Args:
+        idcard: OCR识别出的身份证号
+        name: OCR识别出的姓名
+        roster: 花名册列表
+
+    Returns:
+        dict or None: 匹配到的花名册条目，包含 identity_type 等
+    """
+    if not roster:
+        return None
+
+    # 优先按身份证号精确匹配
+    if idcard:
+        for item in roster:
+            if item.get('idcard', '').strip().upper() == idcard.strip().upper():
+                return item
+
+    # 回退到姓名匹配
+    return match_person_to_roster(name, roster)

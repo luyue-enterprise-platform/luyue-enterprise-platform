@@ -1,11 +1,11 @@
 {
-  "version": "1.1.9",
-  "version_code": 119,
+  "version": "1.1.10",
+  "version_code": 1110,
   "release_date": "2026-08-03",
   "mandatory": false,
   "changelog": [
-    "v1.1.9 更新内容：",
-    "1. 优化总台账Excel导出格式：标题改为宋体24pt、表头宋体14pt加粗、数据行宋体12pt、合计总金额行L列红色填充、新增结束标识行、边框改为黑色细线"
+    "v1.1.10 更新内容：",
+    "1. 社保核算模块人员匹配逻辑优化：身份类型匹配和社保统计改为按身份证号优先匹配花名册（身份证号为空时回退到姓名匹配），文件重命名逻辑保持不变"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.9"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.10"
 }

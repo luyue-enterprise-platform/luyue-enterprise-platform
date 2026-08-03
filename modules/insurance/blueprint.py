@@ -326,13 +326,27 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
         for yf in yearly_ledger_files:
             logger.info(f'[task:{task_id}] 年度台账: {yf["filepath"]}')
 
-        # 构建花名册映射
-        roster_map = {}
+        # 构建花名册映射（优先按身份证号，回退到姓名）
+        roster_map_by_idcard = {}
+        roster_map_by_name = {}
         if roster:
             for item in roster:
+                idc = item.get('idcard', '').strip()
                 nm = item.get('name', '').strip()
+                if idc:
+                    roster_map_by_idcard[idc.upper()] = item.get('identity_type', '')
                 if nm:
-                    roster_map[nm] = item.get('identity_type', '')
+                    roster_map_by_name[nm] = item.get('identity_type', '')
+
+        def _get_identity_type(ps):
+            """优先按身份证号匹配，回退到姓名"""
+            idc = ps.get('idcard', '').strip().upper()
+            if idc and idc in roster_map_by_idcard:
+                return roster_map_by_idcard[idc]
+            nm = ps.get('name', '').strip()
+            if nm and nm in roster_map_by_name:
+                return roster_map_by_name[nm]
+            return ''
 
         with tasks_lock:
             tasks[task_id]['status'] = 'done'
@@ -342,7 +356,7 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                     {
                         'name': ps['name'],
                         'idcard': ps['idcard'],
-                        'identity_type': roster_map.get(ps['name'], ''),
+                        'identity_type': _get_identity_type(ps),
                         'insurances': {
                             k: {'start': v[0], 'end': v[1]}
                             for k, v in ps['insurances'].items()

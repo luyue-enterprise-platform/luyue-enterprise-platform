@@ -58,21 +58,32 @@ def _fmt_period(start, end):
 
 
 def _build_roster_map(roster):
-    mapping = {}
+    """构建花名册映射（优先按身份证号，回退到姓名）"""
+    by_idcard = {}
+    by_name = {}
     if not roster:
-        return mapping
+        return by_idcard, by_name
     for item in roster:
-        name = item.get('name', '').strip()
-        if name:
-            mapping[name] = item
-    return mapping
+        idc = item.get('idcard', '').strip().upper()
+        nm = item.get('name', '').strip()
+        if idc:
+            by_idcard[idc] = item
+        if nm:
+            by_name[nm] = item
+    return by_idcard, by_name
 
 
-def _classify_persons(person_stats, roster_map):
+def _classify_persons(person_stats, roster_by_idcard, roster_by_name):
+    """按身份证号匹配花名册获取身份类型，回退到姓名"""
     result = []
     for ps in person_stats:
-        name = ps.get('name', '').strip()
-        roster_entry = roster_map.get(name, {})
+        idc = ps.get('idcard', '').strip().upper()
+        nm = ps.get('name', '').strip()
+        roster_entry = {}
+        if idc and idc in roster_by_idcard:
+            roster_entry = roster_by_idcard[idc]
+        elif nm and nm in roster_by_name:
+            roster_entry = roster_by_name[nm]
         identity_type = roster_entry.get('identity_type', '')
         result.append((ps, identity_type))
     return result
@@ -95,7 +106,7 @@ def _get_year_overlap_period(overlap_start, overlap_end, year):
     return start_ym, end_ym
 
 
-def _generate_yearly_ledger(year, classified, roster_map, company_name, output_dir, timestamp):
+def _generate_yearly_ledger(year, classified, company_name, output_dir, timestamp):
     """为指定年份生成年度台账（独立Excel文件）
 
     列结构（动态）：
@@ -294,19 +305,32 @@ def _generate_yearly_ledger(year, classified, roster_map, company_name, output_d
 
 def generate_excel(persons, output_path, roster=None, company_name='', year_range=None):
     person_stats, year_cols = calc_all_stats(persons, year_range)
-    roster_map = _build_roster_map(roster or [])
+    roster_by_idcard, roster_by_name = _build_roster_map(roster or [])
 
     # ========== 分类人员并按花名册顺序排序 ==========
-    classified = _classify_persons(person_stats, roster_map)
+    classified = _classify_persons(person_stats, roster_by_idcard, roster_by_name)
 
-    # 按花名册中序号排序
+    # 按花名册中序号排序（优先按身份证号匹配，回退到姓名）
     if roster:
-        roster_order = {}
+        roster_order_by_idcard = {}
+        roster_order_by_name = {}
         for i, item in enumerate(roster):
-            name = item.get('name', '').strip()
-            if name and name not in roster_order:
-                roster_order[name] = i
-        classified.sort(key=lambda x: roster_order.get(x[0].get('name', '').strip(), 99999))
+            idc = item.get('idcard', '').strip().upper()
+            nm = item.get('name', '').strip()
+            if idc and idc not in roster_order_by_idcard:
+                roster_order_by_idcard[idc] = i
+            if nm and nm not in roster_order_by_name:
+                roster_order_by_name[nm] = i
+
+        def _sort_key(x):
+            idc = x[0].get('idcard', '').strip().upper()
+            nm = x[0].get('name', '').strip()
+            if idc and idc in roster_order_by_idcard:
+                return roster_order_by_idcard[idc]
+            if nm and nm in roster_order_by_name:
+                return roster_order_by_name[nm]
+            return 99999
+        classified.sort(key=_sort_key)
 
     # ========== 检查是否有退役士兵 ==========
     has_tuiwu = any(identity_type == '自主就业退役士兵' for _, identity_type in classified)
@@ -627,7 +651,7 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
     yearly_ledger_files = []
     for year in year_cols:
         result = _generate_yearly_ledger(
-            year, classified, roster_map, company_name, output_dir, timestamp
+            year, classified, company_name, output_dir, timestamp
         )
         if result:
             yearly_ledgers.append(result['filename'])
