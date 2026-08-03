@@ -40,7 +40,7 @@ app = Flask(__name__,
     template_folder=os.path.join(RESOURCE_DIR, 'templates'),
     static_folder=os.path.join(RESOURCE_DIR, 'static'))
 
-app.secret_key = os.urandom(24)
+app.secret_key = 'luyue_platform_sk_2024_a8f3b2e1c9d7'
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB
 
 # 添加门户模板目录到 Jinja2 搜索路径
