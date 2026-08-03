@@ -11,14 +11,12 @@ from .stats_calculator import INSURANCE_ORDER, calc_all_stats, parse_ym
 
 
 def _thin_border():
-    side = Side(style='thin', color='999999')
+    side = Side(style='thin', color='000000')
     return Border(left=side, right=side, top=side, bottom=side)
 
 
 def _style_header(cell):
-    cell.font = Font(bold=True, size=11, color='FFFFFF')
-    cell.fill = PatternFill(start_color='2E5C8A', end_color='2E5C8A',
-                            fill_type='solid')
+    cell.font = Font(name='宋体', bold=True, size=14)
     cell.alignment = Alignment(horizontal='center', vertical='center',
                                wrap_text=True)
     cell.border = _thin_border()
@@ -30,28 +28,27 @@ def _style_cell(cell, center=True, bold=False):
         vertical='center', wrap_text=True
     )
     cell.border = _thin_border()
-    cell.font = Font(size=10, bold=bold)
+    cell.font = Font(name='宋体', size=12, bold=bold)
 
 
 def _style_summary_label(cell):
-    cell.font = Font(bold=True, size=10, color='2E5C8A')
+    cell.font = Font(name='宋体', bold=True, size=14)
     cell.alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
     cell.border = _thin_border()
-    cell.fill = PatternFill(start_color='E8F0FE', end_color='E8F0FE', fill_type='solid')
 
 
 def _style_summary_cell(cell):
-    cell.font = Font(bold=True, size=10)
+    cell.font = Font(name='宋体', bold=True, size=14)
     cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     cell.border = _thin_border()
-    cell.fill = PatternFill(start_color='E8F0FE', end_color='E8F0FE', fill_type='solid')
 
 
-def _style_grand_total_cell(cell):
-    cell.font = Font(bold=True, size=10, color='FFFFFF')
+def _style_grand_total_cell(cell, highlight=False):
+    cell.font = Font(name='宋体', bold=True, size=14)
     cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     cell.border = _thin_border()
-    cell.fill = PatternFill(start_color='2E5C8A', end_color='2E5C8A', fill_type='solid')
+    if highlight:
+        cell.fill = PatternFill(start_color='FFFF0000', end_color='FFFF0000', fill_type='solid')
 
 
 def _fmt_period(start, end):
@@ -336,7 +333,7 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
         label_col_idx = 11
         total_months_col_idx = 12
         empty_prefix_cols = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
-        widths = [6, 10, 22, 18, 22, 20, 24, 24, 24, 24, 30, 14] + [14] * len(year_cols) + [16]
+        widths = [6, 10, 23.5, 18, 22, 20, 20, 20, 20, 20, 30, 12] + [14] * len(year_cols) + [12]
     else:
         # 没有退役士兵，不显示退役证编号和退役时间列
         headers = [
@@ -357,7 +354,7 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
         label_col_idx = 9
         total_months_col_idx = 10
         empty_prefix_cols = (1, 2, 3, 4, 5, 6, 7, 8)
-        widths = [6, 10, 22, 18, 24, 24, 24, 24, 30, 14] + [14] * len(year_cols) + [16]
+        widths = [6, 10, 23.5, 18, 20, 20, 20, 20, 30, 12] + [14] * len(year_cols) + [12]
 
     total_col_count = len(headers)
     col_total_letter = get_column_letter(total_col_count)
@@ -368,24 +365,25 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
 
     # ========== 标题行（第1行）==========
     if company_name:
-        title_text = f'{company_name}企业申报重点群体税收优惠政策总台账'
+        title_text = f'{company_name}\n企业申报重点群体税收优惠政策总台账'
     else:
         title_text = '企业申报重点群体税收优惠政策总台账'
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_col_count)
     title_cell = ws.cell(row=1, column=1, value=title_text)
-    title_cell.font = Font(bold=True, size=16, color='2E5C8A', name='微软雅黑')
-    title_cell.alignment = Alignment(horizontal='center', vertical='center')
-    title_cell.fill = PatternFill(start_color='F0F5FF', end_color='F0F5FF', fill_type='solid')
-    title_bottom = Side(style='thin', color='2E5C8A')
+    title_cell.font = Font(name='宋体', bold=True, size=24)
+    title_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    title_bottom = Side(style='thin', color='000000')
     for col in range(1, total_col_count + 1):
         cell = ws.cell(row=1, column=col)
         cell.border = Border(bottom=title_bottom)
+    ws.row_dimensions[1].height = 80
 
     # ========== 表头行（第2行）==========
     ws.append(headers)
     for cell in ws[2]:
         _style_header(cell)
+    ws.row_dimensions[2].height = 60
 
     # ========== 人员身份类型下拉验证 ==========
     dv = DataValidation(
@@ -485,7 +483,15 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
     if tuwu_stats:
         tuwu_stats['label'] = '自主就业退役士兵'
 
-    ws.append([])
+    # ========== 结束标识行 ==========
+    ws.append(['结束标识'] + [''] * (total_col_count - 1))
+    end_row = ws.max_row
+    ws.merge_cells(start_row=end_row, start_column=1, end_row=end_row, end_column=2)
+    end_cell = ws.cell(row=end_row, column=1)
+    end_cell.font = Font(name='宋体', bold=True, size=12)
+    end_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    for col_idx in range(1, total_col_count + 1):
+        ws.cell(row=end_row, column=col_idx).border = _thin_border()
 
     summary_types = []
     if tupin_stats:
@@ -601,8 +607,8 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
                 total_row.append(formula)
 
         ws.append(total_row)
-        for cell in ws[ws.max_row]:
-            _style_grand_total_cell(cell)
+        for cell_idx, cell in enumerate(ws[ws.max_row], start=1):
+            _style_grand_total_cell(cell, highlight=(cell_idx == total_months_col_idx))
 
     # ========== 列宽 ==========
     for i, w in enumerate(widths):

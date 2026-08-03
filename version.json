@@ -1,11 +1,11 @@
 {
-  "version": "1.1.8",
-  "version_code": 118,
+  "version": "1.1.9",
+  "version_code": 119,
   "release_date": "2026-08-03",
   "mandatory": false,
   "changelog": [
-    "v1.1.8 更新内容：",
-    "1. 修复界面顶部金色LOGO图片无法显示的问题"
+    "v1.1.9 更新内容：",
+    "1. 优化总台账Excel导出格式：标题改为宋体24pt、表头宋体14pt加粗、数据行宋体12pt、合计总金额行L列红色填充、新增结束标识行、边框改为黑色细线"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.8"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.9"
 }
