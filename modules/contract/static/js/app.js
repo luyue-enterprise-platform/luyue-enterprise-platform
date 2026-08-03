@@ -4,7 +4,8 @@
 
 // ===== 全局状态 =====
 var rosterData = [];           // [{seq, name, idcard}, ...]
-var selectedFiles = [];        // [{file: File, folder: String|null}, ...]
+var selectedFiles = [];        // [{file: File|null, name: String, folder: String|null, size: Number}, ...]
+var pickId = null;             // 文件夹选择ID（非null表示文件来自文件夹选择器）
 var currentTaskId = null;
 var pollTimer = null;
 
@@ -139,6 +140,10 @@ fileInput.addEventListener('change', function () {
 
 function addFiles(fileList) {
     // fileList 可以是 [File, ...] 或 [{file, folder}, ...]
+    // 通过拖拽/选择文件方式添加时，清除之前的文件夹选择状态
+    if (fileList.length > 0 && (fileList[0].file || fileList[0] instanceof File)) {
+        pickId = null;
+    }
     var added = 0;
     for (var i = 0; i < fileList.length; i++) {
         var item = fileList[i];
@@ -175,13 +180,13 @@ function renderFileList() {
     document.getElementById('fileList').style.display = 'block';
     document.getElementById('fileCount').textContent = '共 ' + selectedFiles.length + ' 个文件';
     document.getElementById('fileItems').innerHTML = selectedFiles.map(function (item) {
-        var f = item.file;
+        var fileName = item.file ? item.file.name : (item.name || '未知文件');
         var folderBadge = item.folder
             ? '<span class="folder-badge" title="来自文件夹: ' + esc(item.folder) + '">📁 ' + esc(item.folder) + '</span>'
             : '';
         return '<span class="file-tag">' + folderBadge +
-            '<span>' + getFileIcon(f.name) + '</span>' +
-            '<span class="file-name" title="' + esc(f.name) + '">' + esc(f.name) + '</span></span>';
+            '<span>' + getFileIcon(fileName) + '</span>' +
+            '<span class="file-name" title="' + esc(fileName) + '">' + esc(fileName) + '</span></span>';
     }).join('');
 }
 
@@ -193,6 +198,7 @@ function getFileIcon(name) {
 
 function clearFiles() {
     selectedFiles = [];
+    pickId = null;
     document.getElementById('fileList').style.display = 'none';
     hideActionAndResult();
 }
@@ -205,6 +211,42 @@ function checkReady() {
     } else {
         actionSection.style.display = 'none';
     }
+}
+
+// ===== 通过系统原生对话框选择文件夹 =====
+function pickFolder() {
+    showToast('正在打开文件夹选择对话框...', 'info');
+
+    fetch('/contract/api/pick_folder', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.cancelled) {
+                return;
+            }
+            if (data.error) {
+                showToast(data.error, 'error');
+                return;
+            }
+            if (data.ok) {
+                // 设置文件夹选择模式
+                pickId = data.pick_id;
+                // 构建元数据条目（无 File 对象）
+                selectedFiles = data.files.map(function (f) {
+                    return {
+                        file: null,
+                        name: f.name,
+                        folder: f.folder || null,
+                        size: f.size || 0
+                    };
+                });
+                renderFileList();
+                checkReady();
+                showToast('已选择文件夹: ' + data.folder_name + '，共 ' + data.count + ' 个文件', 'success');
+            }
+        })
+        .catch(function (err) {
+            showToast('文件夹选择失败: ' + err.message, 'error');
+        });
 }
 
 // ===== 第三步：开始处理 =====
@@ -222,49 +264,81 @@ function startProcess() {
     startBtn.disabled = true;
     startBtn.textContent = '处理中...';
 
-    var formData = new FormData();
-    formData.append('roster', JSON.stringify(rosterData));
-
-    // 构建文件夹映射：{文件索引: 文件夹名}
-    var folderMap = {};
-    selectedFiles.forEach(function (item, idx) {
-        if (item.folder) {
-            folderMap[idx] = item.folder;
-        }
-    });
-    formData.append('folder_map', JSON.stringify(folderMap));
-
-    selectedFiles.forEach(function (item) {
-        formData.append('files', item.file);
-    });
-
     // 显示进度区
     document.getElementById('progressSection').style.display = 'block';
     document.getElementById('progressBar').style.width = '5%';
     document.getElementById('progressText').textContent = '正在上传文件...';
     document.getElementById('resultSection').style.display = 'none';
 
-    fetch('/contract/api/upload', { method: 'POST', body: formData })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-            if (data.error) {
-                showToast(data.error, 'error');
+    if (pickId) {
+        // 文件夹选择模式：使用 process_picked 端点
+        var formData = new FormData();
+        formData.append('pick_id', pickId);
+        formData.append('roster', JSON.stringify(rosterData));
+
+        fetch('/contract/api/process_picked', { method: 'POST', body: formData })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    startBtn.disabled = false;
+                    startBtn.textContent = '🚀 开始整理';
+                    document.getElementById('progressSection').style.display = 'none';
+                    return;
+                }
+                currentTaskId = data.task_id;
+                document.getElementById('progressText').textContent = '处理中，共 ' + data.total_files + ' 个文件...';
+                document.getElementById('progressBar').style.width = '20%';
+                startPolling();
+            })
+            .catch(function (err) {
+                showToast('处理失败: ' + err.message, 'error');
                 startBtn.disabled = false;
                 startBtn.textContent = '🚀 开始整理';
                 document.getElementById('progressSection').style.display = 'none';
-                return;
+            });
+    } else {
+        // 普通上传模式：使用 upload 端点
+        var formData2 = new FormData();
+        formData2.append('roster', JSON.stringify(rosterData));
+
+        // 构建文件夹映射：{文件索引: 文件夹名}
+        var folderMap = {};
+        selectedFiles.forEach(function (item, idx) {
+            if (item.folder) {
+                folderMap[idx] = item.folder;
             }
-            currentTaskId = data.task_id;
-            document.getElementById('progressText').textContent = '处理中，共 ' + data.total_files + ' 个文件...';
-            document.getElementById('progressBar').style.width = '20%';
-            startPolling();
-        })
-        .catch(function (err) {
-            showToast('上传失败: ' + err.message, 'error');
-            startBtn.disabled = false;
-            startBtn.textContent = '🚀 开始整理';
-            document.getElementById('progressSection').style.display = 'none';
         });
+        formData2.append('folder_map', JSON.stringify(folderMap));
+
+        selectedFiles.forEach(function (item) {
+            if (item.file) {
+                formData2.append('files', item.file);
+            }
+        });
+
+        fetch('/contract/api/upload', { method: 'POST', body: formData2 })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    startBtn.disabled = false;
+                    startBtn.textContent = '🚀 开始整理';
+                    document.getElementById('progressSection').style.display = 'none';
+                    return;
+                }
+                currentTaskId = data.task_id;
+                document.getElementById('progressText').textContent = '处理中，共 ' + data.total_files + ' 个文件...';
+                document.getElementById('progressBar').style.width = '20%';
+                startPolling();
+            })
+            .catch(function (err) {
+                showToast('上传失败: ' + err.message, 'error');
+                startBtn.disabled = false;
+                startBtn.textContent = '🚀 开始整理';
+                document.getElementById('progressSection').style.display = 'none';
+            });
+    }
 }
 
 // ===== 进度轮询 =====
@@ -430,6 +504,7 @@ function hideActionAndResult() {
 function resetAll() {
     clearRoster();
     clearFiles();
+    pickId = null;
     hideActionAndResult();
     document.getElementById('startBtn').disabled = false;
     document.getElementById('startBtn').textContent = '🚀 开始整理';

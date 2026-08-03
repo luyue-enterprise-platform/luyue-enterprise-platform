@@ -65,6 +65,9 @@ logger = logging.getLogger('contract_organizer')
 tasks = {}
 tasks_lock = threading.Lock()
 
+# ===== 文件夹选择临时存储 =====
+picked_folders = {}  # {pick_id: {'file_paths': [(path, folder_name)], 'files': [...]}}
+
 # ===== 路由 =====
 
 @contract_bp.route('/')
@@ -182,6 +185,158 @@ def api_upload():
         daemon=True
     )
     thread.start()
+
+    return jsonify({'ok': True, 'task_id': task_id, 'total_files': len(saved_paths)})
+
+
+# ---------- 文件夹选择（原生对话框） ----------
+
+@contract_bp.route('/api/pick_folder', methods=['POST'])
+@login_required
+def api_pick_folder():
+    """弹出系统原生文件夹选择对话框，读取文件夹中的图片/PDF文件"""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+
+        folder_path = filedialog.askdirectory(
+            title='选择劳动合同文件夹（以姓名命名的文件夹或包含多个人员文件夹的目录）',
+            initialdir=os.path.expanduser('~')
+        )
+        root.destroy()
+    except Exception as e:
+        logger.error(f'文件夹选择对话框异常: {e}')
+        return jsonify({'error': f'无法打开文件夹选择对话框: {e}'}), 500
+
+    if not folder_path:
+        return jsonify({'cancelled': True})
+
+    # 递归遍历文件夹，查找所有图片和PDF文件
+    valid_exts = IMAGE_EXTENSIONS | {'.pdf'}
+    file_list = []        # [{name, folder, size}]
+    file_paths = []       # [(full_path, folder_name)]
+
+    picked_folder_name = os.path.basename(folder_path)
+
+    for dirpath, dirnames, filenames in os.walk(folder_path):
+        # 计算相对路径
+        rel_dir = os.path.relpath(dirpath, folder_path)
+
+        for fname in sorted(filenames):
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in valid_exts:
+                continue
+
+            full_path = os.path.join(dirpath, fname)
+
+            # 确定用于人员匹配的文件夹名
+            if rel_dir == '.':
+                # 文件在所选文件夹根目录 -> 用所选文件夹名
+                folder_name = picked_folder_name
+            else:
+                # 文件在子文件夹 -> 用直接父文件夹名
+                folder_name = os.path.basename(dirpath)
+
+            file_paths.append((full_path, folder_name))
+            file_list.append({
+                'name': fname,
+                'folder': folder_name,
+                'size': os.path.getsize(full_path),
+            })
+
+    if not file_list:
+        return jsonify({'error': '所选文件夹中没有找到图片或PDF文件（支持 .jpg .png .bmp .pdf 等）'})
+
+    # 存储选中文件信息，等待后续处理
+    pick_id = uuid.uuid4().hex[:8]
+    with tasks_lock:
+        picked_folders[pick_id] = {
+            'file_paths': file_paths,
+            'files': file_list,
+        }
+
+    logger.info(f'[pick:{pick_id}] 用户选择文件夹: {folder_path}, 找到 {len(file_list)} 个文件')
+
+    return jsonify({
+        'ok': True,
+        'pick_id': pick_id,
+        'folder_name': picked_folder_name,
+        'files': file_list,
+        'count': len(file_list),
+    })
+
+
+@contract_bp.route('/api/process_picked', methods=['POST'])
+@login_required
+def api_process_picked():
+    """处理通过 pick_folder 选择的本地文件"""
+    pick_id = request.form.get('pick_id', '')
+    roster_json = request.form.get('roster', '')
+
+    if not pick_id:
+        return jsonify({'error': '请先选择文件夹'}), 400
+
+    with tasks_lock:
+        picked = picked_folders.get(pick_id)
+
+    if not picked:
+        return jsonify({'error': '文件夹选择已过期，请重新选择'}), 400
+
+    try:
+        roster = json.loads(roster_json)
+    except json.JSONDecodeError:
+        return jsonify({'error': '花名册数据格式错误'}), 400
+
+    if not roster:
+        return jsonify({'error': '花名册为空'}), 400
+
+    file_paths_with_folders = picked['file_paths']
+
+    # 复制文件到任务上传目录，同时构建 folder_hints
+    task_id = uuid.uuid4().hex[:8]
+    task_dir = os.path.join(UPLOAD_DIR, task_id)
+    os.makedirs(task_dir, exist_ok=True)
+
+    saved_paths = []
+    folder_hints = {}
+    for idx, (src_path, folder_name) in enumerate(file_paths_with_folders):
+        safe_name = os.path.basename(src_path)
+        dest_path = os.path.join(task_dir, safe_name)
+        # 避免重名
+        if os.path.exists(dest_path):
+            dest_path = os.path.join(task_dir, f'{idx}_{safe_name}')
+        shutil.copy2(src_path, dest_path)
+        saved_paths.append(dest_path)
+        if folder_name:
+            folder_hints[dest_path] = folder_name
+
+    # 清理 picked_folders 中的临时数据
+    with tasks_lock:
+        picked_folders.pop(pick_id, None)
+
+    # 初始化任务状态
+    with tasks_lock:
+        tasks[task_id] = {
+            'status': 'processing',
+            'current': 0,
+            'total': len(saved_paths),
+            'message': '正在处理文件...',
+            'result': None,
+        }
+
+    # 启动后台处理线程（复用已有的 _process_task）
+    thread = threading.Thread(
+        target=_process_task,
+        args=(task_id, saved_paths, roster, folder_hints),
+        daemon=True
+    )
+    thread.start()
+
+    logger.info(f'[task:{task_id}] 从文件夹选择启动处理, 共 {len(saved_paths)} 个文件')
 
     return jsonify({'ok': True, 'task_id': task_id, 'total_files': len(saved_paths)})
 

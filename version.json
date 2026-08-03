@@ -1,8 +1,8 @@
 {
-  "version": "1.1.5",
-  "version_code": 115,
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/download/v1.1.5/luyue_platform_v1.1.5.exe",
-  "changelog": "v1.1.5 更新内容：\n1. 修复检查更新功能 — 改用GitHub直连获取版本信息，无需PythonAnywhere\n2. 恢复core/paths.py路径处理模块（Program Files权限保护）\n3. 修复git reset导致的版本检查路由丢失问题",
+  "version": "1.1.6",
+  "version_code": 116,
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/download/v1.1.6/luyue_platform_v1.1.6.exe",
+  "changelog": "v1.1.6 更新内容：\n1. 劳动合同模块：新增「选择文件夹」按钮，使用系统原生文件夹选择对话框\n2. 修复pywebview环境下HTML5拖拽文件夹API不工作的问题\n3. 支持递归读取子文件夹，自动提取文件夹名用于人员匹配",
   "mandatory": true,
   "published_at": "2026-08-03"
 }
