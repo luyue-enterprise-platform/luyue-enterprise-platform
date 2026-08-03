@@ -65,6 +65,68 @@ var btnChangePwd = document.getElementById('btnChangePwd');
 var btnSavePwd = document.getElementById('btnSavePwd');
 var btnRefresh = document.getElementById('btnRefresh');
 
+// 年月范围选择
+var yearStartSelect = document.getElementById('yearStart');
+var monthStartSelect = document.getElementById('monthStart');
+var yearEndSelect = document.getElementById('yearEnd');
+var monthEndSelect = document.getElementById('monthEnd');
+
+// ===== 初始化年月范围下拉 =====
+(function initYearMonthRange() {
+    var now = new Date();
+    var currentYear = now.getFullYear();
+    var currentMonth = now.getMonth() + 1;  // JS月份0-11，+1得到真实月份
+    // 默认范围：往前推3年到当前年
+    var defaultStartYear = currentYear - 3;
+    var defaultEndYear = currentYear;
+    // 下拉范围：2015 ~ 当前年+1
+    var minYear = 2015;
+    var maxYear = currentYear + 1;
+
+    // 填充年份选项
+    var yearOptions = '';
+    for (var y = minYear; y <= maxYear; y++) {
+        yearOptions += '<option value="' + y + '">' + y + '年</option>';
+    }
+    yearStartSelect.innerHTML = yearOptions;
+    yearEndSelect.innerHTML = yearOptions;
+    yearStartSelect.value = String(defaultStartYear);
+    yearEndSelect.value = String(defaultEndYear);
+
+    // 填充月份选项
+    var monthOptions = '';
+    for (var m = 1; m <= 12; m++) {
+        monthOptions += '<option value="' + m + '">' + m + '月</option>';
+    }
+    monthStartSelect.innerHTML = monthOptions;
+    monthEndSelect.innerHTML = monthOptions;
+    monthStartSelect.value = String(currentMonth);
+    monthEndSelect.value = String(currentMonth);
+
+    // 联动校验：起始年月不能晚于截止年月
+    function validateRange() {
+        var sy = parseInt(yearStartSelect.value);
+        var sm = parseInt(monthStartSelect.value);
+        var ey = parseInt(yearEndSelect.value);
+        var em = parseInt(monthEndSelect.value);
+        // 比较 (sy*12+sm) vs (ey*12+em)
+        if (sy * 12 + sm > ey * 12 + em) {
+            // 起始晚于截止，把截止调整为起始
+            yearEndSelect.value = yearStartSelect.value;
+            monthEndSelect.value = monthStartSelect.value;
+        }
+    }
+    yearStartSelect.addEventListener('change', validateRange);
+    monthStartSelect.addEventListener('change', validateRange);
+    yearEndSelect.addEventListener('change', function() {
+        if (parseInt(yearEndSelect.value) < parseInt(yearStartSelect.value)) {
+            yearStartSelect.value = yearEndSelect.value;
+        }
+        validateRange();
+    });
+    monthEndSelect.addEventListener('change', validateRange);
+})();
+
 // ===== 刷新页面 =====
 if (btnRefresh) {
     btnRefresh.addEventListener('click', function() {
@@ -577,6 +639,12 @@ function uploadFiles() {
         formData.append('roster_company', rosterCompany);
         formData.append('roster_source_path', rosterSourcePath);
 
+        // 添加用户选择的统计年月范围
+        formData.append('year_start', yearStartSelect.value);
+        formData.append('month_start', monthStartSelect.value);
+        formData.append('year_end', yearEndSelect.value);
+        formData.append('month_end', monthEndSelect.value);
+
         // 用 XMLHttpRequest 获取上传进度
         var xhr = new XMLHttpRequest();
         xhr.open('POST', '/insurance/api/upload');
@@ -812,6 +880,7 @@ function renderResult(data) {
     var summaries = [
         { label: '识别图片', value: data.ocr_count },
         { label: '参保人员', value: data.person_count },
+        { label: '统计区间', value: yearStartSelect.value + '年' + monthStartSelect.value + '月<br>至' + yearEndSelect.value + '年' + monthEndSelect.value + '月' },
         { label: '年度列数', value: data.year_cols.length },
         { label: '年度台账', value: data.year_cols.length + '张' },
     ];

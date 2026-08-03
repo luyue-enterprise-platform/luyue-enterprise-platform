@@ -96,7 +96,7 @@ tasks = {}
 tasks_lock = threading.Lock()
 
 
-def process_task(task_id, file_paths, roster, roster_company='', roster_source_path=''):
+def process_task(task_id, file_paths, roster, roster_company='', roster_source_path='', year_range=None):
     """后台线程：PDF转图片 -> 逐张OCR识别 -> 解析 -> 分组 -> 统计 -> 文件整理 -> 生成Excel"""
     try:
         with tasks_lock:
@@ -313,12 +313,12 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
 
         # 按人员分组（仅用缴费单位验证通过的结果）
         persons = group_by_person(valid_results)
-        person_stats, year_cols = calc_all_stats(persons)
+        person_stats, year_cols = calc_all_stats(persons, year_range)
 
         # 生成Excel
         excel_filename = f'申报重点群体税收优惠政策总台账_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
         excel_path = os.path.join(OUTPUT_DIR, excel_filename)
-        gen_result = generate_excel(persons, excel_path, roster=roster, company_name=final_company)
+        gen_result = generate_excel(persons, excel_path, roster=roster, company_name=final_company, year_range=year_range)
         logger.info(f'[task:{task_id}] Excel生成完成: {excel_path}')
 
         # 年度台账独立文件路径
@@ -406,6 +406,7 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                 # 保存内部数据供重传合并使用
                 '_success_results': success_results,
                 '_task_dir': task_dir,
+                '_year_range': year_range,
             }
         logger.info(f'[task:{task_id}] 处理完成')
 
@@ -596,6 +597,25 @@ def upload():
     roster_company = request.form.get('roster_company', '')
     roster_source_path = request.form.get('roster_source_path', '')
 
+    # 获取用户选择的统计年月范围（可选）
+    year_start_str = request.form.get('year_start', '')
+    month_start_str = request.form.get('month_start', '')
+    year_end_str = request.form.get('year_end', '')
+    month_end_str = request.form.get('month_end', '')
+    year_range = None
+    if year_start_str and month_start_str and year_end_str and month_end_str:
+        try:
+            period_start = f'{int(year_start_str):04d}-{int(month_start_str):02d}'
+            period_end = f'{int(year_end_str):04d}-{int(month_end_str):02d}'
+            # 验证起始不晚于截止
+            sy1, sm1 = int(year_start_str), int(month_start_str)
+            ey1, em1 = int(year_end_str), int(month_end_str)
+            if (sy1, sm1) <= (ey1, em1):
+                year_range = (period_start, period_end)
+                logger.info(f'[upload] 用户选择年月范围: {period_start} ~ {period_end}')
+        except (ValueError, TypeError):
+            pass
+
     task_id = str(uuid.uuid4())[:8]
     task_dir = os.path.join(UPLOAD_DIR, task_id)
     os.makedirs(task_dir, exist_ok=True)
@@ -633,7 +653,7 @@ def upload():
 
     t = threading.Thread(target=process_task,
                          args=(task_id, file_paths, roster,
-                               roster_company, roster_source_path),
+                               roster_company, roster_source_path, year_range),
                          daemon=True)
     t.start()
 
@@ -820,15 +840,16 @@ def retry_task(task_id):
 
     logger.info(f'[task:{task_id}] 补充识别 — 新成功: {len(retry_success)}, 仍失败: {len(retry_failed)}, 合并后总成功: {len(all_success)}')
 
-    # 重新统计
+    # 重新统计（复用原始年度范围）
+    year_range = old_result.get('_year_range', None)
     persons = group_by_person(all_success)
-    person_stats, year_cols = calc_all_stats(persons)
+    person_stats, year_cols = calc_all_stats(persons, year_range)
 
     # 重新生成Excel（保留补传前识别到的缴费单位）
     company_name = old_result.get('company_name', '')
     excel_filename = f'申报重点群体税收优惠政策总台账_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
     excel_path = os.path.join(OUTPUT_DIR, excel_filename)
-    gen_result = generate_excel(persons, excel_path, roster=roster, company_name=company_name)
+    gen_result = generate_excel(persons, excel_path, roster=roster, company_name=company_name, year_range=year_range)
     yearly_ledger_files = gen_result.get('yearly_ledger_files', [])
 
     roster_map = {}
@@ -916,6 +937,7 @@ def retry_task(task_id):
             ],
             '_success_results': all_success,
             '_task_dir': task_dir,
+            '_year_range': year_range,
         }
     logger.info(f'[task:{task_id}] 补充识别完成')
 

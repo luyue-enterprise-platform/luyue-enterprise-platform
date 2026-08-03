@@ -137,6 +137,17 @@
             </h2>
             <p class="card-desc">按文件夹批量上传社保权益记录单（图片或PDF），系统将自动识别并统计四险重叠信息</p>
 
+            <!-- 统计年月范围选择 -->
+            <div class="year-range-selector">
+                <label class="year-range-label">统计年月范围：</label>
+                <select id="yearStart" class="year-select"></select>
+                <select id="monthStart" class="month-select"></select>
+                <span class="year-range-separator">至</span>
+                <select id="yearEnd" class="year-select"></select>
+                <select id="monthEnd" class="month-select"></select>
+                <span class="year-range-hint">选择需要统计退税的年月区间，系统将按此范围裁剪重叠时间段并生成年度统计</span>
+            </div>
+
             <div class="dropzone" id="dropzone">
                 <div class="dropzone-inner">
                     <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#4A90D9" stroke-width="1.5">

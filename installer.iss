@@ -8,8 +8,8 @@
 ; ============================================================
 
 #define MyAppName "鲁岳企业服务·综合智能平台"
-#define MyAppShortName "鲁岳企业服务"
-#define MyAppVersion "1.1.1"
+#define MyAppShortName "LY重点群体涉税申报综合智能平台"
+#define MyAppVersion "1.1.3"
 #define MyAppPublisher "鲁岳企业服务"
 #define MyAppURL "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform"
 #define MyAppExeName "鲁岳企业服务_综合智能平台.exe"
@@ -30,7 +30,7 @@ DisableDirPage=no
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=output_installer
-OutputBaseFilename=鲁岳企业服务_综合智能平台_安装程序_v{#MyAppVersion}
+OutputBaseFilename=LY综合智能平台_安装程序_v{#MyAppVersion}
 SetupIconFile=static\assets\logo.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -69,9 +69,10 @@ Source: "static\assets\logo.ico"; DestDir: "{app}"; Flags: ignoreversion skipifs
 
 [Icons]
 ; 用户级安装：使用 {userdesktop}/{userstartup} 而非系统级路径
-Name: "{userdesktop}\{#MyAppShortName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{userstartup}\{#MyAppShortName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: startup; Flags: runmaximized
-Name: "{group}\{#MyAppShortName}"; Filename: "{app}\{#MyAppExeName}"
+; 显式指定 IconFilename 确保桌面快捷方式显示正确的金色 LOGO
+Name: "{userdesktop}\{#MyAppShortName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\logo.ico"; Tasks: desktopicon
+Name: "{userstartup}\{#MyAppShortName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\logo.ico"; Tasks: startup; Flags: runmaximized
+Name: "{group}\{#MyAppShortName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\logo.ico"
 Name: "{group}\卸载 {#MyAppShortName}"; Filename: "{uninstallexe}"
 
 [Run]

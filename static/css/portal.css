@@ -14,6 +14,8 @@ body {
     background: #F0F2F5;
     color: #333;
     min-height: 100vh;
+    display: flex;
+    flex-direction: column;
 }
 
 /* --- 顶部导航 --- */
@@ -400,6 +402,28 @@ body {
 @keyframes slideIn {
     from { transform: translateY(20px); opacity: 0; }
     to { transform: translateY(0); opacity: 1; }
+}
+
+/* --- 底部版权信息 --- */
+.portal-footer {
+    width: 100%;
+    background: linear-gradient(135deg, #1a3d5c 0%, #2E5C8A 100%);
+    color: rgba(255,255,255,0.85);
+    text-align: center;
+    padding: 14px 0;
+    font-size: 13px;
+    flex-shrink: 0;
+    margin-top: auto;
+}
+
+.footer-content {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.footer-divider {
+    color: rgba(255,255,255,0.4);
 }
 
 /* --- 响应式 --- */

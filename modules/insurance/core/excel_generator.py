@@ -295,8 +295,8 @@ def _generate_yearly_ledger(year, classified, roster_map, company_name, output_d
     return {'filename': filename, 'filepath': filepath}
 
 
-def generate_excel(persons, output_path, roster=None, company_name=''):
-    person_stats, year_cols = calc_all_stats(persons)
+def generate_excel(persons, output_path, roster=None, company_name='', year_range=None):
+    person_stats, year_cols = calc_all_stats(persons, year_range)
     roster_map = _build_roster_map(roster or [])
 
     # ========== 分类人员并按花名册顺序排序 ==========
