@@ -52,6 +52,14 @@ def main():
     for d in ['data', 'uploads', 'outputs', 'logs']:
         os.makedirs(os.path.join(BASE_DIR, d), exist_ok=True)
 
+    # 确定可写数据目录（处理 Program Files 权限重定向）
+    from core.paths import data_dir as get_data_dir
+    DATA_DIR = get_data_dir()
+
+    # WebView2 用户数据目录（固定路径，确保 localStorage 持久化）
+    webview_data_dir = os.path.join(DATA_DIR, 'data', 'webview_data')
+    os.makedirs(webview_data_dir, exist_ok=True)
+
     # 查找可用端口
     if is_port_in_use(HOST, PORT):
         PORT = find_free_port(PORT)
@@ -88,7 +96,11 @@ def main():
         resizable=True,
         confirm_close=True,
     )
-    webview.start(gui='edgechromium', debug=False, private_mode=False)
+    webview.start(gui='edgechromium', debug=False, private_mode=False,
+                  storage_path=webview_data_dir)
+
+    # 等待 WebView2 完成 localStorage 磁盘持久化（避免进程退出时数据丢失）
+    time.sleep(0.5)
 
 
 if __name__ == '__main__':

@@ -10,7 +10,7 @@
     <div class="auth-container">
         <div class="auth-card">
             <div class="auth-header">
-                <img class="auth-logo" src="/static/assets/logo.png" alt="鲁岳企业服务">
+                <div class="auth-logo">LY</div>
                 <h1>鲁岳企业服务</h1>
                 <p>重点群体涉税申报项目资料处理综合智能平台</p>
             </div>
@@ -34,7 +34,8 @@
                         <span>记住密码</span>
                     </label>
                 </div>
-                <button type="submit" class="btn btn-primary btn-block">登 录</button>
+                <div id="loginError" class="auth-error" style="display:none;"></div>
+                <button type="submit" class="btn btn-primary btn-block" id="loginBtn">登 录</button>
             </form>
 
             <div class="auth-footer">
@@ -49,33 +50,119 @@
         var pwdEl = document.getElementById('password');
         var chkEl = document.getElementById('rememberPwd');
         var formEl = document.getElementById('loginForm');
+        var errEl = document.getElementById('loginError');
+        var btnEl = document.getElementById('loginBtn');
 
-        // 页面加载时读取已保存的账号密码
-        try {
-            var saved = localStorage.getItem('ly_remembered_login');
-            if (saved) {
-                var data = JSON.parse(saved);
-                if (data.username) userEl.value = data.username;
-                if (data.password) pwdEl.value = data.password;
-                chkEl.checked = true;
-            }
-        } catch(e) {}
+        function fillForm(username, password) {
+            if (username) userEl.value = username;
+            if (password) pwdEl.value = password;
+            chkEl.checked = true;
+        }
 
-        // 表单提交时：如果勾选则保存，否则清除
-        formEl.addEventListener('submit', function() {
+        function showMsg(msg) {
+            errEl.textContent = msg;
+            errEl.style.display = msg ? 'block' : 'none';
+        }
+
+        // 保存凭据到后端文件（同步文件 I/O，不依赖 WebView2 localStorage flush）
+        function saveToBackend(creds) {
+            return fetch('/api/remember_login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(creds),
+                keepalive: true
+            }).catch(function(){});
+        }
+
+        // 清除后端文件
+        function clearBackend() {
+            return fetch('/api/remember_login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username: '', password: ''}),
+                keepalive: true
+            }).catch(function(){});
+        }
+
+        // 页面加载：先读 localStorage，没有则读后端文件
+        function loadSaved() {
+            // 1. 尝试 localStorage
+            try {
+                var saved = localStorage.getItem('ly_remembered_login');
+                if (saved) {
+                    var data = JSON.parse(saved);
+                    if (data.username) {
+                        fillForm(data.username, data.password);
+                        return;
+                    }
+                }
+            } catch(e) {}
+
+            // 2. 回退：从后端文件读取
+            fetch('/api/remember_login').then(function(resp) {
+                return resp.json();
+            }).then(function(data) {
+                if (data.ok && data.username) {
+                    fillForm(data.username, data.password);
+                    // 同步到 localStorage（下次可直接读 localStorage）
+                    try {
+                        localStorage.setItem('ly_remembered_login', JSON.stringify({
+                            username: data.username, password: data.password
+                        }));
+                    } catch(e) {}
+                }
+            }).catch(function(){});
+        }
+
+        loadSaved();
+
+        // 表单提交：AJAX 登录 + 保存凭据
+        var submitting = false;
+        formEl.addEventListener('submit', function(e) {
+            if (submitting) return; // 回退模式：允许原生表单提交
+            e.preventDefault();
+            showMsg('');
+            btnEl.disabled = true;
+            btnEl.textContent = '登录中...';
+
+            var creds = {username: userEl.value, password: pwdEl.value};
+
+            // 1. 保存/清除记住密码（localStorage + 后端文件）
+            var savePromise;
             if (chkEl.checked) {
-                var data = {
-                    username: userEl.value,
-                    password: pwdEl.value
-                };
                 try {
-                    localStorage.setItem('ly_remembered_login', JSON.stringify(data));
+                    localStorage.setItem('ly_remembered_login', JSON.stringify(creds));
                 } catch(e) {}
+                savePromise = saveToBackend(creds);
             } else {
                 try {
                     localStorage.removeItem('ly_remembered_login');
                 } catch(e) {}
+                savePromise = clearBackend();
             }
+
+            // 2. 等待保存完成后再发送登录请求（确保凭据已持久化）
+            savePromise.finally(function() {
+                fetch('/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(creds)
+                }).then(function(resp) {
+                    return resp.json().then(function(data) {
+                        if (data.ok) {
+                            window.location.href = '/';
+                        } else {
+                            showMsg(data.error || '登录失败');
+                            btnEl.disabled = false;
+                            btnEl.textContent = '登 录';
+                        }
+                    });
+                }).catch(function() {
+                    // AJAX 失败时回退到原生表单提交
+                    submitting = true;
+                    formEl.submit();
+                });
+            });
         });
     })();
     </script>

@@ -98,6 +98,45 @@ from core.auth import (
     login_required, admin_required, get_remote_token
 )
 
+# ============ 记住密码：后端文件存储（localStorage 的可靠备份） ============
+# WebView2 的 localStorage 磁盘持久化是异步的，应用关闭时可能来不及 flush
+# 导致记住密码间歇性失效。此 API 通过同步文件 I/O 提供可靠备份。
+_REMEMBER_FILE = os.path.join(DATA_DIR, 'data', 'remembered_login.json')
+
+
+@app.route('/api/remember_login', methods=['GET'])
+def api_get_remembered_login():
+    """读取已保存的登录凭据（无需登录即可访问）"""
+    import json as _json
+    try:
+        if os.path.isfile(_REMEMBER_FILE):
+            with open(_REMEMBER_FILE, 'r', encoding='utf-8') as f:
+                data = _json.load(f)
+            return jsonify({'ok': True, 'username': data.get('username', ''),
+                            'password': data.get('password', '')})
+    except Exception as e:
+        logger.warning(f'读取记住密码文件失败: {e}')
+    return jsonify({'ok': True, 'username': '', 'password': ''})
+
+
+@app.route('/api/remember_login', methods=['POST'])
+def api_save_remembered_login():
+    """保存或清除登录凭据（无需登录即可访问）"""
+    import json as _json
+    data = request.get_json(silent=True) or {}
+    username = (data.get('username') or '').strip()
+    password = data.get('password') or ''
+
+    try:
+        os.makedirs(os.path.dirname(_REMEMBER_FILE), exist_ok=True)
+        payload = {'username': username, 'password': password}
+        with open(_REMEMBER_FILE, 'w', encoding='utf-8') as f:
+            _json.dump(payload, f, ensure_ascii=False)
+        return jsonify({'ok': True})
+    except Exception as e:
+        logger.warning(f'保存记住密码文件失败: {e}')
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
