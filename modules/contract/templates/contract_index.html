@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>劳动合同图片整理系统</title>
+    <link rel="stylesheet" href="{{ url_for('contract.static', filename='css/style.css') }}">
+</head>
+<body>
+    <!-- 顶部导航 -->
+    <nav class="navbar">
+        <div class="nav-brand">
+            <span class="brand-icon">📋</span>
+            <span class="brand-text">劳动合同图片整理系统</span>
+        </div>
+        <div class="nav-actions">
+            <a class="btn-nav" href="/" title="返回首页">🏠 返回首页</a>
+            <button class="btn-nav" onclick="location.reload()" title="刷新页面">🔄 刷新</button>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <!-- 第一步：上传花名册 -->
+        <section class="card" id="rosterSection">
+            <div class="card-header">
+                <span class="step-badge">1</span>
+                <h2>上传人员花名册</h2>
+                <span class="card-tip">支持 .xlsx / .xls / .csv 格式</span>
+            </div>
+            <div class="card-body">
+                <div class="upload-box" id="rosterUploadBox">
+                    <input type="file" id="rosterFileInput" accept=".xlsx,.xls,.csv" hidden>
+                    <div class="upload-placeholder" onclick="document.getElementById('rosterFileInput').click()">
+                        <span class="upload-icon">📁</span>
+                        <p>点击选择花名册文件</p>
+                        <p class="upload-hint">或拖拽文件到此处</p>
+                    </div>
+                </div>
+                <div class="roster-preview" id="rosterPreview" style="display:none;">
+                    <div class="roster-info">
+                        <span class="roster-count" id="rosterCount"></span>
+                        <button class="btn-ghost btn-sm" onclick="clearRoster()">重新选择</button>
+                    </div>
+                    <div class="roster-tags" id="rosterTags"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 第二步：上传劳动合同 -->
+        <section class="card" id="uploadSection">
+            <div class="card-header">
+                <span class="step-badge">2</span>
+                <h2>上传劳动合同图片</h2>
+                <span class="card-tip">文件名需包含人员姓名，支持图片和PDF</span>
+            </div>
+            <div class="card-body">
+                <div class="dropzone" id="dropzone">
+                    <input type="file" id="fileInput" accept="image/*,.pdf" multiple hidden>
+                    <div class="dropzone-content">
+                        <span class="upload-icon">🖼️</span>
+                        <p>拖拽文件或文件夹到此处</p>
+                        <p class="upload-hint">或 <a href="#" onclick="document.getElementById('fileInput').click();return false;">点击选择文件</a></p>
+                        <p class="upload-hint">支持 .jpg .png .bmp .pdf 等格式</p>
+                    </div>
+                </div>
+                <div class="file-list" id="fileList" style="display:none;">
+                    <div class="file-list-header">
+                        <span id="fileCount"></span>
+                        <button class="btn-ghost btn-sm" onclick="clearFiles()">清空</button>
+                    </div>
+                    <div class="file-items" id="fileItems"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 第三步：开始整理 -->
+        <section class="card" id="actionSection" style="display:none;">
+            <div class="card-body" style="text-align:center;">
+                <button class="btn-primary btn-lg" id="startBtn" onclick="startProcess()">
+                    🚀 开始整理
+                </button>
+                <p class="action-hint">将按花名册顺序对图片重命名，格式：序号-姓名</p>
+            </div>
+        </section>
+
+        <!-- 处理进度 -->
+        <section class="card" id="progressSection" style="display:none;">
+            <div class="card-header">
+                <h2>处理进度</h2>
+            </div>
+            <div class="card-body">
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+                <p class="progress-text" id="progressText">准备中...</p>
+            </div>
+        </section>
+
+        <!-- 处理结果 -->
+        <section class="card" id="resultSection" style="display:none;">
+            <div class="card-header">
+                <span class="step-badge done">✓</span>
+                <h2>整理完成</h2>
+            </div>
+            <div class="card-body">
+                <!-- 统计卡片 -->
+                <div class="stats-grid" id="statsGrid"></div>
+                
+                <!-- 匹配详情 -->
+                <div class="result-detail">
+                    <h3>匹配详情</h3>
+                    <div class="table-wrapper">
+                        <table class="result-table" id="resultTable">
+                            <thead>
+                                <tr>
+                                    <th>序号</th>
+                                    <th>姓名</th>
+                                    <th>新文件名</th>
+                                    <th>原文件名</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resultTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- 未匹配文件 -->
+                <div class="unmatched-block" id="unmatchedBlock" style="display:none;">
+                    <h3>⚠️ 未匹配文件（已放入"未匹配"文件夹）</h3>
+                    <div class="unmatched-list" id="unmatchedList"></div>
+                </div>
+                
+                <!-- 下载按钮 -->
+                <div class="action-buttons">
+                    <button class="btn-primary btn-lg" id="btnSaveToLocation" onclick="saveToLocation(this)">
+                        📁 选择保存位置
+                    </button>
+                    <button class="btn-ghost" onclick="downloadResult(this)">
+                        📥 下载ZIP
+                    </button>
+                    <button class="btn-ghost" onclick="resetAll()">
+                        🔄 重新整理
+                    </button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Toast 提示 -->
+    <div class="toast" id="toast"></div>
+
+    <script src="{{ url_for('contract.static', filename='js/app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>鲁岳企业服务·综合智能平台</title>
+    <link rel="stylesheet" href="/static/css/portal.css">
+</head>
+<body>
+    <!-- 顶部导航 -->
+    <header class="navbar">
+        <div class="nav-brand">
+            <span class="brand-icon">🏢</span>
+            <span class="brand-text">鲁岳企业服务·重点群体涉税申报项目资料处理综合智能平台</span>
+        </div>
+        <div class="nav-user">
+            {% if is_admin %}
+            <button class="btn-nav" onclick="openInviteModal()">邀请码</button>
+            <button class="btn-nav" onclick="openUserModal()">账号管理</button>
+            {% endif %}
+            <span class="user-name">{{ username }}</span>
+            {% if is_admin %}<span class="user-badge">管理员</span>{% endif %}
+            <button class="btn-nav" onclick="openPwdModal()">🔑 修改密码</button>
+            <a href="/logout" class="btn-logout">退出</a>
+        </div>
+    </header>
+
+    <!-- 主内容 -->
+    <main class="portal-main">
+        <div class="portal-hero">
+            <h1>欢迎使用综合智能平台</h1>
+            <p>请选择您需要的功能模块</p>
+        </div>
+
+        <div class="module-grid">
+            <!-- 社保批量统计 -->
+            <a href="/insurance/" class="module-card">
+                <div class="module-icon">📊</div>
+                <h2 class="module-title">社保批量统计智能核算系统</h2>
+                <p class="module-desc">
+                    上传社保权益记录单图片/PDF，自动OCR识别并统计四险重叠月数，
+                    生成退税核算Excel表。支持花名册匹配、缴费单位验证、文件自动整理。
+                </p>
+                <div class="module-features">
+                    <span class="feature-tag">OCR识别</span>
+                    <span class="feature-tag">四险统计</span>
+                    <span class="feature-tag">Excel导出</span>
+                    <span class="feature-tag">文件整理</span>
+                </div>
+                <span class="module-action">进入系统 →</span>
+            </a>
+
+            <!-- 劳动合同整理 -->
+            <a href="/contract/" class="module-card">
+                <div class="module-icon">📋</div>
+                <h2 class="module-title">劳动合同图片整理系统</h2>
+                <p class="module-desc">
+                    上传人员花名册和劳动合同图片/PDF，按花名册顺序自动重命名图片。
+                    支持PDF转图片、文件夹批量导入、同人多文件自动编号。
+                </p>
+                <div class="module-features">
+                    <span class="feature-tag">花名册匹配</span>
+                    <span class="feature-tag">PDF转图片</span>
+                    <span class="feature-tag">批量重命名</span>
+                    <span class="feature-tag">序号编号</span>
+                </div>
+                <span class="module-action">进入系统 →</span>
+            </a>
+
+            <!-- PDF转Word -->
+            <a href="/pdf2word/" class="module-card">
+                <div class="module-icon">📄</div>
+                <h2 class="module-title">批量PDF转WORD系统</h2>
+                <p class="module-desc">
+                    上传一个或多个PDF文件，批量转换为可编辑的Word（.docx）文档。
+                    保留原文档的文本、图片、表格和排版格式，支持单文件下载或打包下载。
+                </p>
+                <div class="module-features">
+                    <span class="feature-tag">批量转换</span>
+                    <span class="feature-tag">保留排版</span>
+                    <span class="feature-tag">表格提取</span>
+                    <span class="feature-tag">打包下载</span>
+                </div>
+                <span class="module-action">进入系统 →</span>
+            </a>
+        </div>
+    </main>
+
+    <!-- 修改密码弹窗 -->
+    <div class="modal-overlay" id="pwdModal" style="display:none;">
+        <div class="modal-box">
+            <h3>修改密码</h3>
+            <div class="form-group">
+                <label>旧密码</label>
+                <input type="password" id="oldPassword" placeholder="请输入旧密码">
+            </div>
+            <div class="form-group">
+                <label>新密码（至少6位）</label>
+                <input type="password" id="newPassword" placeholder="请输入新密码">
+            </div>
+            <div class="form-group">
+                <label>确认新密码</label>
+                <input type="password" id="confirmPassword" placeholder="请再次输入新密码">
+            </div>
+            <p class="form-error" id="pwdError"></p>
+            <div class="modal-actions">
+                <button class="btn-ghost" onclick="closePwdModal()">取消</button>
+                <button class="btn-primary" onclick="changePassword()">确认修改</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 邀请码管理弹窗（仅管理员） -->
+    {% if is_admin %}
+    <div class="modal-overlay" id="inviteModal" style="display:none;">
+        <div class="modal-box modal-wide">
+            <h3>邀请码管理</h3>
+            <div class="modal-body">
+                <button class="btn-primary btn-sm" id="btnGenInvite">生成新邀请码</button>
+                <div id="newInviteCode" class="invite-code-display" style="display:none;"></div>
+                <table class="portal-table" id="inviteTable" style="margin-top:16px;">
+                    <thead><tr><th>邀请码</th><th>状态</th><th>备注</th><th>使用者</th></tr></thead>
+                    <tbody id="inviteTableBody"></tbody>
+                </table>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-ghost" onclick="closeInviteModal()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 账号管理弹窗（仅管理员） -->
+    <div class="modal-overlay" id="userModal" style="display:none;">
+        <div class="modal-box modal-wide">
+            <h3>账号管理</h3>
+            <div class="modal-body">
+                <table class="portal-table" id="userTable" style="margin-top:8px;">
+                    <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>注册时间</th><th>操作</th></tr></thead>
+                    <tbody id="userTableBody"></tbody>
+                </table>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-ghost" onclick="closeUserModal()">关闭</button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Toast提示 -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+    // ======== 修改密码 ========
+    function openPwdModal() {
+        document.getElementById('pwdModal').style.display = 'flex';
+        document.getElementById('oldPassword').value = '';
+        document.getElementById('newPassword').value = '';
+        document.getElementById('confirmPassword').value = '';
+        document.getElementById('pwdError').textContent = '';
+    }
+
+    function closePwdModal() {
+        document.getElementById('pwdModal').style.display = 'none';
+    }
+
+    async function changePassword() {
+        var oldPwd = document.getElementById('oldPassword').value;
+        var newPwd = document.getElementById('newPassword').value;
+        var confirmPwd = document.getElementById('confirmPassword').value;
+        var errEl = document.getElementById('pwdError');
+
+        if (!oldPwd || !newPwd || !confirmPwd) {
+            errEl.textContent = '请填写所有字段';
+            return;
+        }
+        if (newPwd.length < 6) {
+            errEl.textContent = '新密码至少6位';
+            return;
+        }
+        if (newPwd !== confirmPwd) {
+            errEl.textContent = '两次输入的新密码不一致';
+            return;
+        }
+
+        try {
+            var r = await fetch('/api/change_password', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({old_password: oldPwd, new_password: newPwd})
+            });
+            var data = await r.json();
+            if (data.ok) {
+                closePwdModal();
+                showToast('密码修改成功', 'success');
+            } else {
+                errEl.textContent = data.error || '修改失败';
+            }
+        } catch(e) {
+            errEl.textContent = '网络错误，请重试';
+        }
+    }
+
+    // ======== 邀请码管理（管理员） ========
+    function openInviteModal() {
+        document.getElementById('inviteModal').style.display = 'flex';
+        loadInviteCodes();
+    }
+
+    function closeInviteModal() {
+        document.getElementById('inviteModal').style.display = 'none';
+    }
+
+    function loadInviteCodes() {
+        fetch('/api/invite_codes')
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (!data.codes) return;
+                var html = '';
+                for (var i = 0; i < data.codes.length; i++) {
+                    var c = data.codes[i];
+                    var isUsed = c.used_by !== null && c.used_by !== undefined;
+                    var status = isUsed ? '<span style="color:#E74C3C;">已使用</span>' : '<span style="color:#27AE60;">可用</span>';
+                    var note = c.note || '';
+                    var usedBy = c.used_by_name || '';
+                    html += '<tr><td style="font-family:monospace;font-weight:bold;">' + c.code + '</td><td>' + status + '</td><td style="color:#999;font-size:12px;">' + note + '</td><td>' + usedBy + '</td></tr>';
+                }
+                document.getElementById('inviteTableBody').innerHTML = html || '<tr><td colspan="4" style="color:#999;">暂无邀请码</td></tr>';
+            })
+            .catch(function(err) {
+                showToast('加载失败: ' + err.message);
+            });
+    }
+
+    var btnGenInvite = document.getElementById('btnGenInvite');
+    if (btnGenInvite) {
+        btnGenInvite.addEventListener('click', function() {
+            btnGenInvite.disabled = true;
+            btnGenInvite.textContent = '生成中...';
+            fetch('/api/generate_invite', { method: 'POST' })
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    btnGenInvite.disabled = false;
+                    btnGenInvite.textContent = '生成新邀请码';
+                    if (data.code) {
+                        var el = document.getElementById('newInviteCode');
+                        el.textContent = '新邀请码: ' + data.code;
+                        el.style.display = 'block';
+                        loadInviteCodes();
+                    }
+                })
+                .catch(function(err) {
+                    btnGenInvite.disabled = false;
+                    btnGenInvite.textContent = '生成新邀请码';
+                    showToast('生成失败: ' + err.message);
+                });
+        });
+    }
+
+    // ======== 账号管理（管理员） ========
+    function openUserModal() {
+        document.getElementById('userModal').style.display = 'flex';
+        loadUsers();
+    }
+
+    function closeUserModal() {
+        document.getElementById('userModal').style.display = 'none';
+    }
+
+    function loadUsers() {
+        fetch('/api/users')
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (!data.users) return;
+                var html = '';
+                for (var i = 0; i < data.users.length; i++) {
+                    var u = data.users[i];
+                    var role = u.is_admin ? '<span style="background:#E8F0FE;color:#2E5C8A;padding:2px 8px;border-radius:4px;font-size:12px;">管理员</span>' : '<span style="background:#F0F2F5;color:#666;padding:2px 8px;border-radius:4px;font-size:12px;">普通</span>';
+                    var status = u.is_active ? '<span style="color:#27AE60;">正常</span>' : '<span style="color:#E74C3C;">已停用</span>';
+                    var actions = '';
+                    if (u.is_admin) {
+                        actions = '<span style="color:#999;">-</span>';
+                    } else {
+                        actions = '<button class="btn-xs btn-ghost-xs" onclick="toggleUser(' + u.id + ')">' + (u.is_active ? '停用' : '启用') + '</button> '
+                            + '<button class="btn-xs btn-danger-xs" onclick="deleteUser(' + u.id + ')">删除</button> '
+                            + '<button class="btn-xs btn-ghost-xs" onclick="resetPwd(' + u.id + ')">重置密码</button>';
+                    }
+                    html += '<tr><td>' + u.id + '</td><td>' + u.username + '</td><td>' + role + '</td><td>' + status + '</td><td>' + (u.created_at || '') + '</td><td>' + actions + '</td></tr>';
+                }
+                document.getElementById('userTableBody').innerHTML = html || '<tr><td colspan="6" style="color:#999;">暂无用户</td></tr>';
+            })
+            .catch(function(err) {
+                showToast('加载失败: ' + err.message);
+            });
+    }
+
+    function toggleUser(uid) {
+        fetch('/api/users/' + uid + '/toggle', { method: 'POST' })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (!data.ok) { showToast(data.error || '操作失败'); }
+                loadUsers();
+            })
+            .catch(function(err) { showToast('操作失败: ' + err.message); });
+    }
+
+    function deleteUser(uid) {
+        if (!confirm('确定要删除该用户吗？此操作不可恢复！')) return;
+        fetch('/api/users/' + uid + '/delete', { method: 'POST' })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (!data.ok) { showToast(data.error || '删除失败'); }
+                else { showToast('删除成功', 'success'); }
+                loadUsers();
+            })
+            .catch(function(err) { showToast('删除失败: ' + err.message); });
+    }
+
+    function resetPwd(uid) {
+        if (!confirm('确定要重置该用户的密码吗？')) return;
+        fetch('/api/users/' + uid + '/reset_password', { method: 'POST' })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (!data.ok) { showToast(data.error || '重置失败'); }
+                else { showToast('密码已重置', 'success'); }
+            })
+            .catch(function(err) { showToast('重置失败: ' + err.message); });
+    }
+
+    // ======== Toast提示 ========
+    function showToast(msg, type) {
+        var t = document.getElementById('toast');
+        t.textContent = msg;
+        t.className = 'toast ' + (type || '');
+        t.style.display = 'block';
+        clearTimeout(t._timeout);
+        t._timeout = setTimeout(function(){ t.style.display = 'none'; }, 3000);
+    }
+
+    // ======== 弹窗外部点击关闭 ========
+    document.getElementById('pwdModal').addEventListener('click', function(e) {
+        if (e.target === this) closePwdModal();
+    });
+    var invModal = document.getElementById('inviteModal');
+    if (invModal) {
+        invModal.addEventListener('click', function(e) {
+            if (e.target === this) closeInviteModal();
+        });
+    }
+    var usrModal = document.getElementById('userModal');
+    if (usrModal) {
+        usrModal.addEventListener('click', function(e) {
+            if (e.target === this) closeUserModal();
+        });
+    }
+    </script>
+</body>
+</html>

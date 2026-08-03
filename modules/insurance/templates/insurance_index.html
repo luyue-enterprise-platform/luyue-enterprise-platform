@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>鲁岳企业服务.重点群体社保批量统计智能核算系统</title>
+    <link rel="stylesheet" href="{{ url_for('insurance.static', filename='css/style.css') }}">
+</head>
+<body>
+    <!-- 顶部导航 -->
+    <header class="navbar">
+        <div class="nav-brand">
+            <span class="nav-logo">LY</span>
+            <div class="nav-titles">
+                <h1>鲁岳企业服务</h1>
+                <p>重点群体社保批量统计智能核算系统</p>
+            </div>
+        </div>
+        <div class="nav-right">
+            <div class="nav-status" id="navStatus">
+                <span class="status-dot"></span>
+                <span>系统就绪</span>
+            </div>
+            <div class="nav-user">
+                <a href="/" class="btn-nav" title="返回首页">🏠 返回首页</a>
+                <a href="javascript:void(0)" class="btn-nav" id="btnRefresh" title="刷新页面">🔄 刷新</a>
+                <a href="javascript:void(0)" class="btn-nav" id="btnChangePwd">修改密码</a>
+                <span class="user-name">{{ username }}</span>
+                {% if is_admin %}<span class="user-badge">管理员</span>{% endif %}
+                <a href="/logout" class="btn-logout">退出</a>
+            </div>
+        </div>
+    </header>
+
+    <!-- 邀请码管理弹窗（仅管理员） -->
+    {% if is_admin %}
+    <div class="modal-overlay" id="inviteModal" style="display:none;">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>邀请码管理</h3>
+                <button class="modal-close" onclick="document.getElementById('inviteModal').style.display='none'">&times;</button>
+            </div>
+            <div class="modal-body">
+                <button class="btn btn-primary btn-sm" id="btnGenInvite">生成新邀请码</button>
+                <div id="newInviteCode" class="invite-code-display" style="display:none;"></div>
+                <table class="result-table invite-table" id="inviteTable" style="margin-top:16px;">
+                    <thead><tr><th>邀请码</th><th>创建时间</th><th>状态</th><th>使用者</th></tr></thead>
+                    <tbody id="inviteTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 账号管理弹窗（仅管理员） -->
+    <div class="modal-overlay" id="userModal" style="display:none;">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>账号管理</h3>
+                <button class="modal-close" onclick="document.getElementById('userModal').style.display='none'">&times;</button>
+            </div>
+            <div class="modal-body">
+                <table class="result-table invite-table" id="userTable" style="margin-top:8px;">
+                    <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>注册时间</th><th>操作</th></tr></thead>
+                    <tbody id="userTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- 修改密码弹窗（所有用户） -->
+    <div class="modal-overlay" id="pwdModal" style="display:none;">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>修改密码</h3>
+                <button class="modal-close" onclick="document.getElementById('pwdModal').style.display='none'">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="auth-form">
+                    <div class="form-group">
+                        <label>旧密码</label>
+                        <input type="password" id="oldPassword" placeholder="请输入当前密码" autocomplete="current-password">
+                    </div>
+                    <div class="form-group">
+                        <label>新密码</label>
+                        <input type="password" id="newPassword" placeholder="请输入新密码（至少6位）" autocomplete="new-password">
+                    </div>
+                    <div class="form-group">
+                        <label>确认新密码</label>
+                        <input type="password" id="newPassword2" placeholder="请再次输入新密码" autocomplete="new-password">
+                    </div>
+                    <button class="btn btn-primary btn-block" id="btnSavePwd" style="margin-top:12px;">保存修改</button>
+                    <p id="pwdError" style="color:#DC2626; margin-top:8px; display:none;"></p>
+                    <p id="pwdSuccess" style="color:#27AE60; margin-top:8px; display:none;"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主内容 -->
+    <main class="container">
+        <!-- 花名册上传区域 -->
+        <section class="card" id="rosterSection">
+            <h2 class="card-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/>
+                    <line x1="16" y1="17" x2="8" y2="17"/>
+                </svg>
+                人员信息花名册（选填）
+            </h2>
+            <p class="card-desc">上传花名册Excel/CSV表格文件，系统将自动识别人员名单。识别后图片将按"序号+姓名"重命名，并按险种分文件夹归类</p>
+
+            <div class="roster-upload-area">
+                <button class="btn btn-ghost btn-sm" id="btnUploadRoster">上传花名册表格</button>
+                <input type="file" id="rosterInput" multiple accept=".xlsx,.xls,.csv" hidden>
+                <span class="roster-status" id="rosterStatus">未上传花名册</span>
+            </div>
+
+            <div class="roster-preview" id="rosterPreview" style="display:none;">
+                <h3>已识别 <span id="rosterCount">0</span> 人</h3>
+                <div class="roster-list" id="rosterList"></div>
+                <button class="btn btn-ghost btn-sm" id="btnClearRoster">清除花名册</button>
+            </div>
+        </section>
+
+        <!-- 上传区域 -->
+        <section class="card" id="uploadSection">
+            <h2 class="card-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                上传社保权益记录单图片
+            </h2>
+            <p class="card-desc">按文件夹批量上传社保权益记录单（图片或PDF），系统将自动识别并统计四险重叠信息</p>
+
+            <div class="dropzone" id="dropzone">
+                <div class="dropzone-inner">
+                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#4A90D9" stroke-width="1.5">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    <p class="dropzone-text">将文件夹拖拽到此处，或 <span class="link">点击选择文件夹</span></p>
+                    <p class="dropzone-hint">系统将自动识别文件夹内所有图片和PDF（JPG / PNG / BMP / TIF / PDF）</p>
+                </div>
+                <div class="dropzone-alt">
+                    或 <a href="javascript:void(0)" class="link" id="selectFilesLink">选择单个文件</a>
+                </div>
+                <input type="file" id="fileInput" webkitdirectory directory multiple class="file-input-hidden">
+                <input type="file" id="fileInputSingle" multiple accept="image/*,.pdf" class="file-input-hidden">
+            </div>
+
+            <!-- 已选文件列表 -->
+            <div class="file-list" id="fileList" style="display:none;">
+                <h3>已选择 <span id="fileCount">0</span> 个文件</h3>
+                <ul id="fileItems"></ul>
+                <div class="upload-actions">
+                    <button class="btn btn-primary" id="btnUpload">开始识别统计</button>
+                    <button class="btn btn-ghost" id="btnClear">清空</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 处理进度 -->
+        <section class="card" id="progressSection" style="display:none;">
+            <h2 class="card-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                </svg>
+                处理进度
+            </h2>
+            <div class="progress-bar-wrap">
+                <div class="progress-bar" id="progressBar" style="width:0%"></div>
+            </div>
+            <p class="progress-text" id="progressText">正在初始化...</p>
+            <p class="progress-detail" id="progressDetail"></p>
+            <div class="progress-actions" id="progressActions">
+                <button class="btn btn-ghost btn-sm" id="btnPause">暂停</button>
+                <button class="btn btn-danger btn-sm" id="btnCancel">取消任务</button>
+            </div>
+        </section>
+
+        <!-- 结果区域 -->
+        <section class="card" id="resultSection" style="display:none;">
+            <div class="result-header">
+                <h2 class="card-title">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 11H1v12h8V11zM23 1h-8v22h8V1zM15 11h-4v12h4V11z"/>
+                    </svg>
+                    统计结果
+                </h2>
+                <div class="result-actions-top">
+                    <button class="btn btn-success" id="btnSaveToLocation">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        选择保存位置
+                    </button>
+                    <button class="btn btn-ghost" id="btnDownload">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        下载Excel
+                    </button>
+                    <button class="btn btn-ghost" id="btnDownloadOrganized" style="display:none;">
+                        下载参保证明
+                    </button>
+                </div>
+            </div>
+
+            <!-- 汇总信息 -->
+            <div class="summary-bar" id="summaryBar"></div>
+
+            <!-- 缴费单位信息 -->
+            <div class="company-info" id="companyInfo" style="display:none;"></div>
+
+            <!-- 文件整理结果 -->
+            <div class="organize-info" id="organizeInfo" style="display:none;"></div>
+
+            <!-- 年度台账文件列表 -->
+            <div class="yearly-ledger-info" id="yearlyLedgerInfo" style="display:none;"></div>
+
+            <!-- 结果表格 -->
+            <div class="table-wrap">
+                <table class="result-table" id="resultTable"></table>
+            </div>
+
+            <!-- 重新开始 -->
+            <div class="result-actions">
+                <button class="btn btn-ghost" id="btnRestart">重新上传</button>
+            </div>
+        </section>
+
+        <!-- 错误提示 -->
+        <div class="toast" id="toast" style="display:none;"></div>
+    </main>
+
+    <footer class="footer">
+        <p>鲁岳企业服务.重点群体社保批量统计智能核算系统 &copy; 2026 | 基于OCR智能识别技术</p>
+    </footer>
+
+    <script src="{{ url_for('insurance.static', filename='js/app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>批量PDF转WORD系统</title>
+    <link rel="stylesheet" href="{{ url_for('pdf2word.static', filename='css/style.css') }}">
+</head>
+<body>
+    <!-- 顶部导航 -->
+    <nav class="navbar">
+        <div class="nav-brand">
+            <span class="brand-icon">📄</span>
+            <span class="brand-text">批量PDF转WORD系统</span>
+        </div>
+        <div class="nav-actions">
+            <a class="btn-nav" href="/" title="返回首页">🏠 返回首页</a>
+            <button class="btn-nav" onclick="location.reload()" title="刷新页面">🔄 刷新</button>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <!-- 第一步：上传PDF文件 -->
+        <section class="card">
+            <div class="card-header">
+                <span class="step-badge">1</span>
+                <h2>上传 PDF 文件</h2>
+                <span class="card-tip">仅支持 .pdf 格式，可批量上传</span>
+            </div>
+            <div class="card-body">
+                <div class="dropzone" id="dropzone">
+                    <input type="file" id="fileInput" accept=".pdf" multiple hidden>
+                    <div class="dropzone-content">
+                        <span class="upload-icon">📄</span>
+                        <p>拖拽 PDF 文件到此处</p>
+                        <p class="upload-hint">或 <a href="#" onclick="document.getElementById('fileInput').click();return false;">点击选择文件</a></p>
+                        <p class="upload-hint">支持批量上传多个 PDF 文件</p>
+                    </div>
+                </div>
+                <div class="file-list" id="fileList" style="display:none;">
+                    <div class="file-list-header">
+                        <span id="fileCount"></span>
+                        <button class="btn-ghost btn-sm" onclick="clearFiles()">清空</button>
+                    </div>
+                    <div class="file-items" id="fileItems"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 开始转换 -->
+        <section class="card" id="actionSection" style="display:none;">
+            <div class="card-body" style="text-align:center;">
+                <button class="btn-primary btn-lg" id="startBtn" onclick="startConvert()">
+                    🚀 开始转换
+                </button>
+                <p class="action-hint">将选中的 PDF 文件批量转换为 Word (.docx) 格式</p>
+            </div>
+        </section>
+
+        <!-- 转换进度 -->
+        <section class="card" id="progressSection" style="display:none;">
+            <div class="card-header">
+                <h2>转换进度</h2>
+            </div>
+            <div class="card-body">
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+                <p class="progress-text" id="progressText">准备中...</p>
+            </div>
+        </section>
+
+        <!-- 转换结果 -->
+        <section class="card" id="resultSection" style="display:none;">
+            <div class="card-header">
+                <span class="step-badge done">✓</span>
+                <h2>转换完成</h2>
+            </div>
+            <div class="card-body">
+                <!-- 统计卡片 -->
+                <div class="stats-grid" id="statsGrid"></div>
+
+                <!-- 转换详情 -->
+                <div class="result-detail">
+                    <h3>转换详情</h3>
+                    <div class="table-wrapper">
+                        <table class="result-table" id="resultTable">
+                            <thead>
+                                <tr>
+                                    <th>序号</th>
+                                    <th>原PDF文件名</th>
+                                    <th>Word文件名</th>
+                                    <th>页数</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resultTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 下载按钮 -->
+                <div class="action-buttons">
+                    <button class="btn-primary btn-lg" id="btnSaveToLocation" onclick="saveToLocation(this)">
+                        📁 选择保存位置
+                    </button>
+                    <button class="btn-ghost" onclick="downloadAll(this)">
+                        📥 下载ZIP
+                    </button>
+                    <button class="btn-ghost" onclick="resetAll()">
+                        🔄 重新转换
+                    </button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Toast 提示 -->
+    <div class="toast" id="toast"></div>
+
+    <script src="{{ url_for('pdf2word.static', filename='js/app.js') }}"></script>
+</body>
+</html>

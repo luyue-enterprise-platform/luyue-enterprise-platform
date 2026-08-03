@@ -1,0 +1,17 @@
+# Render.com 部署配置
+# 在 render.com 创建 Web Service 时，选择 "Deploy from Git repository"
+# 然后将此仓库推送到 GitHub，Render 会自动识别此配置
+
+services:
+  - type: web
+    name: luyue-auth-server
+    env: python
+    region: singapore  # 新加坡（亚洲延迟低）
+    buildCommand: pip install -r requirements-server.txt
+    startCommand: gunicorn auth_server:app -b 0.0.0.0:$PORT --timeout 30
+    envVars:
+      - key: API_KEY
+        value: ly_qyfw_2026_auth_key  # 修改为你的密钥，与 EXE 中 AUTH_API_KEY 一致
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    plan: free

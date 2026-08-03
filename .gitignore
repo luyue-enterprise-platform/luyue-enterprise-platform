@@ -1,0 +1,43 @@
+# Python 编译文件
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# 打包产物
+build/
+dist/
+*.spec
+
+# 用户数据 / 运行时数据
+uploads/
+outputs/
+logs/
+*.log
+
+# 数据库文件（本地认证数据）
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# 认证配置文件（含远程服务器地址）
+auth_config.json
+
+# 虚拟环境
+venv/
+env/
+.venv/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# .workbuddy 项目数据
+.workbuddy/
