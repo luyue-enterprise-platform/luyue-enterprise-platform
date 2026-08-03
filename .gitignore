@@ -39,5 +39,8 @@ env/
 Thumbs.db
 desktop.ini
 
+# 推送脚本
+push_to_github.bat
+
 # .workbuddy 项目数据
 .workbuddy/
