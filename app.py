@@ -7,17 +7,16 @@ import os
 import sys
 
 # ============ 路径设置 ============
-IS_FROZEN = getattr(sys, 'frozen', False)
-if IS_FROZEN:
-    RESOURCE_DIR = sys._MEIPASS
-    DATA_DIR = os.path.dirname(sys.executable)
-else:
-    RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
-    DATA_DIR = RESOURCE_DIR
+from core.paths import data_dir, resource_dir
 
-# 确保项目根目录在 Python 路径中
-if DATA_DIR not in sys.path:
-    sys.path.insert(0, DATA_DIR)
+# 资源目录（_MEIPASS 或项目根目录）— 用于模板/静态文件
+RESOURCE_DIR = resource_dir()
+# 数据目录（自动处理 Program Files 权限问题：安装时重定向到 %APPDATA%）
+DATA_DIR = data_dir()
+
+# 确保资源目录在 Python 路径中（用于 import core.*、modules.*）
+if RESOURCE_DIR not in sys.path:
+    sys.path.insert(0, RESOURCE_DIR)
 
 # ============ 日志配置 ============
 import logging

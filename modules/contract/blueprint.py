@@ -22,16 +22,19 @@ from .core.file_renamer import rename_contract_images, IMAGE_EXTENSIONS
 from core.auth import login_required
 
 # ===== 路径设置 =====
+# 用户数据（数据库/上传/输出/日志）放在可写数据目录
+# 自动处理 Program Files 受保护目录：重定向到 %APPDATA%\\鲁岳企业服务
+from core.paths import data_dir
+DATA_DIR = data_dir()
+
 IS_FROZEN = getattr(sys, 'frozen', False)
 if IS_FROZEN:
     # PyInstaller 单文件模式：模板/静态资源按 build.spec 中的 (src, dst) 存放
     # build.spec 将 modules/contract/templates 打包到 modules/contract/templates
     # 因此本蓝图的 RESOURCE_DIR 应为 sys._MEIPASS/modules/contract
     RESOURCE_DIR = os.path.join(sys._MEIPASS, 'modules', 'contract')
-    DATA_DIR = os.path.dirname(sys.executable)
 else:
     RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
-    DATA_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ===== Blueprint 创建 =====
 contract_bp = Blueprint(

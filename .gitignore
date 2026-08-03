@@ -40,8 +40,11 @@ env/
 Thumbs.db
 desktop.ini
 
-# 推送脚本
+# 推送脚本 / 发布脚本（含 Token）
 push_to_github.bat
+release.ps1
+_pythonanywhere_upload/
+_scripts/
 
 # .workbuddy 项目数据
 .workbuddy/

@@ -22,23 +22,25 @@ from flask import (Blueprint, request, jsonify, send_file,
 
 # ============ 路径设置 ============
 # PyInstaller 单文件模式：模板/静态/核心模块在临时解压目录(sys._MEIPASS)
-# 用户数据（数据库/上传/输出/日志）放在 exe 同目录
+# 用户数据（数据库/上传/输出/日志）放在可写数据目录
+# 自动处理 Program Files 受保护目录：重定向到 %APPDATA%\\鲁岳企业服务
+from core.paths import data_dir, resource_dir
+DATA_DIR = data_dir()
+
 IS_FROZEN = getattr(sys, 'frozen', False)
 if IS_FROZEN:
     # PyInstaller 单文件模式：模板/静态资源按 build.spec 中的 (src, dst) 存放
     # build.spec 将 modules/insurance/templates 打包到 modules/insurance/templates
     # 因此本蓝图的 RESOURCE_DIR 应为 sys._MEIPASS/modules/insurance
     RESOURCE_DIR = os.path.join(sys._MEIPASS, 'modules', 'insurance')
-    DATA_DIR = os.path.dirname(sys.executable)  # 用户数据目录
 else:
     # blueprint.py 位于 modules/insurance/ 目录下
     # RESOURCE_DIR 指向 modules/insurance/（模板、静态资源、core 模块）
     RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
-    # DATA_DIR 指向项目根目录（用户数据目录：uploads/outputs/logs/data）
-    DATA_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# 确保项目根目录在 Python 路径中，以便导入 core.auth 和 modules.insurance.core.*
-_PROJECT_ROOT = DATA_DIR
+# 确保项目根目录（资源目录）在 Python 路径中，以便导入 core.auth 和 modules.insurance.core.*
+# 注意：使用 RESOURCE_DIR（项目根/_MEIPASS）而非 DATA_DIR（可能已重定向到 %APPDATA%）
+_PROJECT_ROOT = resource_dir()
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 

@@ -49,10 +49,9 @@ def _load_auth_config():
 _load_auth_config()
 
 # 数据库路径（本地模式使用）
-if getattr(sys, 'frozen', False):
-    _DEFAULT_DATA_DIR = os.path.join(os.path.dirname(sys.executable), 'data')
-else:
-    _DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
+# 自动处理 Program Files 受保护目录：重定向到 %APPDATA%\\鲁岳企业服务
+from core.paths import data_dir as _core_data_dir
+_DEFAULT_DATA_DIR = os.path.join(_core_data_dir(), 'data')
 
 DB_PATH = os.path.join(_DEFAULT_DATA_DIR, 'users.db')
 

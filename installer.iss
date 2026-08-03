@@ -9,7 +9,7 @@
 
 #define MyAppName "鲁岳企业服务·综合智能平台"
 #define MyAppShortName "鲁岳企业服务"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.1.1"
 #define MyAppPublisher "鲁岳企业服务"
 #define MyAppURL "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform"
 #define MyAppExeName "鲁岳企业服务_综合智能平台.exe"
@@ -22,11 +22,12 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={autopf}\{#MyAppShortName}
+; 默认安装到用户目录（无需管理员权限，避免 Program Files 写入权限问题）
+DefaultDirName={localappdata}\Programs\{#MyAppShortName}
 DefaultGroupName={#MyAppShortName}
 DisableProgramGroupPage=yes
 DisableDirPage=no
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=output_installer
 OutputBaseFilename=鲁岳企业服务_综合智能平台_安装程序_v{#MyAppVersion}
@@ -67,8 +68,9 @@ Source: "version.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesn
 Source: "static\assets\logo.ico"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
-Name: "{autodesktop}\{#MyAppShortName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{commonstartup}\{#MyAppShortName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: startup; Flags: runmaximized
+; 用户级安装：使用 {userdesktop}/{userstartup} 而非系统级路径
+Name: "{userdesktop}\{#MyAppShortName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{userstartup}\{#MyAppShortName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: startup; Flags: runmaximized
 Name: "{group}\{#MyAppShortName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\卸载 {#MyAppShortName}"; Filename: "{uninstallexe}"
 
