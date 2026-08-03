@@ -22,19 +22,16 @@ from .core.file_renamer import rename_contract_images, IMAGE_EXTENSIONS
 from core.auth import login_required
 
 # ===== 路径设置 =====
-# 用户数据（数据库/上传/输出/日志）放在可写数据目录
-# 自动处理 Program Files 受保护目录：重定向到 %APPDATA%\\鲁岳企业服务
-from core.paths import data_dir
-DATA_DIR = data_dir()
-
 IS_FROZEN = getattr(sys, 'frozen', False)
 if IS_FROZEN:
     # PyInstaller 单文件模式：模板/静态资源按 build.spec 中的 (src, dst) 存放
     # build.spec 将 modules/contract/templates 打包到 modules/contract/templates
     # 因此本蓝图的 RESOURCE_DIR 应为 sys._MEIPASS/modules/contract
     RESOURCE_DIR = os.path.join(sys._MEIPASS, 'modules', 'contract')
+    DATA_DIR = os.path.dirname(sys.executable)
 else:
     RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATA_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ===== Blueprint 创建 =====
 contract_bp = Blueprint(
@@ -141,18 +138,32 @@ def api_upload():
     if not files or (len(files) == 1 and files[0].filename == ''):
         return jsonify({'error': '请选择劳动合同文件'}), 400
 
+    # 读取文件夹映射（文件索引 -> 文件夹名）
+    folder_map = {}
+    folder_map_json = request.form.get('folder_map', '')
+    if folder_map_json:
+        try:
+            folder_map = json.loads(folder_map_json)
+        except json.JSONDecodeError:
+            pass
+
     task_id = uuid.uuid4().hex[:8]
     task_dir = os.path.join(UPLOAD_DIR, task_id)
     os.makedirs(task_dir, exist_ok=True)
 
-    # 保存所有文件
+    # 保存所有文件，同时记录文件夹名
     saved_paths = []
-    for f in files:
+    folder_hints = {}  # {saved_path: folder_name}
+    for idx, f in enumerate(files):
         if f.filename:
             safe_name = os.path.basename(f.filename)
             fp = os.path.join(task_dir, safe_name)
             f.save(fp)
             saved_paths.append(fp)
+            # 如果该文件来自文件夹，记录文件夹名
+            folder_name = folder_map.get(str(idx), '')
+            if folder_name:
+                folder_hints[fp] = folder_name
 
     # 初始化任务状态
     with tasks_lock:
@@ -167,7 +178,7 @@ def api_upload():
     # 启动后台处理线程
     thread = threading.Thread(
         target=_process_task,
-        args=(task_id, saved_paths, roster),
+        args=(task_id, saved_paths, roster, folder_hints),
         daemon=True
     )
     thread.start()
@@ -175,7 +186,7 @@ def api_upload():
     return jsonify({'ok': True, 'task_id': task_id, 'total_files': len(saved_paths)})
 
 
-def _process_task(task_id, file_paths, roster):
+def _process_task(task_id, file_paths, roster, folder_hints=None):
     """后台处理任务"""
     try:
         # Step 1: PDF转图片
@@ -184,6 +195,8 @@ def _process_task(task_id, file_paths, roster):
 
         all_images = []
         pdf_converted = 0
+        # 扩展 folder_hints 到 PDF 转换后的图片
+        extended_hints = dict(folder_hints or {})
 
         for fp in file_paths:
             ext = os.path.splitext(fp)[1].lower()
@@ -192,6 +205,11 @@ def _process_task(task_id, file_paths, roster):
                     page_images = pdf_to_images(fp, output_dir=os.path.dirname(fp))
                     all_images.extend(page_images)
                     pdf_converted += 1
+                    # PDF的文件夹名继承到转换后的图片
+                    folder_name = (folder_hints or {}).get(fp, '')
+                    if folder_name:
+                        for img_path in page_images:
+                            extended_hints[img_path] = folder_name
                     logger.info(f'[task:{task_id}] PDF {os.path.basename(fp)} -> {len(page_images)} 页')
                 except Exception as e:
                     logger.error(f'[task:{task_id}] PDF转换失败 {fp}: {e}')
@@ -214,7 +232,7 @@ def _process_task(task_id, file_paths, roster):
         output_task_dir = os.path.join(OUTPUT_DIR, task_id)
         os.makedirs(output_task_dir, exist_ok=True)
 
-        result = rename_contract_images(all_images, roster, output_task_dir)
+        result = rename_contract_images(all_images, roster, output_task_dir, folder_hints=extended_hints)
 
         # 更新任务状态
         with tasks_lock:

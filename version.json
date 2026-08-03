@@ -1,8 +1,8 @@
 {
-  "version": "1.1.3",
-  "version_code": 113,
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/download/v1.1.3/luyue_platform_v1.1.3.exe",
-  "changelog": "v1.1.3 更新内容：\n1. 社保系统新增统计年月范围选择器（可选年+月，精确到月）\n2. 重叠时间段、申请退税总月数、各年度统计月数均按选择的年月范围裁剪\n3. 修复桌面快捷方式图标显示问题，正确显示金色LOGO\n4. 桌面快捷方式名称更改为「LY重点群体涉税申报综合智能平台」\n5. 主界面底部添加公司版权信息",
+  "version": "1.1.4",
+  "version_code": 114,
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/download/v1.1.4/luyue_platform_v1.1.4.exe",
+  "changelog": "v1.1.4 更新内容：\n1. 劳动合同整理模块支持上传以姓名命名的单人文件夹，文件夹内文件自动按花名册序号重命名\n2. 社保智能核算模块年月范围选择器扩展至2030年12月",
   "mandatory": true,
   "published_at": "2026-08-03"
 }

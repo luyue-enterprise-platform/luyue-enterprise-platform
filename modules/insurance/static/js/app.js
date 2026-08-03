@@ -79,9 +79,9 @@ var monthEndSelect = document.getElementById('monthEnd');
     // 默认范围：往前推3年到当前年
     var defaultStartYear = currentYear - 3;
     var defaultEndYear = currentYear;
-    // 下拉范围：2015 ~ 当前年+1
+    // 下拉范围：2015 ~ 2030
     var minYear = 2015;
-    var maxYear = currentYear + 1;
+    var maxYear = 2030;
 
     // 填充年份选项
     var yearOptions = '';

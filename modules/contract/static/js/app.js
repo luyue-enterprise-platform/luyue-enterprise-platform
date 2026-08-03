@@ -4,7 +4,7 @@
 
 // ===== 全局状态 =====
 var rosterData = [];           // [{seq, name, idcard}, ...]
-var selectedFiles = [];        // [File, ...]
+var selectedFiles = [];        // [{file: File, folder: String|null}, ...]
 var currentTaskId = null;
 var pollTimer = null;
 
@@ -125,32 +125,44 @@ dropzone.addEventListener('dragleave', function (e) {
     dropzone.classList.remove('dragover');
 });
 
-dropzone.addEventListener('drop', function (e) {
-    e.preventDefault();
-    dropzone.classList.remove('dragover');
-    addFiles(e.dataTransfer.files);
-});
+// 注意：drop 事件由下方的文件夹递归处理逻辑统一处理
 
 fileInput.addEventListener('change', function () {
-    addFiles(this.files);
+    // 普通文件选择，无文件夹信息
+    var wrapped = [];
+    for (var i = 0; i < this.files.length; i++) {
+        wrapped.push({file: this.files[i], folder: null});
+    }
+    addFiles(wrapped);
     this.value = '';
 });
 
 function addFiles(fileList) {
+    // fileList 可以是 [File, ...] 或 [{file, folder}, ...]
     var added = 0;
     for (var i = 0; i < fileList.length; i++) {
-        var f = fileList[i];
+        var item = fileList[i];
+        // 兼容两种格式
+        var f, folder;
+        if (item.file) {
+            f = item.file;
+            folder = item.folder || null;
+        } else {
+            f = item;
+            folder = null;
+        }
+
         var ext = f.name.split('.').pop().toLowerCase();
         var validExts = ['jpg', 'jpeg', 'png', 'bmp', 'gif', 'tiff', 'tif', 'webp', 'pdf'];
         if (validExts.indexOf(ext) === -1) continue;
 
-        // 避免重复
+        // 避免重复（同名+同大小+同文件夹）
         var dup = selectedFiles.some(function (sf) {
-            return sf.name === f.name && sf.size === f.size;
+            return sf.file.name === f.name && sf.file.size === f.size && (sf.folder || '') === (folder || '');
         });
         if (dup) continue;
 
-        selectedFiles.push(f);
+        selectedFiles.push({file: f, folder: folder});
         added++;
     }
     if (added > 0) {
@@ -162,8 +174,14 @@ function addFiles(fileList) {
 function renderFileList() {
     document.getElementById('fileList').style.display = 'block';
     document.getElementById('fileCount').textContent = '共 ' + selectedFiles.length + ' 个文件';
-    document.getElementById('fileItems').innerHTML = selectedFiles.map(function (f) {
-        return '<span class="file-tag"><span>' + getFileIcon(f.name) + '</span><span class="file-name" title="' + esc(f.name) + '">' + esc(f.name) + '</span></span>';
+    document.getElementById('fileItems').innerHTML = selectedFiles.map(function (item) {
+        var f = item.file;
+        var folderBadge = item.folder
+            ? '<span class="folder-badge" title="来自文件夹: ' + esc(item.folder) + '">📁 ' + esc(item.folder) + '</span>'
+            : '';
+        return '<span class="file-tag">' + folderBadge +
+            '<span>' + getFileIcon(f.name) + '</span>' +
+            '<span class="file-name" title="' + esc(f.name) + '">' + esc(f.name) + '</span></span>';
     }).join('');
 }
 
@@ -206,8 +224,18 @@ function startProcess() {
 
     var formData = new FormData();
     formData.append('roster', JSON.stringify(rosterData));
-    selectedFiles.forEach(function (f) {
-        formData.append('files', f);
+
+    // 构建文件夹映射：{文件索引: 文件夹名}
+    var folderMap = {};
+    selectedFiles.forEach(function (item, idx) {
+        if (item.folder) {
+            folderMap[idx] = item.folder;
+        }
+    });
+    formData.append('folder_map', JSON.stringify(folderMap));
+
+    selectedFiles.forEach(function (item) {
+        formData.append('files', item.file);
     });
 
     // 显示进度区
@@ -407,14 +435,19 @@ function resetAll() {
     document.getElementById('startBtn').textContent = '🚀 开始整理';
 }
 
-// ===== 支持文件夹拖拽 =====
+// ===== 支持文件夹拖拽（保留文件夹名用于人员匹配） =====
 dropzone.addEventListener('drop', function (e) {
     e.preventDefault();
     dropzone.classList.remove('dragover');
 
     var items = e.dataTransfer.items;
     if (!items) {
-        addFiles(e.dataTransfer.files);
+        // 无 items API，退化为普通文件
+        var wrapped = [];
+        for (var i = 0; i < e.dataTransfer.files.length; i++) {
+            wrapped.push({file: e.dataTransfer.files[i], folder: null});
+        }
+        addFiles(wrapped);
         return;
     }
 
@@ -428,24 +461,31 @@ dropzone.addEventListener('drop', function (e) {
     }
 
     if (pending.length === 0) {
-        addFiles(e.dataTransfer.files);
+        var wrapped2 = [];
+        for (var j = 0; j < e.dataTransfer.files.length; j++) {
+            wrapped2.push({file: e.dataTransfer.files[j], folder: null});
+        }
+        addFiles(wrapped2);
         return;
     }
 
-    var allFiles = [];
-    function processEntry(entry) {
+    var allFiles = [];  // [{file: File, folder: String|null}, ...]
+
+    function processEntry(entry, folderName) {
         if (entry.isFile) {
             return new Promise(function (resolve) {
                 entry.file(function (file) {
-                    allFiles.push(file);
+                    allFiles.push({file: file, folder: folderName || null});
                     resolve();
                 });
             });
         } else if (entry.isDirectory) {
+            // 文件夹名作为人员姓名来源（仅取顶层文件夹名）
+            var currentFolder = folderName || entry.name;
             return new Promise(function (resolve) {
                 var dirReader = entry.createReader();
                 dirReader.readEntries(function (entries) {
-                    var promises = entries.map(function (e) { return processEntry(e); });
+                    var promises = entries.map(function (e) { return processEntry(e, currentFolder); });
                     Promise.all(promises).then(resolve);
                 });
             });
@@ -453,7 +493,7 @@ dropzone.addEventListener('drop', function (e) {
         return Promise.resolve();
     }
 
-    Promise.all(pending.map(function (entry) { return processEntry(entry); }))
+    Promise.all(pending.map(function (entry) { return processEntry(entry, null); }))
         .then(function () {
             if (allFiles.length > 0) {
                 addFiles(allFiles);
