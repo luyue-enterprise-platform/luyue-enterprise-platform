@@ -5,13 +5,14 @@
 """
 import os
 import sys
+import base64
 
 # ============ 路径设置 ============
 from core.paths import data_dir, resource_dir
 
-# 资源目录（_MEIPASS 或项目根目录）— 用于模板/静态文件
+# 资源目录（_MEIPASS 或项目根目录）— 用于静态/模板文件
 RESOURCE_DIR = resource_dir()
-# 数据目录（自动处理 Program Files 权限问题：安装时重定向到 %APPDATA%）
+# 数据目录（自动处理 Program Files 权限问题：安装时重定向至 %APPDATA%）
 DATA_DIR = data_dir()
 
 # 确保资源目录在 Python 路径中（用于 import core.*、modules.*）
@@ -83,11 +84,11 @@ def _load_local_version():
                     return _json.load(f)
             except Exception:
                 pass
-    # 默认版本（确保服务端能识别）
     return {'version': '1.0.0', 'version_code': 100, 'download_url': '', 'changelog': ''}
 
 APP_VERSION = _load_local_version()
 logger.info(f'当前版本: v{APP_VERSION.get("version", "?")} (code={APP_VERSION.get("version_code", "?")})')
+
 
 # ============ 共享路由：登录 / 注册 / 退出 ============
 from flask import request, jsonify, render_template, session, redirect, url_for
@@ -238,7 +239,7 @@ def portal():
 @app.route('/api/app/version', methods=['GET'])
 @login_required
 def api_app_version():
-    """返回本地版本信息（前端用于检查更新）"""
+    """返回本地版本信息"""
     return jsonify({
         'ok': True,
         'version': APP_VERSION.get('version', '1.0.0'),
@@ -247,29 +248,31 @@ def api_app_version():
     })
 
 
+# 远程版本信息地址（GitHub Raw URL，无需 PythonAnywhere）
+REMOTE_VERSION_URLS = [
+    'https://raw.githubusercontent.com/luyue-enterprise-platform/luyue-enterprise-platform/main/version.json',
+    'https://api.github.com/repos/luyue-enterprise-platform/luyue-enterprise-platform/contents/version.json',
+]
+
+
 @app.route('/api/app/check_update', methods=['GET'])
 @login_required
 def api_check_update():
-    """从远程服务器拉取最新版本信息"""
+    """从 GitHub 远程抓取最新版本信息，对比 version_code 判断是否需要更新"""
     import json as _json
     import urllib.request as _ur
     import urllib.error as _ue
 
-    # 远程模式：从认证服务器获取（auth_config 中已配置）
-    from core.auth import AUTH_SERVER_URL
-    base_url = (AUTH_SERVER_URL or 'https://luyue.pythonanywhere.com').rstrip('/')
-    # 优先访问认证服务器的 /api/version，其次访问静态文件 /static/version.json
-    candidate_urls = [
-        base_url + '/api/version',
-        base_url + '/static/version.json',
-        base_url + '/version.json',
-    ]
     last_err = None
-    for url in candidate_urls:
+    for url in REMOTE_VERSION_URLS:
         try:
-            req = _ur.Request(url, headers={'User-Agent': 'LuyueApp/1.0'})
-            with _ur.urlopen(req, timeout=8) as resp:
+            req = _ur.Request(url, headers={'User-Agent': 'LuyueApp/1.1.5'})
+            with _ur.urlopen(req, timeout=10) as resp:
                 raw = resp.read().decode('utf-8', errors='ignore')
+                # GitHub Contents API 返回 JSON 带 content 字段（base64）
+                if 'api.github.com/repos' in url and '"content"' in raw:
+                    api_data = _json.loads(raw)
+                    raw = base64.b64decode(api_data['content']).decode('utf-8')
                 data = _json.loads(raw)
                 local_code = APP_VERSION.get('version_code', 100)
                 remote_code = int(data.get('version_code', 0) or 0)
@@ -283,7 +286,6 @@ def api_check_update():
                     'download_url': data.get('download_url', ''),
                     'changelog': data.get('changelog', ''),
                     'mandatory': bool(data.get('mandatory', False)),
-                    'source_url': url,
                 })
         except _ue.HTTPError as e:
             last_err = f'HTTP {e.code}'
@@ -355,15 +357,9 @@ def api_invite_codes():
 @admin_required
 def api_generate_invite():
     from core.auth import generate_invite_code
-    data = request.get_json(silent=True) or {}
-    count = max(1, min(100, int(data.get('count', 1) or 1)))
-    note = data.get('note', '')
-    result = generate_invite_code(session.get('user_id'), note, count)
-    if result is None:
-        return jsonify({'error': '生成失败'}), 500
-    if isinstance(result, list):
-        return jsonify({'codes': result, 'count': len(result)})
-    return jsonify({'codes': [result], 'count': 1})
+    note = (request.get_json(silent=True) or {}).get('note', '')
+    code = generate_invite_code(session.get('user_id'), note)
+    return jsonify({'code': code})
 
 
 # ============ 用户管理（管理员） ============

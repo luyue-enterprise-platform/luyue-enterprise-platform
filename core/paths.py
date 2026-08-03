@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
-"""
-跨平台数据目录解析工具
+r"""
+路径处理模块
 
-解决 Windows 安装到 C:\\Program Files\\ 等受保护目录时的写入权限问题。
-当 EXE 被安装到 Program Files 下时，普通用户无法向该目录写入，
-需要将数据重定向到 %APPDATA%\\鲁岳企业服务\\。
+处理 Windows 系统的 C:\Program Files\ 等系统保护目录的文件写入问题。
+当 EXE 安装在 Program Files 时，用户需要写入的文件放在 %APPDATA%\鲁岳企业服务\ 目录。
 
-约定：
-- 源码运行 / 便携模式：使用 EXE（或脚本）所在目录
-- 安装到 Program Files 下：自动重定向到 %APPDATA%
+使用约定：
+- 配置文件 / 缓存 -> EXE 目录（如果可写）或 %APPDATA%\鲁岳企业服务\
+- 程序文件（templates 等）-> EXE 所在目录
 """
 import os
 import sys
@@ -17,7 +16,7 @@ APP_NAME = '鲁岳企业服务'
 
 
 def _is_protected_dir(path: str) -> bool:
-    """检查路径是否在受 Windows 保护的 Program Files 目录下"""
+    """检查路径是否在 Windows 系统 Program Files 目录"""
     if sys.platform != 'win32' or not path:
         return False
     try:
@@ -36,47 +35,47 @@ def _is_protected_dir(path: str) -> bool:
 
 
 def get_data_dir() -> str:
-    """获取可写的用户数据目录
+    """获取应用的数据目录
 
     Returns:
-        目录路径字符串。已确保该目录存在。
+        可写入的目录路径。安装时重定向，开发时返回项目目录。
     """
     if getattr(sys, 'frozen', False):
-        # 打包后运行：EXE 所在目录
+        # 打包模式：EXE
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
         if _is_protected_dir(exe_dir):
-            # 受保护目录（Program Files）→ 重定向到 %APPDATA%
+            # 系统保护目录（Program Files）-> 重定向至 %APPDATA%
             appdata = os.environ.get('APPDATA')
             if appdata:
                 user_dir = os.path.join(appdata, APP_NAME)
                 os.makedirs(user_dir, exist_ok=True)
                 return user_dir
-        # 便携模式（EXE 在 D:\\、E:\\ 等非保护位置）→ 仍用 EXE 目录
+        # 非保护目录（EXE 在 D:\ 或 F:\ 等）-> 直接使用 EXE 目录
         return exe_dir
 
-    # 源码运行：使用项目根目录（即 core/ 目录的父目录）
+    # 开发模式：使用项目根目录（同 core/ 的上级目录）
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return project_root
 
 
 def get_resource_dir() -> str:
-    """获取只读资源目录（templates、static、modules 等）
+    """获取资源目录（templates、static、modules 等）
 
     Returns:
-        资源目录路径。打包运行时为 _MEIPASS 临时目录，源码运行时为项目根目录。
+        打包时返回 _MEIPASS 目录。开发时返回项目根目录。
     """
     if getattr(sys, 'frozen', False):
         return getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(sys.executable)))
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-# 模块级缓存（避免重复 IO 与目录判断）
+# 缓存机制（避免多次 IO 和路径计算）
 _DATA_DIR_CACHE: str = None
 _RESOURCE_DIR_CACHE: str = None
 
 
 def data_dir() -> str:
-    """get_data_dir 的缓存版本，便于重复使用"""
+    """get_data_dir 的缓存版本，用于多次调用"""
     global _DATA_DIR_CACHE
     if _DATA_DIR_CACHE is None:
         _DATA_DIR_CACHE = get_data_dir()

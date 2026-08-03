@@ -1,8 +1,8 @@
 {
-  "version": "1.1.4",
-  "version_code": 114,
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/download/v1.1.4/luyue_platform_v1.1.4.exe",
-  "changelog": "v1.1.4 更新内容：\n1. 劳动合同整理模块支持上传以姓名命名的单人文件夹，文件夹内文件自动按花名册序号重命名\n2. 社保智能核算模块年月范围选择器扩展至2030年12月",
+  "version": "1.1.5",
+  "version_code": 115,
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/download/v1.1.5/luyue_platform_v1.1.5.exe",
+  "changelog": "v1.1.5 更新内容：\n1. 修复检查更新功能 — 改用GitHub直连获取版本信息，无需PythonAnywhere\n2. 恢复core/paths.py路径处理模块（Program Files权限保护）\n3. 修复git reset导致的版本检查路由丢失问题",
   "mandatory": true,
   "published_at": "2026-08-03"
 }
