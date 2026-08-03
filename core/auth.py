@@ -122,20 +122,8 @@ def get_db():
     return conn
 
 
-# 预置邀请码列表（软件分发到各电脑后，首次初始化数据库时统一插入）
-# 所有电脑共享同一套邀请码，管理员可查看并分发给用户
-PRESET_INVITE_CODES = [
-    'LYA3K7M2', 'LYB8X4N6', 'LYC2P9Q5', 'LYD6R1S3', 'LYE5T7U8',
-    'LYF4V2W9', 'LYG9X3Y1', 'LYH7Z5A2', 'LYI1B6C4', 'LYJ3D8E7',
-    'LYK5F2G9', 'LYL8H4J1', 'LYM6K3S7', 'LYN2L5T8', 'LYO9Q4U6',
-    'LYP7R1V3', 'LYQ4S9W2', 'LYR8T5X1', 'LYS3U6Y4', 'LYT6V7Z8',
-    'LYU2W9A3', 'LYV5X4B1', 'LYW8Y6C7', 'LYX3Z9D2', 'LYY7A4E5',
-    'LYZ1B8F6', 'LYA9C3G2', 'LYB4D7H5', 'LYC6E1J8', 'LYD8F3K4',
-    'LYE2G7L5', 'LYF5H9M1', 'LYG7J3N6', 'LYH1K8Q4', 'LYI3L5R2',
-    'LYJ9M7S4', 'LYK4N1T8', 'LYL6Q3U5', 'LYM8R7V2', 'LYN2S9W4',
-    'LYO5T1X6', 'LYP7U3Y8', 'LYQ9V5Z1', 'LYR2W7A4', 'LYS4X9B6',
-    'LYT6Y3C8', 'LYU8Z5D1', 'LYV1A7E4', 'LYW3B9F6', 'LYX5C2G8',
-]
+# 预置邀请码已废弃 —— 改为管理员动态生成，仅保留列表引用供兼容
+PRESET_INVITE_CODES = []
 
 
 def init_db(data_dir=None):
@@ -175,25 +163,6 @@ def init_db(data_dir=None):
     except sqlite3.OperationalError:
         c.execute('ALTER TABLE invite_codes ADD COLUMN note TEXT DEFAULT \'\'')
     conn.commit()
-
-    # 预置邀请码：插入缺失的预置邀请码（确保所有电脑都有同一套邀请码）
-    existing_count = c.execute('SELECT COUNT(*) FROM invite_codes').fetchone()[0]
-    inserted = 0
-    now = datetime.now().isoformat()
-    for code in PRESET_INVITE_CODES:
-        # 逐个检查是否已存在，不存在则插入
-        row = c.execute('SELECT id FROM invite_codes WHERE code = ?', (code,)).fetchone()
-        if row is None:
-            c.execute(
-                'INSERT OR IGNORE INTO invite_codes (code, created_by, created_at, note) VALUES (?, NULL, ?, ?)',
-                (code, now, '系统预置')
-            )
-            inserted += 1
-    if inserted > 0:
-        conn.commit()
-        import logging
-        logging.getLogger('platform').info(f'已预置 {inserted} 个邀请码（共 {len(PRESET_INVITE_CODES)} 个）')
-
     conn.close()
 
 
@@ -277,24 +246,28 @@ def get_user_count():
     return count
 
 
-def generate_invite_code(created_by, note=''):
-    """生成邀请码。created_by 为管理员用户ID"""
+def generate_invite_code(created_by, note='', count=1):
+    """生成邀请码，返回单个code（count=1）或codes列表（count>1）。created_by 为管理员用户ID"""
     if _is_remote():
         token = session.get(_SESSION_TOKEN_KEY, '')
         result, status = _remote_request('/api/auth/generate_invite',
-                                          {'note': note}, token=token)
+                                          {'note': note, 'count': count}, token=token)
         if status == 200:
-            return result.get('code', '')
+            codes = result.get('codes', [])
+            return codes[0] if len(codes) == 1 else codes
         return None
-    code = secrets.token_urlsafe(8).replace('-', '').replace('_', '')[:8].upper()
+    codes = []
     conn = get_db()
-    conn.execute(
-        'INSERT INTO invite_codes (code, created_by, created_at, note) VALUES (?, ?, ?, ?)',
-        (code, created_by, datetime.now().isoformat(), note)
-    )
+    for _ in range(count):
+        code = secrets.token_urlsafe(8).replace('-', '').replace('_', '')[:8].upper()
+        conn.execute(
+            'INSERT INTO invite_codes (code, created_by, created_at, note) VALUES (?, ?, ?, ?)',
+            (code, created_by, datetime.now().isoformat(), note)
+        )
+        codes.append(code)
     conn.commit()
     conn.close()
-    return code
+    return codes[0] if len(codes) == 1 else codes
 
 
 def validate_invite_code(code):
@@ -418,6 +391,12 @@ def reset_password(user_id, new_password):
 
 def get_user_by_id(user_id):
     """根据ID获取用户"""
+    if _is_remote():
+        token = session.get(_SESSION_TOKEN_KEY, '')
+        result, status = _remote_request(f'/api/auth/users/{user_id}', method='GET', token=token)
+        if status == 200:
+            return result.get('user', None)
+        return None
     conn = get_db()
     row = conn.execute(
         'SELECT id, username, is_admin, is_active, created_at FROM users WHERE id = ?',

@@ -7,6 +7,7 @@ __pycache__/
 # 打包产物
 build/
 dist/
+output_installer/
 *.spec
 
 # 用户数据 / 运行时数据

@@ -68,6 +68,28 @@ app.register_blueprint(contract_bp)
 app.register_blueprint(pdf2word_bp)
 logger.info('子模块 Blueprint 注册完成')
 
+
+# ============ 当前版本（用于远程更新检查） ============
+def _load_local_version():
+    """读取本地的 version.json"""
+    import json as _json
+    candidates = [
+        os.path.join(DATA_DIR, 'version.json'),
+        os.path.join(RESOURCE_DIR, 'version.json'),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    return _json.load(f)
+            except Exception:
+                pass
+    # 默认版本（确保服务端能识别）
+    return {'version': '1.0.0', 'version_code': 100, 'download_url': '', 'changelog': ''}
+
+APP_VERSION = _load_local_version()
+logger.info(f'当前版本: v{APP_VERSION.get("version", "?")} (code={APP_VERSION.get("version_code", "?")})')
+
 # ============ 共享路由：登录 / 注册 / 退出 ============
 from flask import request, jsonify, render_template, session, redirect, url_for
 from core.auth import (
@@ -208,7 +230,74 @@ def logout():
 def portal():
     return render_template('portal.html',
         username=session.get('username', ''),
-        is_admin=session.get('is_admin', False))
+        is_admin=session.get('is_admin', False),
+        app_version=APP_VERSION.get('version', '1.0.0'),
+        version_code=APP_VERSION.get('version_code', 100))
+
+
+# ============ 版本检查 API ============
+@app.route('/api/app/version', methods=['GET'])
+@login_required
+def api_app_version():
+    """返回本地版本信息（前端用于检查更新）"""
+    return jsonify({
+        'ok': True,
+        'version': APP_VERSION.get('version', '1.0.0'),
+        'version_code': APP_VERSION.get('version_code', 100),
+        'changelog': APP_VERSION.get('changelog', ''),
+    })
+
+
+@app.route('/api/app/check_update', methods=['GET'])
+@login_required
+def api_check_update():
+    """从远程服务器拉取最新版本信息"""
+    import json as _json
+    import urllib.request as _ur
+    import urllib.error as _ue
+
+    # 远程模式：从认证服务器获取（auth_config 中已配置）
+    from core.auth import AUTH_SERVER_URL
+    base_url = (AUTH_SERVER_URL or 'https://luyue.pythonanywhere.com').rstrip('/')
+    # 优先访问认证服务器的 /api/version，其次访问静态文件 /static/version.json
+    candidate_urls = [
+        base_url + '/api/version',
+        base_url + '/static/version.json',
+        base_url + '/version.json',
+    ]
+    last_err = None
+    for url in candidate_urls:
+        try:
+            req = _ur.Request(url, headers={'User-Agent': 'LuyueApp/1.0'})
+            with _ur.urlopen(req, timeout=8) as resp:
+                raw = resp.read().decode('utf-8', errors='ignore')
+                data = _json.loads(raw)
+                local_code = APP_VERSION.get('version_code', 100)
+                remote_code = int(data.get('version_code', 0) or 0)
+                return jsonify({
+                    'ok': True,
+                    'has_update': remote_code > local_code,
+                    'local_version': APP_VERSION.get('version', '1.0.0'),
+                    'local_code': local_code,
+                    'remote_version': data.get('version', ''),
+                    'remote_code': remote_code,
+                    'download_url': data.get('download_url', ''),
+                    'changelog': data.get('changelog', ''),
+                    'mandatory': bool(data.get('mandatory', False)),
+                    'source_url': url,
+                })
+        except _ue.HTTPError as e:
+            last_err = f'HTTP {e.code}'
+            continue
+        except Exception as e:
+            last_err = str(e)
+            continue
+
+    return jsonify({
+        'ok': False,
+        'error': f'检查更新失败: {last_err or "网络异常"}',
+        'has_update': False,
+    }), 200
 
 
 # ============ 修改密码 API（门户 + 子模块共用） ============
@@ -267,9 +356,15 @@ def api_invite_codes():
 @admin_required
 def api_generate_invite():
     from core.auth import generate_invite_code
-    note = (request.get_json(silent=True) or {}).get('note', '')
-    code = generate_invite_code(session.get('user_id'), note)
-    return jsonify({'code': code})
+    data = request.get_json(silent=True) or {}
+    count = max(1, min(100, int(data.get('count', 1) or 1)))
+    note = data.get('note', '')
+    result = generate_invite_code(session.get('user_id'), note, count)
+    if result is None:
+        return jsonify({'error': '生成失败'}), 500
+    if isinstance(result, list):
+        return jsonify({'codes': result, 'count': len(result)})
+    return jsonify({'codes': [result], 'count': 1})
 
 
 # ============ 用户管理（管理员） ============

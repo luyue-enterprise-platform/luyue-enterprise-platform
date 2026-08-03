@@ -1,0 +1,8 @@
+{
+  "version": "1.1.0",
+  "version_code": 110,
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/download/v1.1.0/luyue_platform_v1.1.0.exe",
+  "changelog": "新增远程更新功能，更换企业 Logo，优化安装体验。",
+  "mandatory": false,
+  "published_at": "2026-08-03"
+}
