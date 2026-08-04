@@ -126,107 +126,65 @@ dropzone.addEventListener('dragleave', function (e) {
     dropzone.classList.remove('dragover');
 });
 
-// 注意：drop 事件由下方的文件夹递归处理逻辑统一处理
+dropzone.addEventListener('drop', function (e) {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+
+    var items = e.dataTransfer.items;
+    if (!items) {
+        addFiles(e.dataTransfer.files);
+        return;
+    }
+
+    // 使用 DataTransferItem API 递归读取文件夹
+    var pending = [];
+    for (var i = 0; i < items.length; i++) {
+        var entry = items[i].webkitGetAsEntry ? items[i].webkitGetAsEntry() : null;
+        if (entry) {
+            pending.push(entry);
+        }
+    }
+
+    if (pending.length === 0) {
+        addFiles(e.dataTransfer.files);
+        return;
+    }
+
+    var allFiles = [];
+    function processEntry(entry) {
+        if (entry.isFile) {
+            return new Promise(function (resolve) {
+                entry.file(function (file) {
+                    allFiles.push(file);
+                    resolve();
+                });
+            });
+        } else if (entry.isDirectory) {
+            return new Promise(function (resolve) {
+                var dirReader = entry.createReader();
+                dirReader.readEntries(function (entries) {
+                    var promises = entries.map(function (e) { return processEntry(e); });
+                    Promise.all(promises).then(resolve);
+                });
+            });
+        }
+        return Promise.resolve();
+    }
+
+    Promise.all(pending.map(function (entry) { return processEntry(entry); }))
+        .then(function () {
+            if (allFiles.length > 0) {
+                addFiles(allFiles);
+            }
+        });
+});
 
 fileInput.addEventListener('change', function () {
-    // 普通文件选择，无文件夹信息
-    var wrapped = [];
-    for (var i = 0; i < this.files.length; i++) {
-        wrapped.push({file: this.files[i], folder: null});
-    }
-    addFiles(wrapped);
+    addFiles(this.files);
     this.value = '';
 });
 
-function addFiles(fileList) {
-    // fileList 可以是 [File, ...] 或 [{file, folder}, ...]
-    // 累加模式：不清除之前的选择（文件和文件夹可以混合）
-    var added = 0;
-    for (var i = 0; i < fileList.length; i++) {
-        var item = fileList[i];
-        // 兼容两种格式
-        var f, folder;
-        if (item.file) {
-            f = item.file;
-            folder = item.folder || null;
-        } else {
-            f = item;
-            folder = null;
-        }
-
-        var ext = f.name.split('.').pop().toLowerCase();
-        var validExts = ['jpg', 'jpeg', 'png', 'bmp', 'gif', 'tiff', 'tif', 'webp', 'pdf'];
-        if (validExts.indexOf(ext) === -1) continue;
-
-        // 避免重复（同名+同大小+同文件夹）
-        var dup = selectedFiles.some(function (sf) {
-            return sf.file.name === f.name && sf.file.size === f.size && (sf.folder || '') === (folder || '');
-        });
-        if (dup) continue;
-
-        selectedFiles.push({file: f, folder: folder});
-        added++;
-    }
-    if (added > 0) {
-        renderFileList();
-        checkReady();
-    }
-}
-
-function renderFileList() {
-    document.getElementById('fileList').style.display = 'block';
-    document.getElementById('fileCount').textContent = '共 ' + selectedFiles.length + ' 个文件';
-    document.getElementById('fileItems').innerHTML = selectedFiles.map(function (item, idx) {
-        var fileName = item.file ? item.file.name : (item.name || '未知文件');
-        var folderBadge = item.folder
-            ? '<span class="folder-badge" title="来自文件夹: ' + esc(item.folder) + '">📁 ' + esc(item.folder) + '</span>'
-            : '';
-        return '<span class="file-tag">' + folderBadge +
-            '<span>' + getFileIcon(fileName) + '</span>' +
-            '<span class="file-name" title="' + esc(fileName) + '">' + esc(fileName) + '</span>' +
-            '<span class="file-remove" onclick="removeContractFile(' + idx + ')" title="删除此文件">✕</span>' +
-            '</span>';
-    }).join('');
-}
-
-// ===== 单条删除 =====
-function removeContractFile(idx) {
-    selectedFiles.splice(idx, 1);
-    if (selectedFiles.length === 0) {
-        clearFiles();
-    } else {
-        renderFileList();
-        checkReady();
-    }
-}
-
-function getFileIcon(name) {
-    var ext = name.split('.').pop().toLowerCase();
-    if (ext === 'pdf') return '📄';
-    return '🖼️';
-}
-
-function clearFiles() {
-    if (selectedFiles.length > 0 && !confirm('确定要清空所有已选文件吗？共 ' + selectedFiles.length + ' 个')) {
-        return;
-    }
-    selectedFiles = [];
-    pickIds = [];
-    document.getElementById('fileList').style.display = 'none';
-    hideActionAndResult();
-}
-
-// ===== 检查是否可开始 =====
-function checkReady() {
-    var actionSection = document.getElementById('actionSection');
-    if (rosterData.length > 0 && selectedFiles.length > 0) {
-        actionSection.style.display = 'block';
-    } else {
-        actionSection.style.display = 'none';
-    }
-}
-
-// ===== 通过系统原生对话框选择文件夹（累加模式，支持多次选择） =====
+// ===== 原生文件夹选择（累加模式）=====
 function pickFolder() {
     showToast('正在打开文件夹选择对话框...', 'info');
 
@@ -275,6 +233,96 @@ function pickFolder() {
         });
 }
 
+// ===== 添加文件（累加模式，支持对象数组或File数组）=====
+function addFiles(fileList) {
+    // fileList 可以是 [File, ...] 或 [{file, folder}, ...]
+    // 累加模式：不清除之前的选择（文件和文件夹可以混合）
+    var added = 0;
+    for (var i = 0; i < fileList.length; i++) {
+        var item = fileList[i];
+        // 兼容两种格式
+        var f, folder;
+        if (item.file) {
+            f = item.file;
+            folder = item.folder || null;
+        } else {
+            f = item;
+            folder = null;
+        }
+
+        var ext = f.name.split('.').pop().toLowerCase();
+        var validExts = ['jpg', 'jpeg', 'png', 'bmp', 'gif', 'tiff', 'tif', 'webp', 'pdf'];
+        if (validExts.indexOf(ext) === -1) continue;
+
+        // 避免重复（同名+同大小+同文件夹）
+        var dup = selectedFiles.some(function (sf) {
+            return sf.file.name === f.name && sf.file.size === f.size && (sf.folder || '') === (folder || '');
+        });
+        if (dup) continue;
+
+        selectedFiles.push({file: f, folder: folder});
+        added++;
+    }
+    if (added > 0) {
+        renderFileList();
+        checkReady();
+    }
+}
+
+// ===== 渲染文件列表（含文件夹标签和删除按钮）=====
+function renderFileList() {
+    document.getElementById('fileList').style.display = 'block';
+    document.getElementById('fileCount').textContent = '共 ' + selectedFiles.length + ' 个文件';
+    document.getElementById('fileItems').innerHTML = selectedFiles.map(function (item, idx) {
+        var fileName = item.file ? item.file.name : (item.name || '未知文件');
+        var folderBadge = item.folder
+            ? '<span class="folder-badge" title="来自文件夹: ' + esc(item.folder) + '">📁 ' + esc(item.folder) + '</span>'
+            : '';
+        return '<span class="file-tag">' + folderBadge +
+            '<span>' + getFileIcon(fileName) + '</span>' +
+            '<span class="file-name" title="' + esc(fileName) + '">' + esc(fileName) + '</span>' +
+            '<span class="file-remove" onclick="removeContractFile(' + idx + ')" title="删除此文件">✕</span>' +
+            '</span>';
+    }).join('');
+}
+
+// ===== 单条文件删除 =====
+function removeContractFile(idx) {
+    selectedFiles.splice(idx, 1);
+    if (selectedFiles.length === 0) {
+        clearFiles();
+    } else {
+        renderFileList();
+        checkReady();
+    }
+}
+
+function getFileIcon(name) {
+    var ext = name.split('.').pop().toLowerCase();
+    if (ext === 'pdf') return '📄';
+    return '🖼️';
+}
+
+function clearFiles() {
+    if (selectedFiles.length > 0 && !confirm('确定要清空所有已选文件吗？共 ' + selectedFiles.length + ' 个')) {
+        return;
+    }
+    selectedFiles = [];
+    pickIds = [];
+    document.getElementById('fileList').style.display = 'none';
+    hideActionAndResult();
+}
+
+// ===== 检查是否可开始 =====
+function checkReady() {
+    var actionSection = document.getElementById('actionSection');
+    if (rosterData.length > 0 && selectedFiles.length > 0) {
+        actionSection.style.display = 'block';
+    } else {
+        actionSection.style.display = 'none';
+    }
+}
+
 // ===== 第三步：开始处理 =====
 function startProcess() {
     if (rosterData.length === 0) {
@@ -290,13 +338,6 @@ function startProcess() {
     startBtn.disabled = true;
     startBtn.textContent = '处理中...';
 
-    // 显示进度区
-    document.getElementById('progressSection').style.display = 'block';
-    document.getElementById('progressBar').style.width = '5%';
-    document.getElementById('progressText').textContent = '正在上传文件...';
-    document.getElementById('resultSection').style.display = 'none';
-
-    // 统一使用 upload 端点，同时发送文件和 pick_ids
     var formData = new FormData();
     formData.append('roster', JSON.stringify(rosterData));
 
@@ -324,6 +365,12 @@ function startProcess() {
             formData.append('files', item.file);
         }
     });
+
+    // 显示进度区
+    document.getElementById('progressSection').style.display = 'block';
+    document.getElementById('progressBar').style.width = '5%';
+    document.getElementById('progressText').textContent = '正在上传文件...';
+    document.getElementById('resultSection').style.display = 'none';
 
     fetch('/contract/api/upload', { method: 'POST', body: formData })
         .then(function (r) { return r.json(); })
@@ -511,74 +558,7 @@ function hideActionAndResult() {
 function resetAll() {
     clearRoster();
     clearFiles();
-    pickIds = [];
     hideActionAndResult();
     document.getElementById('startBtn').disabled = false;
     document.getElementById('startBtn').textContent = '🚀 开始整理';
 }
-
-// ===== 支持文件夹拖拽（保留文件夹名用于人员匹配） =====
-dropzone.addEventListener('drop', function (e) {
-    e.preventDefault();
-    dropzone.classList.remove('dragover');
-
-    var items = e.dataTransfer.items;
-    if (!items) {
-        // 无 items API，退化为普通文件
-        var wrapped = [];
-        for (var i = 0; i < e.dataTransfer.files.length; i++) {
-            wrapped.push({file: e.dataTransfer.files[i], folder: null});
-        }
-        addFiles(wrapped);
-        return;
-    }
-
-    // 使用 DataTransferItem API 递归读取文件夹
-    var pending = [];
-    for (var i = 0; i < items.length; i++) {
-        var entry = items[i].webkitGetAsEntry ? items[i].webkitGetAsEntry() : null;
-        if (entry) {
-            pending.push(entry);
-        }
-    }
-
-    if (pending.length === 0) {
-        var wrapped2 = [];
-        for (var j = 0; j < e.dataTransfer.files.length; j++) {
-            wrapped2.push({file: e.dataTransfer.files[j], folder: null});
-        }
-        addFiles(wrapped2);
-        return;
-    }
-
-    var allFiles = [];  // [{file: File, folder: String|null}, ...]
-
-    function processEntry(entry, folderName) {
-        if (entry.isFile) {
-            return new Promise(function (resolve) {
-                entry.file(function (file) {
-                    allFiles.push({file: file, folder: folderName || null});
-                    resolve();
-                });
-            });
-        } else if (entry.isDirectory) {
-            // 文件夹名作为人员姓名来源（仅取顶层文件夹名）
-            var currentFolder = folderName || entry.name;
-            return new Promise(function (resolve) {
-                var dirReader = entry.createReader();
-                dirReader.readEntries(function (entries) {
-                    var promises = entries.map(function (e) { return processEntry(e, currentFolder); });
-                    Promise.all(promises).then(resolve);
-                });
-            });
-        }
-        return Promise.resolve();
-    }
-
-    Promise.all(pending.map(function (entry) { return processEntry(entry, null); }))
-        .then(function () {
-            if (allFiles.length > 0) {
-                addFiles(allFiles);
-            }
-        });
-});

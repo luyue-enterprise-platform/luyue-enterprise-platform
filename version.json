@@ -1,18 +1,18 @@
 {
-  "version": "1.1.19",
-  "version_code": 1119,
-  "release_date": "2026-08-04",
+  "version": "1.1.20",
+  "version_code": 1120,
+  "release_date": "2026-08-05",
   "mandatory": false,
   "changelog": [
-    "v1.1.19 全面修复更新：",
-    "1. 邀请码生成：点击生成后只显示当次生成的邀请码，不再显示历史列表",
-    "2. 邀请码API向后兼容：同时返回code和codes字段，修复生成无效问题",
-    "3. 主界面模块卡片尺寸缩小，确保底部版权栏完整显示",
-    "4. 恢复社保模块统计年月范围选择器（2015-2030年/月下拉）",
-    "5. 恢复社保模块原生文件夹选择功能（pickFolder）",
-    "6. 恢复社保模块追加模式文件管理（多次添加、去重、单条删除）",
-    "7. 恢复社保模块上传时年月范围参数传递和统计裁剪",
-    "8. 恢复社保模块混合模式上传（文件+文件夹组合）"
+    "v1.1.20 劳动合同模块功能恢复：",
+    "1. 恢复劳动合同模块原生文件夹选择功能（pickFolder）",
+    "2. 恢复劳动合同模块追加模式文件管理（多次添加、去重、单条删除）",
+    "3. 恢复劳动合同模块混合模式上传（文件+文件夹组合，pick_ids机制）",
+    "4. 恢复劳动合同模块文件夹名优先匹配花名册（folder_hints）",
+    "5. 恢复劳动合同模块PDF转换后文件夹名继承",
+    "6. 恢复劳动合同模块文件列表显示文件夹标签和删除按钮",
+    "7. 添加'添加文件'和'添加文件夹'按钮，支持多次添加",
+    "8. 清空文件时增加确认提示"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.19"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.20"
 }
