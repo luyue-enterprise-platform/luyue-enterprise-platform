@@ -312,6 +312,12 @@ def get_sections(mode):
         raise ValueError(f'未知模式: {mode}')
 
 
+# 弱关键词：对保险类章节，"参保证明"等通用词作为弱匹配
+# 当文件/文件夹名仅含"参保证明"而无具体险种时，仍可匹配到保险章节
+# 弱关键词分数(5)低于强关键词(10)，确保具体险种优先匹配
+_WEAK_KEYWORDS_INSURANCE = ['参保证明', '社保证明', '社会保险']
+
+
 def _calc_name_score(name, section):
     """
     计算名称与章节关键词的匹配分数（不含排除词检查）
@@ -328,6 +334,14 @@ def _calc_name_score(name, section):
     for kw in matched_kws:
         if name.startswith(kw):
             score += 5
+
+    # 弱关键词匹配（仅保险类章节）
+    # "参保证明"/"社保证明"/"社会保险" 等通用词给予较低分数
+    if section['id'].endswith('_insurance'):
+        for weak_kw in _WEAK_KEYWORDS_INSURANCE:
+            if weak_kw in name:
+                score += 5
+                break  # 只加一次分
 
     # 优先级加成（priority越小优先级越高，分数加成越大）
     if score > 0:

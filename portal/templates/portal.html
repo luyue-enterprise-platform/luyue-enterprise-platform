@@ -10,7 +10,7 @@
     <!-- 顶部导航 -->
     <header class="navbar">
         <div class="nav-brand">
-            <span class="brand-icon">🏢</span>
+            <img class="brand-icon" src="/static/assets/logo.png" alt="鲁岳企业服务">
             <span class="brand-text">鲁岳企业服务·重点群体涉税申报项目资料处理综合智能平台</span>
         </div>
         <div class="nav-user">
@@ -20,6 +20,7 @@
             {% endif %}
             <span class="user-name">{{ username }}</span>
             {% if is_admin %}<span class="user-badge">管理员</span>{% endif %}
+            <button class="btn-nav" id="btnCheckUpdate" onclick="checkAppUpdate(true)">🔄 检查更新</button>
             <button class="btn-nav" onclick="openPwdModal()">🔑 修改密码</button>
             <a href="/logout" class="btn-logout">退出</a>
         </div>
@@ -84,24 +85,35 @@
                 <span class="module-action">进入系统 →</span>
             </a>
 
-            <!-- 留存备查资料汇总 -->
+            <!-- 留存备查资料汇总PDF -->
             <a href="/pdfmerge/" class="module-card">
-                <div class="module-icon">📚</div>
-                <h2 class="module-title">留存备查资料汇总智能系统</h2>
+                <div class="module-icon">📑</div>
+                <h2 class="module-title">留存备查资料汇总PDF智能生成系统</h2>
                 <p class="module-desc">
-                    选择留存备查资料文件夹，自动按章节匹配文件（支持文件夹名称匹配），
-                    智能转换为PDF并生成封面、目录，一键合并为完整汇总PDF文档。
+                    选择资料文件夹，自动匹配退税/抵税所需材料，将图片、Word、Excel、PDF
+                    统一转换为PDF，按样本顺序合成带封面和目录的汇总备查资料。
                 </p>
                 <div class="module-features">
                     <span class="feature-tag">智能匹配</span>
-                    <span class="feature-tag">自动转换</span>
+                    <span class="feature-tag">格式转换</span>
                     <span class="feature-tag">封面目录</span>
-                    <span class="feature-tag">页面编辑</span>
+                    <span class="feature-tag">退税/抵税</span>
                 </div>
                 <span class="module-action">进入系统 →</span>
             </a>
         </div>
     </main>
+
+    <!-- 底部版权信息 -->
+    <footer class="portal-footer">
+        <div class="footer-content">
+            <span>陕西鲁岳企业服务有限公司</span>
+            <span class="footer-divider">|</span>
+            <span>版权所有</span>
+            <span class="footer-divider">|</span>
+            <span>联系方式：18509240888</span>
+        </div>
+    </footer>
 
     <!-- 修改密码弹窗 -->
     <div class="modal-overlay" id="pwdModal" style="display:none;">
@@ -131,11 +143,16 @@
     {% if is_admin %}
     <div class="modal-overlay" id="inviteModal" style="display:none;">
         <div class="modal-box modal-wide">
-            <h3>邀请码管理</h3>
+            <h3>邀请码管理 — 动态生成</h3>
             <div class="modal-body">
-                <button class="btn-primary btn-sm" id="btnGenInvite">生成新邀请码</button>
-                <div id="newInviteCode" class="invite-code-display" style="display:none;"></div>
-                <table class="portal-table" id="inviteTable" style="margin-top:16px;">
+                <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+                    <input type="number" id="genCount" value="1" min="1" max="100"
+                           style="width:70px;padding:6px 8px;border:1px solid #ddd;border-radius:4px;text-align:center;">
+                    <button class="btn-primary btn-sm" id="btnGenInvite">批量生成邀请码</button>
+                    <span style="color:#999;font-size:12px;">（一次最多100个）</span>
+                </div>
+                <div id="newInviteCodes" class="invite-code-display" style="display:none;"></div>
+                <table class="portal-table" id="inviteTable">
                     <thead><tr><th>邀请码</th><th>状态</th><th>备注</th><th>使用者</th></tr></thead>
                     <tbody id="inviteTableBody"></tbody>
                 </table>
@@ -165,6 +182,30 @@
 
     <!-- Toast提示 -->
     <div class="toast" id="toast"></div>
+
+    <!-- 更新提示弹窗 -->
+    <div class="modal-overlay" id="updateModal" style="display:none;">
+        <div class="modal-box modal-wide">
+            <h3 id="updateTitle">软件更新</h3>
+            <div class="modal-body">
+                <p style="margin-bottom:10px;">
+                    当前版本：<strong id="updateLocalVer"></strong><br>
+                    最新版本：<strong id="updateRemoteVer" style="color:#2E5C8A;"></strong>
+                </p>
+                <div style="background:#F8FAFC;padding:14px;border-radius:8px;border:1px solid #E8ECF0;max-height:160px;overflow-y:auto;">
+                    <strong style="display:block;margin-bottom:6px;color:#555;">更新内容：</strong>
+                    <div id="updateChangelog" style="font-size:13px;color:#666;line-height:1.7;white-space:pre-wrap;"></div>
+                </div>
+                <p style="margin-top:10px;font-size:12px;color:#999;">
+                    点击"立即下载"将打开浏览器下载新版本，下载完成后关闭当前程序运行新版本即可。
+                </p>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-ghost" onclick="closeUpdateModal()">稀后再说</button>
+                <button class="btn-primary" id="btnDownloadUpdate">立即下载</button>
+            </div>
+        </div>
+    </div>
 
     <script>
     // ======== 修改密码 ========
@@ -253,21 +294,30 @@
         btnGenInvite.addEventListener('click', function() {
             btnGenInvite.disabled = true;
             btnGenInvite.textContent = '生成中...';
-            fetch('/api/generate_invite', { method: 'POST' })
+            var count = parseInt(document.getElementById('genCount').value) || 1;
+            fetch('/api/generate_invite', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({count: count})
+            })
                 .then(function(res) { return res.json(); })
                 .then(function(data) {
                     btnGenInvite.disabled = false;
-                    btnGenInvite.textContent = '生成新邀请码';
-                    if (data.code) {
-                        var el = document.getElementById('newInviteCode');
-                        el.textContent = '新邀请码: ' + data.code;
+                    btnGenInvite.textContent = '批量生成邀请码';
+                    if (data.codes && data.codes.length > 0) {
+                        var el = document.getElementById('newInviteCodes');
+                        el.innerHTML = '<strong>已生成 ' + data.codes.length + ' 个邀请码：</strong><br>'
+                            + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">'
+                            + data.codes.map(function(c) { return '<code style="background:#E8F5E9;padding:4px 10px;border-radius:4px;font-weight:bold;">' + c + '</code>'; }).join('')
+                            + '</div>';
                         el.style.display = 'block';
                         loadInviteCodes();
+                        showToast('成功生成 ' + data.codes.length + ' 个邀请码', 'success');
                     }
                 })
                 .catch(function(err) {
                     btnGenInvite.disabled = false;
-                    btnGenInvite.textContent = '生成新邀请码';
+                    btnGenInvite.textContent = '批量生成邀请码';
                     showToast('生成失败: ' + err.message);
                 });
         });
@@ -369,6 +419,68 @@
             if (e.target === this) closeUserModal();
         });
     }
+    var updateModalEl = document.getElementById('updateModal');
+    if (updateModalEl) {
+        updateModalEl.addEventListener('click', function(e) {
+            if (e.target === this) closeUpdateModal();
+        });
+    }
+
+    // ======== 远程更新 ========
+    var _pendingDownloadUrl = '';
+
+    function checkAppUpdate(manual) {
+        var btn = document.getElementById('btnCheckUpdate');
+        if (btn) { btn.disabled = true; btn.textContent = '🔄 检测中...'; }
+        fetch('/api/app/check_update')
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (btn) { btn.disabled = false; btn.textContent = '🔄 检查更新'; }
+                if (data.has_update) {
+                    openUpdateModal(data);
+                } else if (manual) {
+                    showToast(data.ok ? '已是最新版本' : (data.error || '已是最新版本'), 'success');
+                }
+            })
+            .catch(function(err) {
+                if (btn) { btn.disabled = false; btn.textContent = '🔄 检查更新'; }
+                if (manual) {
+                    showToast('检查更新失败: ' + err.message);
+                }
+            });
+    }
+
+    function openUpdateModal(data) {
+        document.getElementById('updateLocalVer').textContent = 'v' + data.local_version;
+        document.getElementById('updateRemoteVer').textContent = 'v' + data.remote_version;
+        document.getElementById('updateChangelog').textContent = data.changelog || '无更新说明';
+        _pendingDownloadUrl = data.download_url || '';
+        var btn = document.getElementById('btnDownloadUpdate');
+        btn.disabled = !_pendingDownloadUrl;
+        btn.textContent = _pendingDownloadUrl ? '立即下载' : '暂未提供下载链接';
+        var title = document.getElementById('updateTitle');
+        title.textContent = data.mandatory ? '强制更新' : '发现新版本';
+        document.getElementById('updateModal').style.display = 'flex';
+    }
+
+    function closeUpdateModal() {
+        document.getElementById('updateModal').style.display = 'none';
+    }
+
+    document.getElementById('btnDownloadUpdate').addEventListener('click', function() {
+        if (!_pendingDownloadUrl) {
+            showToast('暂未提供下载链接，请联系管理员');
+            return;
+        }
+        showToast('正在打开浏览器下载新版本...', 'success');
+        window.open(_pendingDownloadUrl, '_blank');
+        setTimeout(function() {
+            closeUpdateModal();
+            showToast('下载已开始，请关闭当前程序后运行新版本', 'success');
+        }, 500);
+    });
+
+    // 更新检查改为手动触发（点击顶部"检查更新"按钮），不再自动静默检查
     </script>
 </body>
 </html>
