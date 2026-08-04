@@ -3,208 +3,145 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>留存备查资料汇总PDF智能生成系统</title>
+    <title>汇总智能系统</title>
     <link rel="stylesheet" href="{{ url_for('pdfmerge.static', filename='css/style.css') }}">
 </head>
 <body>
-    <!-- 顶部导航 -->
     <nav class="navbar">
-        <div class="nav-brand">
-            <span class="brand-icon">📑</span>
-            <span class="brand-text">留存备查资料汇总PDF智能生成系统</span>
-        </div>
-        <div class="nav-actions">
-            <a class="btn-nav" href="/" title="返回首页">🏠 返回首页</a>
-            <button class="btn-nav" onclick="location.reload()" title="刷新页面">🔄 刷新</button>
-        </div>
+        <a href="/portal" class="nav-back">← 返回主页</a>
+        <span class="nav-title">汇总智能系统</span>
+        <span class="nav-version">v2.0</span>
     </nav>
 
-    <main class="main-content">
-        <!-- 第一步：选择模式 -->
-        <section class="card">
+    <div class="container">
+        <!-- Step 1: 模式选择 -->
+        <div class="card">
             <div class="card-header">
                 <span class="step-badge">1</span>
-                <h2>选择生成模式</h2>
-                <span class="card-tip">退税或抵税</span>
+                <span class="card-title">选择模板模式</span>
             </div>
             <div class="card-body">
                 <div class="mode-selector">
                     <div class="mode-card active" id="modeRefund" onclick="selectMode('refund')">
-                        <div class="mode-card-icon">💰</div>
-                        <div class="mode-card-title">退税模式</div>
-                        <div class="mode-card-desc">已缴纳增值税产生多缴税款，申请退税</div>
+                        <div class="mode-icon">📤</div>
+                        <div class="mode-name">退税模式</div>
+                        <div class="mode-desc">退税申请 → 总台账 → 认定证明 → 增值税申报表 → 完税证明 → 劳动合同 → 四险参保证明</div>
                     </div>
                     <div class="mode-card" id="modeDeduction" onclick="selectMode('deduction')">
-                        <div class="mode-card-icon">📋</div>
-                        <div class="mode-card-title">抵税模式</div>
-                        <div class="mode-card-desc">申报时直接抵减增值税，含减免明细表</div>
+                        <div class="mode-icon">📊</div>
+                        <div class="mode-name">抵税模式</div>
+                        <div class="mode-desc">情况说明 → 减免税明细申报表 → 台账 → 认定证明 → 就业信息表 → 劳动合同 → 四险参保证明</div>
                     </div>
                 </div>
             </div>
-        </section>
+        </div>
 
-        <!-- 第二步：输入封面信息 -->
-        <section class="card">
+        <!-- Step 2: 封面信息 -->
+        <div class="card">
             <div class="card-header">
                 <span class="step-badge">2</span>
-                <h2>填写封面信息</h2>
-                <span class="card-tip">将生成在PDF封面</span>
+                <span class="card-title">填写封面信息</span>
             </div>
             <div class="card-body">
-                <div class="form-group">
-                    <label>封面标题 / 公司名称</label>
-                    <input type="text" id="coverTitle" placeholder="例如：宝鸡市宝运汽车运输（集团）有限公司" value="">
-                </div>
-                <div id="refundFields">
+                <div class="form-grid">
                     <div class="form-row">
-                        <div class="form-group">
-                            <label>证明时间段 - 开始</label>
-                            <input type="text" id="periodStart" placeholder="例如：2023年1月" value="">
-                        </div>
-                        <div class="form-group">
-                            <label>证明时间段 - 结束</label>
-                            <input type="text" id="periodEnd" placeholder="例如：2025年12月" value="">
-                        </div>
+                        <label>封面标题</label>
+                        <input type="text" id="coverTitle" placeholder="如：重点群体税收优惠政策">
                     </div>
-                </div>
-                <div id="deductionFields" class="hidden">
-                    <div class="form-group">
-                        <label>所属期（从减免明细表中读取）</label>
-                        <input type="text" id="deductionPeriod" placeholder="例如：2026年3月" value="">
+                    <div class="form-row">
+                        <label>公司名称</label>
+                        <input type="text" id="companyName" placeholder="如：陕西鲁岳企业服务有限公司">
                     </div>
-                    <div class="form-group">
-                        <label>证明时间段（四险参保证明覆盖的月份）</label>
-                        <input type="text" id="proofPeriod" placeholder="例如：2026年1-3月" value="">
+                    <div class="form-row">
+                        <label>证明时间段</label>
+                        <input type="text" id="periodText" placeholder="如：2023年1月-2023年12月">
                     </div>
                 </div>
             </div>
-        </section>
+        </div>
 
-        <!-- 第三步：选择资料文件 -->
-        <section class="card">
+        <!-- Step 3: 文件选择 -->
+        <div class="card">
             <div class="card-header">
                 <span class="step-badge">3</span>
-                <h2>选择资料文件</h2>
-                <span class="card-tip">可多次添加文件或文件夹</span>
+                <span class="card-title">选择资料文件</span>
             </div>
             <div class="card-body">
-                <div class="file-add-buttons">
-                    <button class="btn-primary btn-sm" onclick="selectFiles()">📄 添加文件</button>
-                    <button class="btn-primary btn-sm" onclick="selectFolder()">📁 添加文件夹</button>
-                    <button class="btn-ghost btn-sm" onclick="clearAllFiles()">🗑️ 全部清除</button>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="selectFolder()">📁 添加文件夹</button>
+                    <button class="btn btn-primary" onclick="selectFiles()">📄 添加文件</button>
+                    <button class="btn btn-danger" onclick="clearFiles()">🗑 全部清除</button>
                 </div>
-                <div id="emptyFileHint" class="empty-file-hint">
-                    <div class="icon">📂</div>
-                    <div class="title">请添加资料文件</div>
-                    <div class="hint">支持图片、Word、Excel、PDF等格式，可混合添加文件和文件夹</div>
-                </div>
-                <div id="fileListContainer" class="file-list-container hidden">
-                    <div class="file-list-summary" id="fileListSummary"></div>
-                    <div class="file-list" id="fileList"></div>
-                </div>
-                <div id="capabilityInfo" class="alert alert-info hidden" style="margin-top:12px;"></div>
+                <div class="capability-info" id="capabilityInfo"></div>
+                <div id="fileList" class="file-list"></div>
+                <div id="fileStats" class="file-stats"></div>
             </div>
-        </section>
+        </div>
 
-        <!-- 第四步：预览匹配结果 -->
-        <section class="card hidden" id="matchCard">
+        <!-- Step 4: 转换与匹配 -->
+        <div class="card">
             <div class="card-header">
                 <span class="step-badge">4</span>
-                <h2>文件匹配预览</h2>
-                <span class="card-tip" id="matchSummary"></span>
+                <span class="card-title">智能转换与匹配</span>
             </div>
             <div class="card-body">
-                <div class="section-list" id="sectionList"></div>
-                <div id="unmatchedInfo" class="alert alert-warning hidden" style="margin-top:12px;"></div>
+                <p class="step-desc">将所有文件转为图片 → OCR识别内容 → 与章节名目智能匹配</p>
+                <button class="btn btn-primary btn-large" id="btnProcess" onclick="startProcess()">
+                    🚀 开始转换和智能匹配
+                </button>
+                <div id="processProgress" class="progress-area" style="display:none;">
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="processBar" style="width:0%"></div>
+                    </div>
+                    <div class="progress-text" id="processText">准备中...</div>
+                </div>
             </div>
-        </section>
+        </div>
 
-        <!-- 第五步：生成PDF -->
-        <section class="card">
+        <!-- Step 5: 匹配结果 -->
+        <div class="card" id="cardMatch" style="display:none;">
             <div class="card-header">
                 <span class="step-badge">5</span>
-                <h2>生成汇总PDF</h2>
+                <span class="card-title">匹配结果（可拖拽调整）</span>
+                <div class="header-actions">
+                    <button class="btn btn-sm btn-primary" onclick="addMoreFiles()">➕ 补充材料</button>
+                    <button class="btn btn-sm" onclick="reMatch()">🔄 重新匹配</button>
+                </div>
             </div>
             <div class="card-body">
-                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-                    <button class="btn-primary" id="btnGenerate" onclick="startGenerate()" disabled>
-                        📑 开始生成PDF
-                    </button>
-                    <span style="font-size:13px; color:var(--text-light);">
-                        将自动生成封面、目录，并按样本顺序合并所有资料
-                    </span>
+                <div class="match-summary" id="matchSummary"></div>
+                <div id="sectionsList" class="sections-list"></div>
+                <div id="unmatchedSection" class="unmatched-section" style="display:none;">
+                    <div class="unmatched-header">未匹配图片（不纳入PDF）</div>
+                    <div id="unmatchedList" class="unmatched-list"></div>
                 </div>
             </div>
-        </section>
+        </div>
 
-        <!-- 进度区域 -->
-        <section class="card hidden" id="progressCard">
+        <!-- Step 6: 生成PDF -->
+        <div class="card" id="cardGenerate" style="display:none;">
             <div class="card-header">
-                <h2>生成进度</h2>
-            </div>
-            <div class="progress-container">
-                <div class="progress-bar-wrapper">
-                    <div class="progress-bar-fill" id="progressBar" style="width:0%"></div>
-                </div>
-                <div class="progress-text" id="progressText">准备中...</div>
-                <div class="progress-detail" id="progressDetail"></div>
-            </div>
-        </section>
-
-        <!-- 结果区域 -->
-        <section class="card hidden" id="resultCard">
-            <div class="result-card">
-                <div class="result-icon" id="resultIcon">✅</div>
-                <div class="result-title" id="resultTitle">PDF生成完成！</div>
-                <div class="result-desc" id="resultDesc"></div>
-                <div class="result-actions">
-                    <button class="btn-success" onclick="saveTo()">💾 保存到指定位置</button>
-                    <button class="btn-primary" onclick="openPageEditor()">✏️ 编辑页面</button>
-                    <button class="btn-ghost" onclick="downloadPDF()">⬇️ 直接下载</button>
-                    <button class="btn-ghost" onclick="location.reload()">🔄 重新生成</button>
-                </div>
-            </div>
-        </section>
-
-        <!-- 页面编辑器 -->
-        <section class="card hidden" id="pageEditorCard">
-            <div class="card-header">
-                <span class="step-badge">✏️</span>
-                <h2>页面编辑器</h2>
-                <span class="card-tip" id="editorPageInfo"></span>
+                <span class="step-badge">6</span>
+                <span class="card-title">生成汇总PDF</span>
             </div>
             <div class="card-body">
-                <div class="alert alert-info" id="editorGuide">
-                    💡 点击页面缩略图选中/取消选中，选中后可删除。点击"插入文件"可在指定位置插入新页面。所有操作完成后点击"应用更改并更新目录"。
+                <button class="btn btn-success btn-large" onclick="startGenerate()">
+                    📑 生成PDF（含封面、目录、页码）
+                </button>
+                <div id="generateProgress" class="progress-area" style="display:none;">
+                    <div class="progress-bar-container">
+                        <div class="progress-bar success" id="generateBar" style="width:0%"></div>
+                    </div>
+                    <div class="progress-text" id="generateText">准备中...</div>
                 </div>
-                <div class="page-editor-toolbar">
-                    <button class="btn-primary btn-sm" onclick="insertAfterSelected()">📄 插入文件到此位置后</button>
-                    <button class="btn-danger btn-sm" id="btnDeletePages" onclick="deleteSelectedPages()" disabled>🗑️ 删除选中页面</button>
-                    <span class="selected-info" id="selectedInfo">未选中页面</span>
-                </div>
-                <div class="page-grid" id="pageGrid">
-                    <div class="page-loading">加载页面中...</div>
-                </div>
-                <div class="page-editor-footer">
-                    <button class="btn-ghost" onclick="closePageEditor()">← 返回</button>
-                    <button class="btn-success" onclick="saveTo()">💾 保存到指定位置</button>
-                    <button class="btn-ghost" onclick="location.reload()">🔄 重新生成</button>
+                <div id="resultActions" class="result-actions" style="display:none;">
+                    <button class="btn btn-primary" onclick="previewPDF()">👁 预览PDF</button>
+                    <button class="btn btn-success" onclick="downloadPDF()">⬇ 下载</button>
+                    <button class="btn btn-primary" onclick="saveTo()">💾 另存为</button>
                 </div>
             </div>
-        </section>
-
-        <!-- 错误区域 -->
-        <section class="card hidden" id="errorCard">
-            <div class="result-card">
-                <div class="result-icon">❌</div>
-                <div class="result-title">生成失败</div>
-                <div class="result-desc" id="errorMsg"></div>
-                <div class="result-actions">
-                    <button class="btn-ghost" onclick="location.reload()">🔄 重新开始</button>
-                </div>
-            </div>
-        </section>
-    </main>
+        </div>
+    </div>
 
     <script src="{{ url_for('pdfmerge.static', filename='js/app.js') }}"></script>
 </body>
