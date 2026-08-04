@@ -1,14 +1,13 @@
 {
-  "version": "1.1.16",
-  "version_code": 1116,
-  "release_date": "2026-08-04",
+  "version": "1.1.17",
+  "version_code": 1117,
+  "release_date": "2026-08-05",
   "mandatory": false,
   "changelog": [
-    "v1.1.16 恢复版本：",
-    "1. 恢复到v1.1.16版本设置（留存备查资料汇总PDF智能生成系统）",
-    "2. 四模块布局：社保智能核算、劳动合同整理、PDF转Word、汇总智能系统",
-    "3. 汇总模块支持多次添加文件/文件夹混合",
-    "4. 支持文件夹递归读取、多文件多选同时添加"
+    "v1.1.17 更新：",
+    "1. 移除汇总智能系统模块",
+    "2. 恢复为三模块布局：社保智能核算、劳动合同整理、PDF转Word",
+    "3. 精简界面，提升启动速度"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.16"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.17"
 }

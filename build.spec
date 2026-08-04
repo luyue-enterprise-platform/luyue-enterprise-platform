@@ -67,9 +67,6 @@ all_datas = [
     # PDF转Word模块
     ('modules/pdf2word/templates', 'modules/pdf2word/templates'),
     ('modules/pdf2word/static', 'modules/pdf2word/static'),
-    # 留存备查资料汇总PDF模块
-    ('modules/pdfmerge/templates', 'modules/pdfmerge/templates'),
-    ('modules/pdfmerge/static', 'modules/pdfmerge/static'),
     # 版本信息（用于远程更新检查）
     ('version.json', '.'),
 ] + rapidocr_data + webview_data + clr_loader_data + pythonnet_data + pdf2docx_data + docx_data + pywin32_data
