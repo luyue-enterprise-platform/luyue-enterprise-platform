@@ -1,13 +1,16 @@
 {
-  "version": "1.1.17",
-  "version_code": 1117,
+  "version": "1.1.18",
+  "version_code": 1118,
   "release_date": "2026-08-05",
   "mandatory": false,
   "changelog": [
-    "v1.1.17 更新：",
-    "1. 移除汇总智能系统模块",
-    "2. 恢复为三模块布局：社保智能核算、劳动合同整理、PDF转Word",
-    "3. 精简界面，提升启动速度"
+    "v1.1.18 修复更新：",
+    "1. 修复主界面邀请码批量生成功能（API返回格式不匹配）",
+    "2. 移除社保模块中的邀请码和账号管理功能，仅保留在主界面",
+    "3. 社保模块顶部按钮统一为：返回首页、刷新",
+    "4. 修复主界面LOGO图标显示异常",
+    "5. 修复主界面底部版权栏丢失",
+    "6. 修复整体页面渲染样式"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.17"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.18"
 }

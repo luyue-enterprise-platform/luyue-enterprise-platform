@@ -396,9 +396,15 @@ def api_invite_codes():
 @admin_required
 def api_generate_invite():
     from core.auth import generate_invite_code
-    note = (request.get_json(silent=True) or {}).get('note', '')
-    code = generate_invite_code(session.get('user_id'), note)
-    return jsonify({'code': code})
+    data = request.get_json(silent=True) or {}
+    note = data.get('note', '')
+    count = min(int(data.get('count', 1)), 100)
+    codes = []
+    for _ in range(count):
+        code = generate_invite_code(session.get('user_id'), note)
+        if code:
+            codes.append(code)
+    return jsonify({'codes': codes})
 
 
 # ============ 用户管理（管理员） ============

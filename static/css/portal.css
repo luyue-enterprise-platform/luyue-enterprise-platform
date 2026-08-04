@@ -24,7 +24,7 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 0 28px;
-    height: 54px;
+    height: 60px;
     background: linear-gradient(135deg, #1a3d5c 0%, #2E5C8A 100%);
     color: #fff;
     flex-shrink: 0;
@@ -37,12 +37,10 @@ body {
 }
 
 .brand-icon {
-    width: 34px;
-    height: 34px;
-    object-fit: contain;
+    width: 36px;
+    height: 36px;
     border-radius: 6px;
-    background: rgba(255,255,255,0.12);
-    padding: 3px;
+    object-fit: contain;
 }
 
 .brand-text {
@@ -97,25 +95,27 @@ body {
 
 /* --- 主内容区 --- */
 .portal-main {
-    max-width: 920px;
+    max-width: 960px;
     margin: 0 auto;
-    padding: 18px 24px 16px;
+    padding: 48px 24px 60px;
+    flex: 1 0 auto;
+    width: 100%;
 }
 
 .portal-hero {
     text-align: center;
-    margin-bottom: 14px;
+    margin-bottom: 40px;
 }
 
 .portal-hero h1 {
-    font-size: 22px;
+    font-size: 26px;
     color: #1a3d5c;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
     font-weight: 700;
 }
 
 .portal-hero p {
-    font-size: 14px;
+    font-size: 15px;
     color: #666;
 }
 
@@ -123,15 +123,15 @@ body {
 .module-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 14px;
+    gap: 28px;
 }
 
 .module-card {
     display: block;
     background: #fff;
-    border-radius: 12px;
-    padding: 16px 20px 14px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    border-radius: 14px;
+    padding: 32px 28px 24px;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.07);
     text-decoration: none;
     color: #333;
     transition: transform 0.2s, box-shadow 0.2s;
@@ -155,48 +155,48 @@ body {
 }
 
 .module-icon {
-    font-size: 30px;
-    margin-bottom: 8px;
+    font-size: 42px;
+    margin-bottom: 16px;
     display: block;
 }
 
 .module-title {
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 700;
     color: #1a3d5c;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
 }
 
 .module-desc {
-    font-size: 13px;
+    font-size: 14px;
     color: #666;
-    line-height: 1.6;
-    margin-bottom: 12px;
-    min-height: 42px;
+    line-height: 1.7;
+    margin-bottom: 16px;
+    min-height: 48px;
 }
 
 .module-features {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 14px;
+    gap: 8px;
+    margin-bottom: 18px;
 }
 
 .feature-tag {
     background: #EEF3F8;
     color: #2E5C8A;
-    padding: 3px 10px;
-    border-radius: 10px;
-    font-size: 11px;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
     font-weight: 500;
 }
 
 .module-action {
     display: inline-block;
     color: #2E5C8A;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
-    padding: 4px 0;
+    padding: 6px 0;
     border-bottom: 2px solid transparent;
     transition: border-color 0.2s;
 }
@@ -404,26 +404,26 @@ body {
     to { transform: translateY(0); opacity: 1; }
 }
 
-/* --- 底部版权信息 --- */
+/* --- 底部版权栏 --- */
 .portal-footer {
-    width: 100%;
     background: linear-gradient(135deg, #1a3d5c 0%, #2E5C8A 100%);
     color: rgba(255,255,255,0.85);
+    padding: 18px 28px;
     text-align: center;
-    padding: 10px 0;
-    font-size: 12px;
+    font-size: 13px;
     flex-shrink: 0;
-    margin-top: auto;
 }
 
 .footer-content {
-    display: inline-flex;
+    display: flex;
     align-items: center;
+    justify-content: center;
     gap: 10px;
+    flex-wrap: wrap;
 }
 
 .footer-divider {
-    color: rgba(255,255,255,0.4);
+    color: rgba(255,255,255,0.3);
 }
 
 /* --- 响应式 --- */
@@ -436,5 +436,5 @@ body {
         font-size: 13px;
     }
 
-    .portal-hero h1 { font-size: 18px; }
+    .portal-hero h1 { font-size: 20px; }
 }

@@ -24,78 +24,9 @@
             <div class="nav-user">
                 <a href="/" class="btn-nav" title="返回首页">🏠 返回首页</a>
                 <a href="javascript:void(0)" class="btn-nav" id="btnRefresh" title="刷新页面">🔄 刷新</a>
-                <a href="javascript:void(0)" class="btn-nav" id="btnChangePwd">修改密码</a>
-                <span class="user-name">{{ username }}</span>
-                {% if is_admin %}<span class="user-badge">管理员</span>{% endif %}
-                <a href="/logout" class="btn-logout">退出</a>
             </div>
         </div>
     </header>
-
-    <!-- 邀请码管理弹窗（仅管理员） -->
-    {% if is_admin %}
-    <div class="modal-overlay" id="inviteModal" style="display:none;">
-        <div class="modal-box">
-            <div class="modal-header">
-                <h3>邀请码管理</h3>
-                <button class="modal-close" onclick="document.getElementById('inviteModal').style.display='none'">&times;</button>
-            </div>
-            <div class="modal-body">
-                <button class="btn btn-primary btn-sm" id="btnGenInvite">生成新邀请码</button>
-                <div id="newInviteCode" class="invite-code-display" style="display:none;"></div>
-                <table class="result-table invite-table" id="inviteTable" style="margin-top:16px;">
-                    <thead><tr><th>邀请码</th><th>创建时间</th><th>状态</th><th>使用者</th></tr></thead>
-                    <tbody id="inviteTableBody"></tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <!-- 账号管理弹窗（仅管理员） -->
-    <div class="modal-overlay" id="userModal" style="display:none;">
-        <div class="modal-box">
-            <div class="modal-header">
-                <h3>账号管理</h3>
-                <button class="modal-close" onclick="document.getElementById('userModal').style.display='none'">&times;</button>
-            </div>
-            <div class="modal-body">
-                <table class="result-table invite-table" id="userTable" style="margin-top:8px;">
-                    <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>注册时间</th><th>操作</th></tr></thead>
-                    <tbody id="userTableBody"></tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-    {% endif %}
-
-    <!-- 修改密码弹窗（所有用户） -->
-    <div class="modal-overlay" id="pwdModal" style="display:none;">
-        <div class="modal-box">
-            <div class="modal-header">
-                <h3>修改密码</h3>
-                <button class="modal-close" onclick="document.getElementById('pwdModal').style.display='none'">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="auth-form">
-                    <div class="form-group">
-                        <label>旧密码</label>
-                        <input type="password" id="oldPassword" placeholder="请输入当前密码" autocomplete="current-password">
-                    </div>
-                    <div class="form-group">
-                        <label>新密码</label>
-                        <input type="password" id="newPassword" placeholder="请输入新密码（至少6位）" autocomplete="new-password">
-                    </div>
-                    <div class="form-group">
-                        <label>确认新密码</label>
-                        <input type="password" id="newPassword2" placeholder="请再次输入新密码" autocomplete="new-password">
-                    </div>
-                    <button class="btn btn-primary btn-block" id="btnSavePwd" style="margin-top:12px;">保存修改</button>
-                    <p id="pwdError" style="color:#DC2626; margin-top:8px; display:none;"></p>
-                    <p id="pwdSuccess" style="color:#27AE60; margin-top:8px; display:none;"></p>
-                </div>
-            </div>
-        </div>
-    </div>
 
     <!-- 主内容 -->
     <main class="container">
@@ -137,29 +68,18 @@
             </h2>
             <p class="card-desc">按文件夹批量上传社保权益记录单（图片或PDF），系统将自动识别并统计四险重叠信息</p>
 
-            <!-- 统计年月范围选择 -->
-            <div class="year-range-selector">
-                <label class="year-range-label">统计年月范围：</label>
-                <select id="yearStart" class="year-select"></select>
-                <select id="monthStart" class="month-select"></select>
-                <span class="year-range-separator">至</span>
-                <select id="yearEnd" class="year-select"></select>
-                <select id="monthEnd" class="month-select"></select>
-                <span class="year-range-hint">选择需要统计退税的年月区间，系统将按此范围裁剪重叠时间段并生成年度统计</span>
-            </div>
-
             <div class="dropzone" id="dropzone">
                 <div class="dropzone-inner">
                     <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#4A90D9" stroke-width="1.5">
                         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
                     </svg>
-                    <p class="dropzone-text">拖拽文件到此处，或 <span class="link">点击选择文件</span></p>
-                    <p class="dropzone-hint">系统将自动识别所有图片和PDF（JPG / PNG / BMP / TIF / PDF）</p>
+                    <p class="dropzone-text">将文件夹拖拽到此处，或 <span class="link">点击选择文件夹</span></p>
+                    <p class="dropzone-hint">系统将自动识别文件夹内所有图片和PDF（JPG / PNG / BMP / TIF / PDF）</p>
                 </div>
                 <div class="dropzone-alt">
-                    或 <a href="javascript:void(0)" class="link" onclick="pickFolder(); return false;">选择文件夹</a>
+                    或 <a href="javascript:void(0)" class="link" id="selectFilesLink">选择单个文件</a>
                 </div>
-                <input type="file" id="fileInput" multiple accept="image/*,.pdf" class="file-input-hidden">
+                <input type="file" id="fileInput" webkitdirectory directory multiple class="file-input-hidden">
                 <input type="file" id="fileInputSingle" multiple accept="image/*,.pdf" class="file-input-hidden">
             </div>
 
@@ -169,9 +89,7 @@
                 <ul id="fileItems"></ul>
                 <div class="upload-actions">
                     <button class="btn btn-primary" id="btnUpload">开始识别统计</button>
-                    <button class="btn btn-ghost" id="btnAddMore" onclick="document.getElementById('fileInputSingle').click();">+ 添加文件</button>
-                    <button class="btn btn-ghost" onclick="pickFolder();">+ 添加文件夹</button>
-                    <button class="btn btn-ghost" id="btnClear">清空全部</button>
+                    <button class="btn btn-ghost" id="btnClear">清空</button>
                 </div>
             </div>
         </section>
