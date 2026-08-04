@@ -1,11 +1,11 @@
 {
-  "version": "1.1.18",
-  "version_code": 1118,
+  "version": "1.1.19",
+  "version_code": 1119,
   "release_date": "2026-08-04",
   "mandatory": false,
   "changelog": [
-    "v1.1.18 更新内容：",
-    "1. 修复汇总智能模块文件夹名称匹配深度限制：取消3级父文件夹限制，支持任意层级文件夹名匹配"
+    "v1.1.19 更新内容：",
+    "1. 修复汇总智能模块在门户页面中不显示的问题（恢复Blueprint注册和入口卡片）"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.18"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.19"
 }

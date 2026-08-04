@@ -5,19 +5,19 @@
 """
 import os
 import sys
-import base64
 
 # ============ 路径设置 ============
-from core.paths import data_dir, resource_dir
+IS_FROZEN = getattr(sys, 'frozen', False)
+if IS_FROZEN:
+    RESOURCE_DIR = sys._MEIPASS
+    DATA_DIR = os.path.dirname(sys.executable)
+else:
+    RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATA_DIR = RESOURCE_DIR
 
-# 资源目录（_MEIPASS 或项目根目录）— 用于静态/模板文件
-RESOURCE_DIR = resource_dir()
-# 数据目录（自动处理 Program Files 权限问题：安装时重定向至 %APPDATA%）
-DATA_DIR = data_dir()
-
-# 确保资源目录在 Python 路径中（用于 import core.*、modules.*）
-if RESOURCE_DIR not in sys.path:
-    sys.path.insert(0, RESOURCE_DIR)
+# 确保项目根目录在 Python 路径中
+if DATA_DIR not in sys.path:
+    sys.path.insert(0, DATA_DIR)
 
 # ============ 日志配置 ============
 import logging
@@ -40,7 +40,7 @@ app = Flask(__name__,
     template_folder=os.path.join(RESOURCE_DIR, 'templates'),
     static_folder=os.path.join(RESOURCE_DIR, 'static'))
 
-app.secret_key = 'luyue_platform_sk_2024_a8f3b2e1c9d7'
+app.secret_key = os.urandom(24)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB
 
 # 添加门户模板目录到 Jinja2 搜索路径
@@ -70,28 +70,6 @@ app.register_blueprint(pdf2word_bp)
 app.register_blueprint(pdfmerge_bp)
 logger.info('子模块 Blueprint 注册完成')
 
-
-# ============ 当前版本（用于远程更新检查） ============
-def _load_local_version():
-    """读取本地的 version.json"""
-    import json as _json
-    candidates = [
-        os.path.join(DATA_DIR, 'version.json'),
-        os.path.join(RESOURCE_DIR, 'version.json'),
-    ]
-    for path in candidates:
-        if os.path.isfile(path):
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    return _json.load(f)
-            except Exception:
-                pass
-    return {'version': '1.0.0', 'version_code': 100, 'download_url': '', 'changelog': ''}
-
-APP_VERSION = _load_local_version()
-logger.info(f'当前版本: v{APP_VERSION.get("version", "?")} (code={APP_VERSION.get("version_code", "?")})')
-
-
 # ============ 共享路由：登录 / 注册 / 退出 ============
 from flask import request, jsonify, render_template, session, redirect, url_for
 from core.auth import (
@@ -99,45 +77,6 @@ from core.auth import (
     validate_invite_code, consume_invite_code,
     login_required, admin_required, get_remote_token
 )
-
-# ============ 记住密码：后端文件存储（localStorage 的可靠备份） ============
-# WebView2 的 localStorage 磁盘持久化是异步的，应用关闭时可能来不及 flush
-# 导致记住密码间歇性失效。此 API 通过同步文件 I/O 提供可靠备份。
-_REMEMBER_FILE = os.path.join(DATA_DIR, 'data', 'remembered_login.json')
-
-
-@app.route('/api/remember_login', methods=['GET'])
-def api_get_remembered_login():
-    """读取已保存的登录凭据（无需登录即可访问）"""
-    import json as _json
-    try:
-        if os.path.isfile(_REMEMBER_FILE):
-            with open(_REMEMBER_FILE, 'r', encoding='utf-8') as f:
-                data = _json.load(f)
-            return jsonify({'ok': True, 'username': data.get('username', ''),
-                            'password': data.get('password', '')})
-    except Exception as e:
-        logger.warning(f'读取记住密码文件失败: {e}')
-    return jsonify({'ok': True, 'username': '', 'password': ''})
-
-
-@app.route('/api/remember_login', methods=['POST'])
-def api_save_remembered_login():
-    """保存或清除登录凭据（无需登录即可访问）"""
-    import json as _json
-    data = request.get_json(silent=True) or {}
-    username = (data.get('username') or '').strip()
-    password = data.get('password') or ''
-
-    try:
-        os.makedirs(os.path.dirname(_REMEMBER_FILE), exist_ok=True)
-        payload = {'username': username, 'password': password}
-        with open(_REMEMBER_FILE, 'w', encoding='utf-8') as f:
-            _json.dump(payload, f, ensure_ascii=False)
-        return jsonify({'ok': True})
-    except Exception as e:
-        logger.warning(f'保存记住密码文件失败: {e}')
-        return jsonify({'ok': False, 'error': str(e)}), 500
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -271,75 +210,7 @@ def logout():
 def portal():
     return render_template('portal.html',
         username=session.get('username', ''),
-        is_admin=session.get('is_admin', False),
-        app_version=APP_VERSION.get('version', '1.0.0'),
-        version_code=APP_VERSION.get('version_code', 100))
-
-
-# ============ 版本检查 API ============
-@app.route('/api/app/version', methods=['GET'])
-@login_required
-def api_app_version():
-    """返回本地版本信息"""
-    return jsonify({
-        'ok': True,
-        'version': APP_VERSION.get('version', '1.0.0'),
-        'version_code': APP_VERSION.get('version_code', 100),
-        'changelog': APP_VERSION.get('changelog', ''),
-    })
-
-
-# 远程版本信息地址（GitHub Raw URL，无需 PythonAnywhere）
-REMOTE_VERSION_URLS = [
-    'https://raw.githubusercontent.com/luyue-enterprise-platform/luyue-enterprise-platform/main/version.json',
-    'https://api.github.com/repos/luyue-enterprise-platform/luyue-enterprise-platform/contents/version.json',
-]
-
-
-@app.route('/api/app/check_update', methods=['GET'])
-@login_required
-def api_check_update():
-    """从 GitHub 远程抓取最新版本信息，对比 version_code 判断是否需要更新"""
-    import json as _json
-    import urllib.request as _ur
-    import urllib.error as _ue
-
-    last_err = None
-    for url in REMOTE_VERSION_URLS:
-        try:
-            req = _ur.Request(url, headers={'User-Agent': 'LuyueApp/1.1.5'})
-            with _ur.urlopen(req, timeout=10) as resp:
-                raw = resp.read().decode('utf-8', errors='ignore')
-                # GitHub Contents API 返回 JSON 带 content 字段（base64）
-                if 'api.github.com/repos' in url and '"content"' in raw:
-                    api_data = _json.loads(raw)
-                    raw = base64.b64decode(api_data['content']).decode('utf-8')
-                data = _json.loads(raw)
-                local_code = APP_VERSION.get('version_code', 100)
-                remote_code = int(data.get('version_code', 0) or 0)
-                return jsonify({
-                    'ok': True,
-                    'has_update': remote_code > local_code,
-                    'local_version': APP_VERSION.get('version', '1.0.0'),
-                    'local_code': local_code,
-                    'remote_version': data.get('version', ''),
-                    'remote_code': remote_code,
-                    'download_url': data.get('download_url', ''),
-                    'changelog': data.get('changelog', ''),
-                    'mandatory': bool(data.get('mandatory', False)),
-                })
-        except _ue.HTTPError as e:
-            last_err = f'HTTP {e.code}'
-            continue
-        except Exception as e:
-            last_err = str(e)
-            continue
-
-    return jsonify({
-        'ok': False,
-        'error': f'检查更新失败: {last_err or "网络异常"}',
-        'has_update': False,
-    }), 200
+        is_admin=session.get('is_admin', False))
 
 
 # ============ 修改密码 API（门户 + 子模块共用） ============
