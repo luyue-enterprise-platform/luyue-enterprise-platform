@@ -315,3 +315,281 @@ function downloadPDF() {
     if (!task_id) return;
     window.location.href = '/pdfmerge/api/download/' + task_id;
 }
+
+
+// ===== 页面编辑器 =====
+var pageInfo = null;       // {total_pages, cover_count, toc_count, content_count, sections}
+var selectedPages = new Set(); // 选中的页面（0-indexed PDF页码）
+var insertPosition = -1;   // 插入位置（-1=内容最前面）
+
+function openPageEditor() {
+    document.getElementById('resultCard').classList.add('hidden');
+    document.getElementById('pageEditorCard').classList.remove('hidden');
+    selectedPages.clear();
+    loadPageInfo();
+}
+
+function closePageEditor() {
+    document.getElementById('pageEditorCard').classList.add('hidden');
+    document.getElementById('resultCard').classList.remove('hidden');
+}
+
+function loadPageInfo() {
+    if (!task_id) return;
+
+    var grid = document.getElementById('pageGrid');
+    grid.innerHTML = '<div class="page-loading">加载页面信息中...</div>';
+
+    fetch('/pdfmerge/api/pages/' + task_id)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) {
+                grid.innerHTML = '<div class="page-loading error">' + data.error + '</div>';
+                return;
+            }
+            pageInfo = data;
+            renderPageGrid();
+        })
+        .catch(function(err) {
+            grid.innerHTML = '<div class="page-loading error">加载失败: ' + err.message + '</div>';
+        });
+}
+
+function renderPageGrid() {
+    if (!pageInfo) return;
+
+    var grid = document.getElementById('pageGrid');
+    grid.innerHTML = '';
+
+    var coverCount = pageInfo.cover_count;
+    var tocCount = pageInfo.toc_count;
+    var total = pageInfo.total_pages;
+
+    // 更新信息栏
+    document.getElementById('editorPageInfo').textContent =
+        '共 ' + total + ' 页（封面 ' + coverCount + ' + 目录 ' + tocCount + ' + 内容 ' + pageInfo.content_count + '）';
+
+    // 构建章节映射：page -> section_name
+    var sectionMap = {};
+    if (pageInfo.sections) {
+        for (var i = 0; i < pageInfo.sections.length; i++) {
+            var sec = pageInfo.sections[i];
+            var startPdfPage = sec.start_page - 1; // 转为0-indexed
+            for (var j = 0; j < sec.count; j++) {
+                sectionMap[startPdfPage + j] = sec.name;
+            }
+        }
+    }
+
+    for (var p = 0; p < total; p++) {
+        var item = document.createElement('div');
+        item.className = 'page-item';
+        item.dataset.page = p;
+
+        // 判断页面类型
+        var isLocked = p < coverCount + tocCount;
+        var sectionName = sectionMap[p] || '';
+
+        if (isLocked) {
+            item.classList.add('locked');
+            var lockLabel = (p < coverCount) ? '封面' : '目录';
+            sectionName = lockLabel;
+        } else if (!sectionName) {
+            item.classList.add('unassigned');
+            sectionName = '（附加页）';
+        }
+
+        // 缩略图
+        var thumb = document.createElement('div');
+        thumb.className = 'page-thumb';
+        thumb.dataset.page = p;
+        thumb.dataset.loaded = '0';
+
+        // 懒加载缩略图
+        var img = document.createElement('img');
+        img.alt = '第' + (p + 1) + '页';
+        img.style.opacity = '0';
+        thumb.appendChild(img);
+
+        // 加载缩略图
+        (function(theImg, pageNum) {
+            var url = '/pdfmerge/api/pages/' + task_id + '/thumbnail/' + pageNum;
+            fetch(url)
+                .then(function(r) { return r.blob(); })
+                .then(function(blob) {
+                    var urlObj = URL.createObjectURL(blob);
+                    theImg.src = urlObj;
+                    theImg.style.opacity = '1';
+                })
+                .catch(function() {
+                    theImg.alt = '加载失败';
+                    theImg.style.opacity = '0.3';
+                });
+        })(img, p);
+
+        item.appendChild(thumb);
+
+        // 页码标签
+        var label = document.createElement('div');
+        label.className = 'page-label';
+        label.innerHTML = '<span class="page-num">第' + (p + 1) + '页</span>' +
+                          '<span class="page-section">' + sectionName + '</span>';
+        item.appendChild(label);
+
+        // 选中/操作按钮
+        if (!isLocked) {
+            var actions = document.createElement('div');
+            actions.className = 'page-actions';
+
+            var selectCheckbox = document.createElement('div');
+            selectCheckbox.className = 'page-checkbox';
+            selectCheckbox.innerHTML = '☐';
+            selectCheckbox.title = '选中此页';
+            selectCheckbox.onclick = function(e) {
+                e.stopPropagation();
+                togglePageSelection(p, selectCheckbox, item);
+            };
+            actions.appendChild(selectCheckbox);
+
+            var insertBtn = document.createElement('div');
+            insertBtn.className = 'page-insert-btn';
+            insertBtn.innerHTML = '📄+';
+            insertBtn.title = '在此页后插入文件';
+            insertBtn.onclick = function(e) {
+                e.stopPropagation();
+                insertAfterPage(p);
+            };
+            actions.appendChild(insertBtn);
+
+            item.appendChild(actions);
+
+            // 点击缩略图也能选中
+            thumb.onclick = function() {
+                togglePageSelection(p, selectCheckbox, item);
+            };
+        } else {
+            var lockIcon = document.createElement('div');
+            lockIcon.className = 'page-lock';
+            lockIcon.innerHTML = '🔒';
+            item.appendChild(lockIcon);
+        }
+
+        grid.appendChild(item);
+    }
+
+    updateSelectionUI();
+}
+
+function togglePageSelection(pageNum, checkboxEl, itemEl) {
+    if (selectedPages.has(pageNum)) {
+        selectedPages.delete(pageNum);
+        checkboxEl.innerHTML = '☐';
+        itemEl.classList.remove('selected');
+    } else {
+        selectedPages.add(pageNum);
+        checkboxEl.innerHTML = '☑';
+        itemEl.classList.add('selected');
+    }
+    updateSelectionUI();
+}
+
+function updateSelectionUI() {
+    var count = selectedPages.size;
+    var infoEl = document.getElementById('selectedInfo');
+    var btnDelete = document.getElementById('btnDeletePages');
+
+    if (count === 0) {
+        infoEl.textContent = '未选中页面';
+        btnDelete.disabled = true;
+    } else {
+        var pages = Array.from(selectedPages).sort(function(a, b) { return a - b; });
+        var pageStrs = pages.map(function(p) { return '第' + (p + 1) + '页'; });
+        infoEl.textContent = '已选中 ' + count + ' 页: ' + pageStrs.join(', ');
+        btnDelete.disabled = false;
+    }
+}
+
+function deleteSelectedPages() {
+    if (selectedPages.size === 0) return;
+
+    var pages = Array.from(selectedPages).sort(function(a, b) { return a - b; });
+    var pageStrs = pages.map(function(p) { return '第' + (p + 1) + '页'; });
+
+    if (!confirm('确认删除以下页面？\n\n' + pageStrs.join('\n') + '\n\n删除后目录将自动更新。')) {
+        return;
+    }
+
+    var grid = document.getElementById('pageGrid');
+    grid.innerHTML = '<div class="page-loading">正在删除页面并更新目录...</div>';
+
+    fetch('/pdfmerge/api/pages/' + task_id + '/delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({page_numbers: pages})
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) {
+                alert(data.error);
+                loadPageInfo();
+                return;
+            }
+            selectedPages.clear();
+            pageInfo = data;
+            alert(data.message || '删除成功');
+            renderPageGrid();
+        })
+        .catch(function(err) {
+            alert('删除失败: ' + err.message);
+            loadPageInfo();
+        });
+}
+
+function insertAfterPage(pageNum) {
+    insertPosition = pageNum;
+    doInsert();
+}
+
+function insertAfterSelected() {
+    if (selectedPages.size === 0) {
+        // 没有选中页面，在内容最前面插入
+        if (!confirm('未选中页面，将在内容最前面插入文件。继续？')) return;
+        insertPosition = -1;
+    } else {
+        // 取选中页面中最大的页码
+        insertPosition = Math.max.apply(null, Array.from(selectedPages));
+    }
+    doInsert();
+}
+
+function doInsert() {
+    var grid = document.getElementById('pageGrid');
+    var insertPosLabel = insertPosition >= 0 ? '第' + (insertPosition + 1) + '页后' : '内容最前面';
+    grid.innerHTML = '<div class="page-loading">请在弹出的对话框中选择要插入的文件（插入位置：' + insertPosLabel + '）...</div>';
+
+    fetch('/pdfmerge/api/pages/' + task_id + '/insert', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({after_page: insertPosition})
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.cancelled) {
+                loadPageInfo();
+                return;
+            }
+            if (data.error) {
+                alert(data.error);
+                loadPageInfo();
+                return;
+            }
+            selectedPages.clear();
+            pageInfo = data;
+            alert(data.message || '插入成功');
+            renderPageGrid();
+        })
+        .catch(function(err) {
+            alert('插入失败: ' + err.message);
+            loadPageInfo();
+        });
+}

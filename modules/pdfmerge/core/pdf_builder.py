@@ -4,6 +4,7 @@ PDF构建器 - 生成封面、目录，合并所有PDF
 """
 import os
 import io
+import shutil
 import logging
 
 logger = logging.getLogger('pdfmerge.builder')
@@ -234,3 +235,144 @@ def _draw_dotted_line(page, x1, y1, x2, y2):
         width=0.5,
         dashes=(1, 2),
     )
+
+
+# ===== 页面编辑功能 =====
+
+def delete_pages(pdf_path, page_numbers_0indexed, output_path=None):
+    """
+    删除指定页面
+
+    Args:
+        pdf_path: PDF文件路径
+        page_numbers_0indexed: 要删除的页面索引列表（0-based）
+        output_path: 输出路径，默认覆盖原文件
+
+    Returns:
+        str: 输出文件路径
+    """
+    if output_path is None:
+        output_path = pdf_path
+
+    doc = fitz.open(pdf_path)
+
+    # 降序排列，避免索引偏移
+    pages_to_delete = sorted(set(page_numbers_0indexed), reverse=True)
+    for p in pages_to_delete:
+        if 0 <= p < doc.page_count:
+            doc.delete_page(p)
+
+    if output_path == pdf_path:
+        # 先保存到临时文件再替换（PyMuPDF不能覆盖正在打开的文件）
+        import tempfile
+        fd, tmp = tempfile.mkstemp(suffix='.pdf', prefix='_edit_')
+        os.close(fd)
+        doc.save(tmp)
+        doc.close()
+        os.replace(tmp, output_path)
+    else:
+        doc.save(output_path)
+        doc.close()
+
+    logger.info(f'删除 {len(pages_to_delete)} 页后剩余 {fitz.open(output_path).page_count} 页')
+    return output_path
+
+
+def insert_pages(target_path, source_path, after_page_0indexed, output_path=None):
+    """
+    在指定页面后插入源PDF的所有页面
+
+    Args:
+        target_path: 目标PDF路径
+        source_path: 源PDF路径（要插入的文件）
+        after_page_0indexed: 在此页之后插入（0-based，-1表示在最前面插入）
+        output_path: 输出路径，默认覆盖原文件
+
+    Returns:
+        int: 插入的页数
+    """
+    if output_path is None:
+        output_path = target_path
+
+    target = fitz.open(target_path)
+    source = fitz.open(source_path)
+    inserted_count = source.page_count
+
+    insert_pos = after_page_0indexed + 1
+    if insert_pos < 0:
+        insert_pos = 0
+
+    target.insert_pdf(source, start_at=insert_pos)
+
+    if output_path == target_path:
+        import tempfile
+        fd, tmp = tempfile.mkstemp(suffix='.pdf', prefix='_edit_')
+        os.close(fd)
+        target.save(tmp)
+        target.close()
+        source.close()
+        os.replace(tmp, output_path)
+    else:
+        target.save(output_path)
+        target.close()
+        source.close()
+
+    logger.info(f'在页面 {after_page_0indexed} 后插入 {inserted_count} 页')
+    return inserted_count
+
+
+def render_page_thumbnail(pdf_path, page_num_0indexed, max_width=200):
+    """
+    渲染指定页面的缩略图
+
+    Args:
+        pdf_path: PDF文件路径
+        page_num_0indexed: 页面索引（0-based）
+        max_width: 缩略图最大宽度（像素）
+
+    Returns:
+        bytes: PNG格式的缩略图数据，失败返回None
+    """
+    try:
+        doc = fitz.open(pdf_path)
+        if page_num_0indexed < 0 or page_num_0indexed >= doc.page_count:
+            doc.close()
+            return None
+
+        page = doc[page_num_0indexed]
+        zoom = max_width / page.rect.width if page.rect.width > 0 else 0.3
+        mat = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=mat)
+        png_bytes = pix.tobytes("png")
+        doc.close()
+        return png_bytes
+    except Exception as e:
+        logger.error(f'渲染缩略图失败 (page={page_num_0indexed}): {e}')
+        return None
+
+
+def extract_content_pdf(full_pdf_path, cover_count, toc_count, output_path):
+    """
+    从完整PDF中提取内容部分（去掉封面和目录）
+
+    Args:
+        full_pdf_path: 完整PDF路径
+        cover_count: 封面页数
+        toc_count: 目录页数
+        output_path: 输出路径
+
+    Returns:
+        str: 内容PDF路径
+    """
+    doc = fitz.open(full_pdf_path)
+    content_start = cover_count + toc_count
+
+    # 删除封面和目录页
+    # 从后往前删除前 content_start 页
+    for i in range(content_start - 1, -1, -1):
+        if doc.page_count > 0:
+            doc.delete_page(i)
+
+    doc.save(output_path)
+    doc.close()
+    return output_path

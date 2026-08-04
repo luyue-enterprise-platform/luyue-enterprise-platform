@@ -1,14 +1,14 @@
 {
-  "version": "1.1.14",
-  "version_code": 1114,
+  "version": "1.1.15",
+  "version_code": 1115,
   "release_date": "2026-08-04",
   "mandatory": false,
   "changelog": [
-    "v1.1.14 更新内容：",
-    "1. 新增留存备查资料汇总PDF智能生成系统（退税/抵税双模式）",
-    "2. 安装时自动检测并安装WebView2运行时，修复其他电脑无法启动的问题",
-    "3. 程序启动异常时显示错误提示框（不再静默退出），并记录崩溃日志",
-    "4. 自动检查更新改为手动检查（点击顶部'检查更新'按钮）"
+    "v1.1.15 更新内容：",
+    "1. 留存备查资料汇总PDF模块新增页面编辑功能",
+    "2. 生成PDF后可手动插入页面（支持PDF/图片/Word/Excel）",
+    "3. 生成PDF后可手动删除个别页面",
+    "4. 页面编辑后目录内容及页码自动调整"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.14"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.15"
 }

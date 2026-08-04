@@ -158,7 +158,35 @@
                 <div class="result-desc" id="resultDesc"></div>
                 <div class="result-actions">
                     <button class="btn-success" onclick="saveTo()">💾 保存到指定位置</button>
+                    <button class="btn-primary" onclick="openPageEditor()">✏️ 编辑页面</button>
                     <button class="btn-ghost" onclick="downloadPDF()">⬇️ 直接下载</button>
+                    <button class="btn-ghost" onclick="location.reload()">🔄 重新生成</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 页面编辑器 -->
+        <section class="card hidden" id="pageEditorCard">
+            <div class="card-header">
+                <span class="step-badge">✏️</span>
+                <h2>页面编辑器</h2>
+                <span class="card-tip" id="editorPageInfo"></span>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info" id="editorGuide">
+                    💡 点击页面缩略图选中/取消选中，选中后可删除。点击"插入文件"可在指定位置插入新页面。所有操作完成后点击"应用更改并更新目录"。
+                </div>
+                <div class="page-editor-toolbar">
+                    <button class="btn-primary btn-sm" onclick="insertAfterSelected()">📄 插入文件到此位置后</button>
+                    <button class="btn-danger btn-sm" id="btnDeletePages" onclick="deleteSelectedPages()" disabled>🗑️ 删除选中页面</button>
+                    <span class="selected-info" id="selectedInfo">未选中页面</span>
+                </div>
+                <div class="page-grid" id="pageGrid">
+                    <div class="page-loading">加载页面中...</div>
+                </div>
+                <div class="page-editor-footer">
+                    <button class="btn-ghost" onclick="closePageEditor()">← 返回</button>
+                    <button class="btn-success" onclick="saveTo()">💾 保存到指定位置</button>
                     <button class="btn-ghost" onclick="location.reload()">🔄 重新生成</button>
                 </div>
             </div>
