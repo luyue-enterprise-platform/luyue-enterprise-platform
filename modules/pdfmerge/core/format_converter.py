@@ -101,38 +101,54 @@ def _image_to_pdf(image_path, pdf_path):
 
 
 def _word_to_pdf(word_path, pdf_path):
-    """将Word文档转换为PDF (使用MS Word COM自动化)"""
-    com_error = None
-    # 方法1: 尝试使用 pywin32 (MS Word)
+    """将Word文档转换为PDF (降级链: MS Word COM → WPS COM → LibreOffice)"""
+    errors = []
+    # 方法1: 尝试使用 MS Word COM
     try:
         return _word_to_pdf_com(word_path, pdf_path)
     except Exception as e1:
-        com_error = str(e1)
-        logger.warning(f'Word COM转换失败: {com_error}, 尝试备用方案...')
+        errors.append(f'MS Word: {e1}')
+        logger.warning(f'Word MS COM转换失败: {e1}, 尝试WPS...')
 
-    # 方法2: 尝试使用 LibreOffice
+    # 方法2: 尝试使用 WPS Writer COM
+    try:
+        return _word_to_pdf_wps(word_path, pdf_path)
+    except Exception as e2:
+        errors.append(f'WPS: {e2}')
+        logger.warning(f'Word WPS COM转换失败: {e2}, 尝试LibreOffice...')
+
+    # 方法3: 尝试使用 LibreOffice
     try:
         return _convert_with_libreoffice(word_path, pdf_path)
-    except Exception as e2:
-        logger.error(f'Word转PDF全部失败: COM={com_error}, LibreOffice={e2}')
+    except Exception as e3:
+        errors.append(f'LibreOffice: {e3}')
+        logger.error(f'Word转PDF全部失败: {"; ".join(errors)}')
         return None
 
 
 def _excel_to_pdf(excel_path, pdf_path):
-    """将Excel文档转换为PDF (使用MS Excel COM自动化)"""
-    com_error = None
-    # 方法1: 尝试使用 pywin32 (MS Excel)
+    """将Excel文档转换为PDF (降级链: MS Excel COM → WPS COM → LibreOffice)"""
+    errors = []
+    # 方法1: 尝试使用 MS Excel COM
     try:
         return _excel_to_pdf_com(excel_path, pdf_path)
     except Exception as e1:
-        com_error = str(e1)
-        logger.warning(f'Excel COM转换失败: {com_error}, 尝试备用方案...')
+        errors.append(f'MS Excel: {e1}')
+        logger.warning(f'Excel MS COM转换失败: {e1}, 尝试WPS...')
 
-    # 方法2: 尝试使用 LibreOffice
+    # 方法2: 尝试使用 WPS Spreadsheet COM
+    try:
+        return _excel_to_pdf_wps(excel_path, pdf_path)
+    except Exception as e2:
+        errors.append(f'WPS: {e2}')
+        logger.warning(f'Excel WPS COM转换失败: {e2}, 尝试LibreOffice...')
+
+    # 方法3: 尝试使用 LibreOffice
     try:
         return _convert_with_libreoffice(excel_path, pdf_path)
-    except Exception as e2:
-        logger.error(f'Excel转PDF全部失败: COM={com_error}, LibreOffice={e2}')
+    except Exception as e3:
+        errors.append(f'LibreOffice: {e3}')
+        logger.error(f'Excel转PDF全部失败: {"; ".join(errors)}')
         return None
 
 
@@ -221,6 +237,94 @@ def _excel_to_pdf_com(excel_path, pdf_path):
             pass
 
 
+def _word_to_pdf_wps(word_path, pdf_path):
+    """使用 WPS Writer COM (KWps.Application) 转换Word为PDF"""
+    import win32com.client
+    import pythoncom
+
+    word_abs = os.path.abspath(word_path)
+    pdf_abs = os.path.abspath(pdf_path)
+
+    pythoncom.CoInitialize()
+    wps_app = None
+    doc = None
+    try:
+        wps_app = win32com.client.Dispatch('KWps.Application')
+        wps_app.Visible = False
+        wps_app.DisplayAlerts = False
+
+        doc = wps_app.Documents.Open(
+            word_abs,
+            ReadOnly=True,
+            AddToRecentFiles=False
+        )
+        # WPS Writer 导出PDF：优先用 ExportAsFixedFormat，备选 SaveAs
+        try:
+            # wdExportFormatPDF = 17
+            doc.ExportAsFixedFormat(pdf_abs, 17)
+        except Exception:
+            # 备选: SaveAs with FileFormat=17 (wdFormatPDF)
+            doc.SaveAs2(pdf_abs, FileFormat=17)
+        logger.info(f'Word转PDF(WPS): {os.path.basename(word_path)}')
+        return pdf_path
+    finally:
+        try:
+            if doc:
+                doc.Close(False)
+        except Exception:
+            pass
+        try:
+            if wps_app:
+                wps_app.Quit()
+        except Exception:
+            pass
+        try:
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
+
+
+def _excel_to_pdf_wps(excel_path, pdf_path):
+    """使用 WPS Spreadsheet COM (Ket.Application) 转换Excel为PDF"""
+    import win32com.client
+    import pythoncom
+
+    excel_abs = os.path.abspath(excel_path)
+    pdf_abs = os.path.abspath(pdf_path)
+
+    pythoncom.CoInitialize()
+    et_app = None
+    wb = None
+    try:
+        et_app = win32com.client.Dispatch('Ket.Application')
+        et_app.Visible = False
+        et_app.DisplayAlerts = False
+
+        wb = et_app.Workbooks.Open(
+            excel_abs,
+            ReadOnly=True
+        )
+        # 0 = xlTypePDF
+        wb.ExportAsFixedFormat(0, pdf_abs)
+        logger.info(f'Excel转PDF(WPS): {os.path.basename(excel_path)}')
+        return pdf_path
+    finally:
+        try:
+            if wb:
+                wb.Close(False)
+        except Exception:
+            pass
+        try:
+            if et_app:
+                et_app.Quit()
+        except Exception:
+            pass
+        try:
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
+
+
 def _convert_with_libreoffice(source_path, pdf_path):
     """使用 LibreOffice 命令行转换"""
     soffice_paths = [
@@ -269,23 +373,60 @@ def check_conversion_capability():
         'method': None,
     }
 
-    # 检查 pywin32
+    methods = []
+
+    # 检查 MS Office COM (pywin32 + Word.Application/Excel.Application)
     try:
         import win32com.client
-        capabilities['word'] = True
-        capabilities['excel'] = True
-        capabilities['method'] = 'MS Office (COM)'
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+            try:
+                test = win32com.client.Dispatch('Word.Application')
+                test.Quit()
+                methods.append('MS Office')
+                capabilities['word'] = True
+                capabilities['excel'] = True
+            except Exception:
+                pass
+        finally:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
     except ImportError:
         pass
+
+    # 检查 WPS Office COM (KWps.Application / Ket.Application)
+    if not capabilities['word']:
+        try:
+            import win32com.client
+            import pythoncom
+            pythoncom.CoInitialize()
+            try:
+                test = win32com.client.Dispatch('KWps.Application')
+                test.Quit()
+                methods.append('WPS Office')
+                capabilities['word'] = True
+                capabilities['excel'] = True
+            except Exception:
+                pass
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+        except ImportError:
+            pass
 
     # 检查 LibreOffice
     if not capabilities['word']:
         for p in [r'C:\Program Files\LibreOffice\program\soffice.exe',
                    r'C:\Program Files (x86)\LibreOffice\program\soffice.exe']:
             if os.path.isfile(p):
+                methods.append('LibreOffice')
                 capabilities['word'] = True
                 capabilities['excel'] = True
-                capabilities['method'] = 'LibreOffice'
                 break
 
+    capabilities['method'] = ' + '.join(methods) if methods else None
     return capabilities

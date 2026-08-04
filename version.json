@@ -1,15 +1,13 @@
 {
-  "version": "1.1.16",
-  "version_code": 1116,
+  "version": "1.1.17",
+  "version_code": 1117,
   "release_date": "2026-08-04",
   "mandatory": false,
   "changelog": [
-    "v1.1.16 更新内容：",
-    "1. 全部四个模块统一支持多次添加文件或文件夹",
-    "2. 支持混合添加文件+文件夹（可反复添加）",
-    "3. 添加后可单个文件或文件夹删除，也可全部清除",
-    "4. 社保核算、劳动合同、PDF转Word、留存备查资料汇总PDF四个模块全部改造",
-    "5. 优化主界面模块卡片尺寸，确保底部信息完整显示"
+    "v1.1.17 更新内容：",
+    "1. 汇总智能模块支持文件夹名称匹配：文件所在的文件夹名包含章节关键词时，该文件也匹配到对应章节",
+    "2. Word/Excel转PDF新增WPS COM降级支持：MS Office → WPS → LibreOffice 三级降级链",
+    "3. 转换能力检测自动识别MS Office、WPS、LibreOffice三种引擎"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.16"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.17"
 }

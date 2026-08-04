@@ -312,29 +312,21 @@ def get_sections(mode):
         raise ValueError(f'未知模式: {mode}')
 
 
-def _match_score(filename, section):
+def _calc_name_score(name, section):
     """
-    计算文件名与章节的匹配分数
+    计算名称与章节关键词的匹配分数（不含排除词检查）
     返回: >0 表示匹配, 数值越大匹配度越高; 0 表示不匹配
     """
-    name_lower = filename.lower()
-
-    # 检查排除关键词
-    for ex_kw in section.get('exclude_keywords', []):
-        if ex_kw in filename:
-            return 0
-
-    # 检查匹配关键词
     score = 0
     matched_kws = []
     for kw in section['keywords']:
-        if kw in filename:
+        if kw in name:
             score += 10
             matched_kws.append(kw)
 
-    # 额外加分：关键词在文件名开头
+    # 额外加分：关键词在名称开头
     for kw in matched_kws:
-        if filename.startswith(kw):
+        if name.startswith(kw):
             score += 5
 
     # 优先级加成（priority越小优先级越高，分数加成越大）
@@ -342,6 +334,51 @@ def _match_score(filename, section):
         score += (10 - section['priority'])
 
     return score
+
+
+def _match_score(filename, section, folder_names=None):
+    """
+    计算文件名/文件夹名与章节的匹配分数
+
+    匹配规则：
+    - 文件名排除关键词命中 → 直接返回0（该文件不属于此章节）
+    - 文件名匹配 → 基于文件名计算分数
+    - 文件夹名匹配 → 基于文件夹名计算分数（文件夹名排除关键词命中则跳过该文件夹名）
+    - 取文件名分数和文件夹名分数的最大值
+
+    Args:
+        filename: 文件名
+        section: 章节定义
+        folder_names: 文件所在的文件夹名称列表（从近到远），可选
+
+    Returns: >0 表示匹配, 数值越大匹配度越高; 0 表示不匹配
+    """
+    # 1. 检查文件名排除关键词 — 命中则直接返回0
+    for ex_kw in section.get('exclude_keywords', []):
+        if ex_kw in filename:
+            return 0
+
+    # 2. 计算文件名匹配分数
+    file_score = _calc_name_score(filename, section)
+
+    # 3. 计算文件夹名匹配分数
+    folder_score = 0
+    if folder_names:
+        for folder_name in folder_names:
+            # 检查文件夹名排除关键词 — 命中则跳过该文件夹名
+            folder_excluded = False
+            for ex_kw in section.get('exclude_keywords', []):
+                if ex_kw in folder_name:
+                    folder_excluded = True
+                    break
+            if folder_excluded:
+                continue
+
+            score = _calc_name_score(folder_name, section)
+            if score > folder_score:
+                folder_score = score
+
+    return max(file_score, folder_score)
 
 
 def _normalize_path(path):
@@ -364,10 +401,11 @@ def _normalize_path(path):
 
 def _match_core(all_files, mode, roster=None):
     """
-    核心匹配逻辑：将 (filename, file_path) 列表匹配到各章节
+    核心匹配逻辑：将 (filename, file_path, folder_names) 列表匹配到各章节
 
     Args:
-        all_files: [(filename, file_path), ...] 列表
+        all_files: [(filename, file_path, folder_names), ...] 列表
+                   folder_names: 文件所在文件夹名称列表（从近到远），可为空列表
         mode: 'refund' 或 'deduction'
         roster: 花名册列表 [{'seq': int, 'name': str, 'idcard': str}], 可选
 
@@ -388,13 +426,15 @@ def _match_core(all_files, mode, roster=None):
     unmatched = []
     total_files = len(all_files)
 
-    # 对每个文件计算所有章节的匹配分数
-    for filename, file_path in all_files:
+    # 对每个文件计算所有章节的匹配分数（同时考虑文件名和文件夹名）
+    for item in all_files:
+        filename, file_path, folder_names = item
+
         best_section = None
         best_score = 0
 
         for section in sections:
-            score = _match_score(filename, section)
+            score = _match_score(filename, section, folder_names)
             if score > best_score:
                 best_score = score
                 best_section = section
@@ -463,6 +503,18 @@ def match_files(folder_path, mode, roster=None):
     for root, dirs, files in os.walk(folder_path, onerror=_on_walk_error):
         rel_dir = os.path.relpath(root, folder_path)
         logger.info(f'扫描目录: {rel_dir} (找到 {len(files)} 个文件)')
+
+        # 提取相对文件夹名称列表（从近到远）
+        # 例: rel_dir = "劳动合同\\张三" → folder_names = ["张三", "劳动合同"]
+        # rel_dir = "." (根目录) → folder_names = []
+        if rel_dir == '.':
+            folder_names = []
+        else:
+            folder_names = rel_dir.split(os.sep)
+            # 反转: 从近到远 → 从远到近（远的文件夹更可能是分类文件夹）
+            # 但评分时取最高分，顺序不影响结果
+            folder_names = list(reversed(folder_names))
+
         for f in files:
             ext = os.path.splitext(f)[1].lower()
             if ext not in SUPPORTED_EXTENSIONS:
@@ -477,7 +529,7 @@ def match_files(folder_path, mode, roster=None):
                 else:
                     logger.warning(f'文件无法访问，跳过: {file_path}')
                     continue
-            all_files.append((f, file_path))
+            all_files.append((f, file_path, folder_names))
             logger.debug(f'  发现文件: {os.path.relpath(file_path, folder_path)}')
 
     if walk_errors:
@@ -492,6 +544,7 @@ def match_files_from_paths(file_paths, mode, roster=None):
     从文件路径列表匹配文件到各章节（不需要文件夹扫描）
 
     用于前端传入多个文件夹/文件选择后的合并文件路径列表。
+    同时支持文件名匹配和文件夹名称匹配。
 
     Args:
         file_paths: 绝对文件路径列表
@@ -516,7 +569,24 @@ def match_files_from_paths(file_paths, mode, roster=None):
         if ext not in SUPPORTED_EXTENSIONS:
             logger.debug(f'文件格式不支持，跳过: {fp}')
             continue
-        all_files.append((filename, fp))
+
+        # 提取父文件夹名称（从近到远，最多3级）
+        # 例: C:\\data\\劳动合同\\张三.pdf → folder_names = ["劳动合同", "data"]
+        # 例: C:\\data\\劳动合同\\2024年\\李四.pdf → folder_names = ["2024年", "劳动合同", "data"]
+        folder_names = []
+        parent_dir = os.path.dirname(fp)
+        for _ in range(3):
+            if not parent_dir:
+                break
+            folder_name = os.path.basename(parent_dir)
+            if folder_name:
+                folder_names.append(folder_name)
+            new_parent = os.path.dirname(parent_dir)
+            if new_parent == parent_dir:  # 已到根目录
+                break
+            parent_dir = new_parent
+
+        all_files.append((filename, fp, folder_names))
 
     logger.info(f'从路径列表匹配 {len(all_files)} 个支持文件')
     return _match_core(all_files, mode, roster)
