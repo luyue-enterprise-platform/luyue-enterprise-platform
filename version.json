@@ -1,13 +1,13 @@
 {
-  "version": "1.1.12",
-  "version_code": 1112,
-  "release_date": "2026-08-03",
+  "version": "1.1.13",
+  "version_code": 1113,
+  "release_date": "2026-08-04",
   "mandatory": false,
   "changelog": [
-    "v1.1.12 更新内容：",
-    "1. 彻底修复记住密码间歇性失效问题：新增后端文件存储作为localStorage的可靠备份",
-    "2. 登录表单改为AJAX提交，确保凭据持久化后再发起登录请求",
-    "3. WebView2指定固定storage_path，退出后延时0.5秒确保数据刷盘"
+    "v1.1.13 更新内容：",
+    "1. 社保模块：识别完成后，无参保时间段和识别失败的图片自动归入'异常图片'文件夹",
+    "2. 文件整理结果摘要中新增异常图片数量统计",
+    "3. PDF转换失败的记录补全源路径，确保能被归类到异常文件夹"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.12"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.13"
 }

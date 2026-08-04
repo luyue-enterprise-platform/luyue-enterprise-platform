@@ -144,7 +144,9 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                         'filename': os.path.basename(fp),
                         'error': err_msg,
                         'name': '', 'idcard': '',
-                        'insurance_type': None, 'period': None, 'raw_text': ''
+                        'insurance_type': None, 'period': None, 'raw_text': '',
+                        '_source_path': fp,
+                        '_source_origin': os.path.basename(fp),
                     })
             else:
                 img_basename = os.path.basename(fp)
@@ -410,6 +412,7 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                     'folder_structure': organize_result['folder_structure'],
                     'unmatched': organize_result['unmatched'],
                     'no_roster': organize_result['no_roster'],
+                    'abnormal_count': organize_result.get('abnormal_count', 0),
                 },
                 'organize_dir': organize_dir,
                 # 缴费单位信息
@@ -834,6 +837,8 @@ def retry_task(task_id):
             new_failed.append({
                 'filename': display_name,
                 'error': str(e),
+                '_source_path': fp,
+                '_source_origin': source_origin,
             })
 
     # 分类新结果
@@ -844,6 +849,8 @@ def retry_task(task_id):
             retry_failed.append({
                 'filename': r.get('filename', ''),
                 'error': r.get('error', '未能识别出有效信息'),
+                '_source_path': r.get('_source_path', ''),
+                '_source_origin': r.get('_source_origin', ''),
             })
         else:
             retry_success.append(r)
@@ -873,13 +880,13 @@ def retry_task(task_id):
             if nm:
                 roster_map[nm] = item.get('identity_type', '')
 
-    # 重新整理文件
+    # 重新整理文件（包含成功+失败记录，失败记录会归入"异常图片"文件夹）
     organize_dir = os.path.join(OUTPUT_DIR, task_id, '参保证明')
     os.makedirs(organize_dir, exist_ok=True)
     try:
-        organize_result = organize_files(all_success, roster, organize_dir)
+        organize_result = organize_files(all_success + retry_failed, roster, organize_dir)
     except Exception:
-        organize_result = {'organized_count': 0, 'folder_structure': {}, 'unmatched': [], 'no_roster': not roster}
+        organize_result = {'organized_count': 0, 'folder_structure': {}, 'unmatched': [], 'no_roster': not roster, 'abnormal_count': 0}
 
     total_ocr = len(success_results) + len(new_results)
     all_files = (old_result.get('all_files', []) +
@@ -919,8 +926,8 @@ def retry_task(task_id):
                 'folder_structure': organize_result['folder_structure'],
                 'unmatched': organize_result['unmatched'],
                 'no_roster': organize_result['no_roster'],
-            },
-            'organize_dir': organize_dir,
+                'abnormal_count': organize_result.get('abnormal_count', 0),
+            },            'organize_dir': organize_dir,
             'company_name': company_name,
             'roster_company': old_result.get('roster_company', ''),
             'ocr_companies': old_result.get('ocr_companies', {}),

@@ -966,6 +966,9 @@ function renderResult(data) {
     if (org) {
         var orgHtml = '<h3>文件整理结果</h3>';
         orgHtml += '<p class="organize-summary">已整理 ' + org.organized_count + ' 个文件';
+        if (org.abnormal_count && org.abnormal_count > 0) {
+            orgHtml += '，<span style="color:#e74c3c;font-weight:bold;">异常图片 ' + org.abnormal_count + ' 个</span>（识别失败/无参保时间段，已单独归类到"异常图片"文件夹）';
+        }
         if (org.no_roster) {
             orgHtml += '（未上传花名册，按OCR识别姓名命名）';
         }
