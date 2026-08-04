@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""用户认证模块 - 支持本地模式和远程云端模式"""
+"""用户认证模块 - 支持本地模式和远程云端模式
+
+远程模式下，所有操作优先走远程API；远程失败时自动回退到本地SQLite数据库，
+确保软件在远程服务器不可用时仍能正常工作（邀请码生成、用户注册、登录等）。
+"""
 import os
 import sys
 import json
@@ -106,6 +110,13 @@ def _remote_request(endpoint, data=None, method='POST', token=None):
         return {'error': f'认证服务异常: {e}'}, 500
 
 
+def _log_fallback(operation, status, error=''):
+    """记录远程操作失败并回退到本地的日志"""
+    import logging
+    logging.getLogger('platform').warning(
+        f'远程{operation}失败({status}): {error}，回退到本地模式')
+
+
 def get_remote_token():
     """获取最近一次远程注册/登录返回的 API token（取出后清空）"""
     global _LAST_REMOTE_TOKEN
@@ -204,15 +215,68 @@ def _hash_password(password):
 
 
 def create_user(username, password, is_admin=False, invite_code=''):
-    """创建用户，返回(user_id, error)"""
+    """创建用户，返回(user_id, error)
+
+    远程模式：优先走远程API注册；远程失败时若邀请码在本地有效，回退到本地注册。
+    本地模式：直接在本地数据库创建用户。
+    """
     if _is_remote():
-        # 远程模式���注册走远程 API（由远程服务器决定 is_admin）
         payload = {'username': username, 'password': password}
         if invite_code:
             payload['invite_code'] = invite_code
         result, status = _remote_request('/api/auth/register', payload)
         if status == 200 and result.get('ok'):
             return result.get('user_id'), None
+        # 远程注册失败：尝试本地回退
+        conn = get_db()
+        if invite_code:
+            # 非首次注册：检查邀请码是否在本地有效
+            local_row = conn.execute(
+                'SELECT id FROM invite_codes WHERE code = ? AND used_by IS NULL',
+                (invite_code,)
+            ).fetchone()
+            if local_row:
+                _log_fallback('注册', status, result.get('error', ''))
+                try:
+                    conn.execute(
+                        'INSERT INTO users (username, password_hash, is_admin, created_at) '
+                        'VALUES (?, ?, ?, ?)',
+                        (username, _hash_password(password), 0,
+                         datetime.now().isoformat())
+                    )
+                    conn.commit()
+                    uid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                    conn.close()
+                    return uid, None
+                except sqlite3.IntegrityError:
+                    conn.close()
+                    return None, '用户名已存在'
+                except Exception as e:
+                    conn.close()
+                    return None, f'本地注册失败: {e}'
+        else:
+            # 首次注册（无邀请码）：如果本地无用户，允许本地注册为管理员
+            local_count = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+            if local_count == 0:
+                _log_fallback('注册', status, result.get('error', ''))
+                try:
+                    conn.execute(
+                        'INSERT INTO users (username, password_hash, is_admin, created_at) '
+                        'VALUES (?, ?, ?, ?)',
+                        (username, _hash_password(password), 1,
+                         datetime.now().isoformat())
+                    )
+                    conn.commit()
+                    uid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                    conn.close()
+                    return uid, None
+                except sqlite3.IntegrityError:
+                    conn.close()
+                    return None, '用户名已存在'
+                except Exception as e:
+                    conn.close()
+                    return None, f'本地注册失败: {e}'
+        conn.close()
         return None, result.get('error', '注册失败')
     # 本地模式
     conn = get_db()
@@ -232,7 +296,11 @@ def create_user(username, password, is_admin=False, invite_code=''):
 
 
 def verify_user(username, password):
-    """验证用户登录，返回(user_dict, error)"""
+    """验证用户登录，返回(user_dict, error)
+
+    远程模式：优先走远程API登录；远程失败时回退到本地数据库验证。
+    本地模式：直接在本地数据库验证。
+    """
     if _is_remote():
         result, status = _remote_request('/api/auth/login', {
             'username': username,
@@ -247,30 +315,39 @@ def verify_user(username, password):
                 'is_active': True,
                 '_token': token,
             }, None
-        return None, result.get('error', '登录失败')
-    # 本地模式
+        # 远程登录失败：回退到本地验证（用户可能在远程不可用时本地注册）
+        _log_fallback('登录', status, result.get('error', ''))
+    # 本地模式（或远程失败的回退）
     conn = get_db()
     row = conn.execute(
         'SELECT * FROM users WHERE username = ?', (username,)
     ).fetchone()
     conn.close()
     if not row:
-        return None, '用户名不存在'
+        return None, '用户名或密码错误'
     if row['password_hash'] != _hash_password(password):
-        return None, '密码错误'
+        return None, '用户名或密码错误'
     if not row['is_active']:
         return None, '账号已被停用，请联系管理员'
     return dict(row), None
 
 
 def get_user_count():
-    """获取用户总数（用于判断是否首次注册）"""
+    """获取用户总数（用于判断是否首次注册）
+
+    远程模式：取远程和本地用户数的最大值，避免远程数据丢失导致误判首次注册。
+    """
     if _is_remote():
         result, status = _remote_request('/api/auth/user_count', method='GET')
         if status == 200:
-            return result.get('count', 0)
-        # 远程不可用时返回一个很大的数，强制走邀请码注册
-        return 999
+            remote_count = result.get('count', 0)
+            # 取远程和本地的最大值，确保不会因远程数据丢失而误判为首次注册
+            conn = get_db()
+            local_count = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+            conn.close()
+            return max(remote_count, local_count)
+        # 远程不可用时回退到本地
+        _log_fallback('获取用户数', status, result.get('error', ''))
     conn = get_db()
     count = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
     conn.close()
@@ -278,14 +355,22 @@ def get_user_count():
 
 
 def generate_invite_code(created_by, note=''):
-    """生成邀请码。created_by 为管理员用户ID"""
+    """生成邀请码。created_by 为管理员用户ID
+
+    远程模式：优先走远程API生成；远程失败时回退到本地数据库生成。
+    本地模式：直接在本地数据库生成。
+    """
     if _is_remote():
         token = session.get(_SESSION_TOKEN_KEY, '')
-        result, status = _remote_request('/api/auth/generate_invite',
-                                          {'note': note}, token=token)
-        if status == 200:
-            return result.get('code', '')
-        return None
+        if token:
+            result, status = _remote_request('/api/auth/generate_invite',
+                                              {'note': note}, token=token)
+            if status == 200:
+                return result.get('code', '')
+            _log_fallback('生成邀请码', status, result.get('error', ''))
+        else:
+            _log_fallback('生成邀请码', '无token', 'session中无auth_token')
+    # 本地模式（或远程失败的回退）
     code = secrets.token_urlsafe(8).replace('-', '').replace('_', '')[:8].upper()
     conn = get_db()
     conn.execute(
@@ -298,10 +383,22 @@ def generate_invite_code(created_by, note=''):
 
 
 def validate_invite_code(code):
-    """验证邀请码是否有效（存在且未被使用）"""
+    """验证邀请码是否有效（存在且未被使用）
+
+    远程模式：优先走远程API验证；远程验证无效时也检查本地数据库
+    （可能是远程不可用时本地生成的邀请码）。
+    """
     if _is_remote():
         result, status = _remote_request('/api/auth/validate_invite', {'code': code})
-        return status == 200 and result.get('valid', False)
+        if status == 200:
+            if result.get('valid', False):
+                return True
+            # 远程说无效：可能是已被远程使用，也可能是远程数据库没有此码
+            # 检查本地数据库（可能是远程不可用时本地生成的）
+        else:
+            # 远程请求失败（服务器错误等）：回退到本地
+            _log_fallback('验证邀请码', status, result.get('error', ''))
+    # 本地验证（本地模式，或远程失败/远程无效时的回退）
     conn = get_db()
     row = conn.execute(
         'SELECT * FROM invite_codes WHERE code = ? AND used_by IS NULL',
@@ -312,12 +409,14 @@ def validate_invite_code(code):
 
 
 def consume_invite_code(code, user_id):
-    """标记邀请码已使用"""
-    if _is_remote():
-        return  # 远程模式下消费已在注册时由服务器完成
+    """标记邀请码已使用
+
+    无论远程还是本地模式，都在本地数据库标记一次。
+    远程模式下远程消费已在注册时由服务器完成，本地标记确保一致性。
+    """
     conn = get_db()
     conn.execute(
-        'UPDATE invite_codes SET used_by = ?, used_at = ? WHERE code = ?',
+        'UPDATE invite_codes SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL',
         (user_id, datetime.now().isoformat(), code)
     )
     conn.commit()
@@ -325,13 +424,17 @@ def consume_invite_code(code, user_id):
 
 
 def get_invite_codes(created_by=None):
-    """获取邀请码列表"""
+    """获取邀请码列表
+
+    远程模式：优先走远程API；远程失败时回退到本地数据库。
+    """
     if _is_remote():
         token = session.get(_SESSION_TOKEN_KEY, '')
         result, status = _remote_request('/api/auth/invite_codes', method='GET', token=token)
         if status == 200:
             return result.get('codes', [])
-        return []
+        _log_fallback('获取邀请码列表', status, result.get('error', ''))
+    # 本地模式（或远程失败的回退）
     conn = get_db()
     if created_by:
         rows = conn.execute(
@@ -353,13 +456,17 @@ def get_invite_codes(created_by=None):
 
 
 def get_all_users():
-    """获取所有用户列表"""
+    """获取所有用户列表
+
+    远程模式：优先走远程API；远程失败时回退到本地数据库。
+    """
     if _is_remote():
         token = session.get(_SESSION_TOKEN_KEY, '')
         result, status = _remote_request('/api/auth/users', method='GET', token=token)
         if status == 200:
             return result.get('users', [])
-        return []
+        _log_fallback('获取用户列表', status, result.get('error', ''))
+    # 本地模式（或远程失败的回退）
     conn = get_db()
     rows = conn.execute(
         'SELECT id, username, is_admin, is_active, created_at FROM users ORDER BY id'
@@ -369,13 +476,17 @@ def get_all_users():
 
 
 def toggle_user_active(user_id):
-    """切换用户启用/停用状态，返回新状态"""
+    """切换用户启用/停用状态，返回新状态
+
+    远程模式：优先走远程API；远程失败时回退到本地数据库。
+    """
     if _is_remote():
         token = session.get(_SESSION_TOKEN_KEY, '')
         result, status = _remote_request(f'/api/auth/users/{user_id}/toggle', token=token)
         if status == 200:
             return result.get('is_active', True)
-        return None
+        _log_fallback('切换用户状态', status, result.get('error', ''))
+    # 本地模式（或远程失败的回退）
     conn = get_db()
     row = conn.execute('SELECT is_active FROM users WHERE id = ?', (user_id,)).fetchone()
     if not row:
@@ -389,24 +500,37 @@ def toggle_user_active(user_id):
 
 
 def delete_user(user_id):
-    """删除用户"""
+    """删除用户
+
+    远程模式：优先走远程API；远程失败时回退到本地数据库。
+    """
     if _is_remote():
         token = session.get(_SESSION_TOKEN_KEY, '')
         result, status = _remote_request(f'/api/auth/users/{user_id}/delete', token=token)
-        return status == 200
+        if status == 200:
+            return True
+        _log_fallback('删除用户', status, result.get('error', ''))
+    # 本地模式（或远程失败的回退）
     conn = get_db()
     conn.execute('DELETE FROM users WHERE id = ?', (user_id,))
     conn.commit()
     conn.close()
+    return True
 
 
 def reset_password(user_id, new_password):
-    """重置用户密码"""
+    """重置用户密码
+
+    远程模式：优先走远程API；远程失败时回退到本地数据库。
+    """
     if _is_remote():
         token = session.get(_SESSION_TOKEN_KEY, '')
         result, status = _remote_request(f'/api/auth/users/{user_id}/reset_password',
                                           {'password': new_password}, token=token)
-        return status == 200
+        if status == 200:
+            return True
+        _log_fallback('重置密码', status, result.get('error', ''))
+    # 本地模式（或远程失败的回退）
     conn = get_db()
     conn.execute(
         'UPDATE users SET password_hash = ? WHERE id = ?',
@@ -414,6 +538,7 @@ def reset_password(user_id, new_password):
     )
     conn.commit()
     conn.close()
+    return True
 
 
 def get_user_by_id(user_id):
