@@ -1,16 +1,18 @@
 {
-  "version": "1.1.18",
-  "version_code": 1118,
-  "release_date": "2026-08-05",
+  "version": "1.1.19",
+  "version_code": 1119,
+  "release_date": "2026-08-04",
   "mandatory": false,
   "changelog": [
-    "v1.1.18 修复更新：",
-    "1. 修复主界面邀请码批量生成功能（API返回格式不匹配）",
-    "2. 移除社保模块中的邀请码和账号管理功能，仅保留在主界面",
-    "3. 社保模块顶部按钮统一为：返回首页、刷新",
-    "4. 修复主界面LOGO图标显示异常",
-    "5. 修复主界面底部版权栏丢失",
-    "6. 修复整体页面渲染样式"
+    "v1.1.19 全面修复更新：",
+    "1. 邀请码生成：点击生成后只显示当次生成的邀请码，不再显示历史列表",
+    "2. 邀请码API向后兼容：同时返回code和codes字段，修复生成无效问题",
+    "3. 主界面模块卡片尺寸缩小，确保底部版权栏完整显示",
+    "4. 恢复社保模块统计年月范围选择器（2015-2030年/月下拉）",
+    "5. 恢复社保模块原生文件夹选择功能（pickFolder）",
+    "6. 恢复社保模块追加模式文件管理（多次添加、去重、单条删除）",
+    "7. 恢复社保模块上传时年月范围参数传递和统计裁剪",
+    "8. 恢复社保模块混合模式上传（文件+文件夹组合）"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.18"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.19"
 }

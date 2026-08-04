@@ -68,18 +68,29 @@
             </h2>
             <p class="card-desc">按文件夹批量上传社保权益记录单（图片或PDF），系统将自动识别并统计四险重叠信息</p>
 
+            <!-- 统计年月范围选择 -->
+            <div class="year-range-selector">
+                <label class="year-range-label">统计年月范围：</label>
+                <select id="yearStart" class="year-select"></select>
+                <select id="monthStart" class="month-select"></select>
+                <span class="year-range-separator">至</span>
+                <select id="yearEnd" class="year-select"></select>
+                <select id="monthEnd" class="month-select"></select>
+                <span class="year-range-hint">选择需要统计退税的年月区间，系统将按此范围裁剪重叠时间段并生成年度统计</span>
+            </div>
+
             <div class="dropzone" id="dropzone">
                 <div class="dropzone-inner">
                     <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#4A90D9" stroke-width="1.5">
                         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
                     </svg>
-                    <p class="dropzone-text">将文件夹拖拽到此处，或 <span class="link">点击选择文件夹</span></p>
-                    <p class="dropzone-hint">系统将自动识别文件夹内所有图片和PDF（JPG / PNG / BMP / TIF / PDF）</p>
+                    <p class="dropzone-text">拖拽文件到此处，或 <span class="link">点击选择文件</span></p>
+                    <p class="dropzone-hint">系统将自动识别所有图片和PDF（JPG / PNG / BMP / TIF / PDF）</p>
                 </div>
                 <div class="dropzone-alt">
-                    或 <a href="javascript:void(0)" class="link" id="selectFilesLink">选择单个文件</a>
+                    或 <a href="javascript:void(0)" class="link" onclick="pickFolder(); return false;">选择文件夹</a>
                 </div>
-                <input type="file" id="fileInput" webkitdirectory directory multiple class="file-input-hidden">
+                <input type="file" id="fileInput" multiple accept="image/*,.pdf" class="file-input-hidden">
                 <input type="file" id="fileInputSingle" multiple accept="image/*,.pdf" class="file-input-hidden">
             </div>
 
@@ -89,7 +100,9 @@
                 <ul id="fileItems"></ul>
                 <div class="upload-actions">
                     <button class="btn btn-primary" id="btnUpload">开始识别统计</button>
-                    <button class="btn btn-ghost" id="btnClear">清空</button>
+                    <button class="btn btn-ghost" id="btnAddMore" onclick="document.getElementById('fileInputSingle').click();">+ 添加文件</button>
+                    <button class="btn btn-ghost" onclick="pickFolder();">+ 添加文件夹</button>
+                    <button class="btn btn-ghost" id="btnClear">清空全部</button>
                 </div>
             </div>
         </section>

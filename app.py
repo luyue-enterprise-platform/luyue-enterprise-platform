@@ -404,7 +404,13 @@ def api_generate_invite():
         code = generate_invite_code(session.get('user_id'), note)
         if code:
             codes.append(code)
-    return jsonify({'codes': codes})
+    if not codes:
+        return jsonify({'error': '生成邀请码失败，请检查认证服务是否正常'}), 500
+    # 向后兼容：单个邀请码时同时返回 code 和 codes
+    result = {'codes': codes}
+    if len(codes) == 1:
+        result['code'] = codes[0]
+    return jsonify(result)
 
 
 # ============ 用户管理（管理员） ============

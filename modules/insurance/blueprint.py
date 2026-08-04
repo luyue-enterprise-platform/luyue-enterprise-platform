@@ -22,25 +22,23 @@ from flask import (Blueprint, request, jsonify, send_file,
 
 # ============ 路径设置 ============
 # PyInstaller 单文件模式：模板/静态/核心模块在临时解压目录(sys._MEIPASS)
-# 用户数据（数据库/上传/输出/日志）放在可写数据目录
-# 自动处理 Program Files 受保护目录：重定向到 %APPDATA%\\鲁岳企业服务
-from core.paths import data_dir, resource_dir
-DATA_DIR = data_dir()
-
+# 用户数据（数据库/上传/输出/日志）放在 exe 同目录
 IS_FROZEN = getattr(sys, 'frozen', False)
 if IS_FROZEN:
     # PyInstaller 单文件模式：模板/静态资源按 build.spec 中的 (src, dst) 存放
     # build.spec 将 modules/insurance/templates 打包到 modules/insurance/templates
     # 因此本蓝图的 RESOURCE_DIR 应为 sys._MEIPASS/modules/insurance
     RESOURCE_DIR = os.path.join(sys._MEIPASS, 'modules', 'insurance')
+    DATA_DIR = os.path.dirname(sys.executable)  # 用户数据目录
 else:
     # blueprint.py 位于 modules/insurance/ 目录下
     # RESOURCE_DIR 指向 modules/insurance/（模板、静态资源、core 模块）
     RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
+    # DATA_DIR 指向项目根目录（用户数据目录：uploads/outputs/logs/data）
+    DATA_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# 确保项目根目录（资源目录）在 Python 路径中，以便导入 core.auth 和 modules.insurance.core.*
-# 注意：使用 RESOURCE_DIR（项目根/_MEIPASS）而非 DATA_DIR（可能已重定向到 %APPDATA%）
-_PROJECT_ROOT = resource_dir()
+# 确保项目根目录在 Python 路径中，以便导入 core.auth 和 modules.insurance.core.*
+_PROJECT_ROOT = DATA_DIR
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
@@ -147,9 +145,7 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                         'filename': os.path.basename(fp),
                         'error': err_msg,
                         'name': '', 'idcard': '',
-                        'insurance_type': None, 'period': None, 'raw_text': '',
-                        '_source_path': fp,
-                        '_source_origin': os.path.basename(fp),
+                        'insurance_type': None, 'period': None, 'raw_text': ''
                     })
             else:
                 img_basename = os.path.basename(fp)
@@ -331,27 +327,13 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
         for yf in yearly_ledger_files:
             logger.info(f'[task:{task_id}] 年度台账: {yf["filepath"]}')
 
-        # 构建花名册映射（优先按身份证号，回退到姓名）
-        roster_map_by_idcard = {}
-        roster_map_by_name = {}
+        # 构建花名册映射
+        roster_map = {}
         if roster:
             for item in roster:
-                idc = item.get('idcard', '').strip()
                 nm = item.get('name', '').strip()
-                if idc:
-                    roster_map_by_idcard[idc.upper()] = item.get('identity_type', '')
                 if nm:
-                    roster_map_by_name[nm] = item.get('identity_type', '')
-
-        def _get_identity_type(ps):
-            """优先按身份证号匹配，回退到姓名"""
-            idc = ps.get('idcard', '').strip().upper()
-            if idc and idc in roster_map_by_idcard:
-                return roster_map_by_idcard[idc]
-            nm = ps.get('name', '').strip()
-            if nm and nm in roster_map_by_name:
-                return roster_map_by_name[nm]
-            return ''
+                    roster_map[nm] = item.get('identity_type', '')
 
         with tasks_lock:
             tasks[task_id]['status'] = 'done'
@@ -361,7 +343,7 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                     {
                         'name': ps['name'],
                         'idcard': ps['idcard'],
-                        'identity_type': _get_identity_type(ps),
+                        'identity_type': roster_map.get(ps['name'], ''),
                         'insurances': {
                             k: {'start': v[0], 'end': v[1]}
                             for k, v in ps['insurances'].items()
@@ -415,7 +397,6 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                     'folder_structure': organize_result['folder_structure'],
                     'unmatched': organize_result['unmatched'],
                     'no_roster': organize_result['no_roster'],
-                    'abnormal_count': organize_result.get('abnormal_count', 0),
                 },
                 'organize_dir': organize_dir,
                 # 缴费单位信息
@@ -948,8 +929,6 @@ def retry_task(task_id):
             new_failed.append({
                 'filename': display_name,
                 'error': str(e),
-                '_source_path': fp,
-                '_source_origin': source_origin,
             })
 
     # 分类新结果
@@ -960,8 +939,6 @@ def retry_task(task_id):
             retry_failed.append({
                 'filename': r.get('filename', ''),
                 'error': r.get('error', '未能识别出有效信息'),
-                '_source_path': r.get('_source_path', ''),
-                '_source_origin': r.get('_source_origin', ''),
             })
         else:
             retry_success.append(r)
@@ -972,7 +949,7 @@ def retry_task(task_id):
 
     logger.info(f'[task:{task_id}] 补充识别 — 新成功: {len(retry_success)}, 仍失败: {len(retry_failed)}, 合并后总成功: {len(all_success)}')
 
-    # 重新统计（复用原始年度范围）
+    # 重新统计
     year_range = old_result.get('_year_range', None)
     persons = group_by_person(all_success)
     person_stats, year_cols = calc_all_stats(persons, year_range)
@@ -991,13 +968,13 @@ def retry_task(task_id):
             if nm:
                 roster_map[nm] = item.get('identity_type', '')
 
-    # 重新整理文件（包含成功+失败记录，失败记录会归入"异常图片"文件夹）
+    # 重新整理文件
     organize_dir = os.path.join(OUTPUT_DIR, task_id, '参保证明')
     os.makedirs(organize_dir, exist_ok=True)
     try:
-        organize_result = organize_files(all_success + retry_failed, roster, organize_dir)
+        organize_result = organize_files(all_success, roster, organize_dir)
     except Exception:
-        organize_result = {'organized_count': 0, 'folder_structure': {}, 'unmatched': [], 'no_roster': not roster, 'abnormal_count': 0}
+        organize_result = {'organized_count': 0, 'folder_structure': {}, 'unmatched': [], 'no_roster': not roster}
 
     total_ocr = len(success_results) + len(new_results)
     all_files = (old_result.get('all_files', []) +
@@ -1037,8 +1014,8 @@ def retry_task(task_id):
                 'folder_structure': organize_result['folder_structure'],
                 'unmatched': organize_result['unmatched'],
                 'no_roster': organize_result['no_roster'],
-                'abnormal_count': organize_result.get('abnormal_count', 0),
-            },            'organize_dir': organize_dir,
+            },
+            'organize_dir': organize_dir,
             'company_name': company_name,
             'roster_company': old_result.get('roster_company', ''),
             'ocr_companies': old_result.get('ocr_companies', {}),

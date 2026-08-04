@@ -3,8 +3,9 @@
 // 四险标准顺序
 var INSURANCE_ORDER = ['养老保险', '医疗保险', '工伤保险', '失业保险'];
 
-// 当前选中的文件
-var selectedFiles = [];
+// 当前选中的文件（支持混合：File对象 + 文件夹选择的文件）
+var selectedFiles = [];  // [{file: File|null, name: String, size: Number, fromFolder: Boolean}, ...]
+var pickIds = [];        // 文件夹选择ID列表（支持多个文件夹累加）
 var currentTaskId = null;
 var pollTimer = null;
 // 花名册数据
@@ -17,7 +18,6 @@ var rosterSourcePath = '';
 var dropzone = document.getElementById('dropzone');
 var fileInput = document.getElementById('fileInput');
 var fileInputSingle = document.getElementById('fileInputSingle');
-var selectFilesLink = document.getElementById('selectFilesLink');
 var fileList = document.getElementById('fileList');
 var fileItems = document.getElementById('fileItems');
 var fileCount = document.getElementById('fileCount');
@@ -49,8 +49,70 @@ var rosterCount = document.getElementById('rosterCount');
 var rosterList = document.getElementById('rosterList');
 var btnClearRoster = document.getElementById('btnClearRoster');
 
-// 修改密码
+// 刷新页面
 var btnRefresh = document.getElementById('btnRefresh');
+
+// 年月范围选择
+var yearStartSelect = document.getElementById('yearStart');
+var monthStartSelect = document.getElementById('monthStart');
+var yearEndSelect = document.getElementById('yearEnd');
+var monthEndSelect = document.getElementById('monthEnd');
+
+// ===== 初始化年月范围下拉 =====
+(function initYearMonthRange() {
+    var now = new Date();
+    var currentYear = now.getFullYear();
+    var currentMonth = now.getMonth() + 1;  // JS月份0-11，+1得到真实月份
+    // 默认范围：往前推3年到当前年
+    var defaultStartYear = currentYear - 3;
+    var defaultEndYear = currentYear;
+    // 下拉范围：2015 ~ 2030
+    var minYear = 2015;
+    var maxYear = 2030;
+
+    // 填充年份选项
+    var yearOptions = '';
+    for (var y = minYear; y <= maxYear; y++) {
+        yearOptions += '<option value="' + y + '">' + y + '年</option>';
+    }
+    yearStartSelect.innerHTML = yearOptions;
+    yearEndSelect.innerHTML = yearOptions;
+    yearStartSelect.value = String(defaultStartYear);
+    yearEndSelect.value = String(defaultEndYear);
+
+    // 填充月份选项
+    var monthOptions = '';
+    for (var m = 1; m <= 12; m++) {
+        monthOptions += '<option value="' + m + '">' + m + '月</option>';
+    }
+    monthStartSelect.innerHTML = monthOptions;
+    monthEndSelect.innerHTML = monthOptions;
+    monthStartSelect.value = String(currentMonth);
+    monthEndSelect.value = String(currentMonth);
+
+    // 联动校验：起始年月不能晚于截止年月
+    function validateRange() {
+        var sy = parseInt(yearStartSelect.value);
+        var sm = parseInt(monthStartSelect.value);
+        var ey = parseInt(yearEndSelect.value);
+        var em = parseInt(monthEndSelect.value);
+        // 比较 (sy*12+sm) vs (ey*12+em)
+        if (sy * 12 + sm > ey * 12 + em) {
+            // 起始晚于截止，把截止调整为起始
+            yearEndSelect.value = yearStartSelect.value;
+            monthEndSelect.value = monthStartSelect.value;
+        }
+    }
+    yearStartSelect.addEventListener('change', validateRange);
+    monthStartSelect.addEventListener('change', validateRange);
+    yearEndSelect.addEventListener('change', function() {
+        if (parseInt(yearEndSelect.value) < parseInt(yearStartSelect.value)) {
+            yearStartSelect.value = yearEndSelect.value;
+        }
+        validateRange();
+    });
+    monthEndSelect.addEventListener('change', validateRange);
+})();
 
 // ===== 刷新页面 =====
 if (btnRefresh) {
@@ -131,7 +193,7 @@ btnClearRoster.addEventListener('click', function() {
 
 // ===== 拖拽上传 =====
 dropzone.addEventListener('click', function() {
-    fileInput.click();
+    fileInputSingle.click();
 });
 
 dropzone.addEventListener('dragover', function(e) {
@@ -167,11 +229,6 @@ dropzone.addEventListener('drop', function(e) {
 
 fileInput.addEventListener('change', function(e) {
     handleFiles(e.target.files);
-});
-
-selectFilesLink.addEventListener('click', function(e) {
-    e.stopPropagation();
-    fileInputSingle.click();
 });
 
 fileInputSingle.addEventListener('change', function(e) {
@@ -232,29 +289,118 @@ function handleFiles(files) {
         showToast('请选择图片或PDF文件（JPG/PNG/BMP/TIF/PDF）');
         return;
     }
-    selectedFiles = valid;
-    renderFileList();
+    // ===== 追加模式：避免重复（同名+同大小） =====
+    var added = 0;
+    for (var j = 0; j < valid.length; j++) {
+        var f = valid[j];
+        var dup = selectedFiles.some(function (sf) {
+            var sfn = sf.file ? sf.file.name : sf.name;
+            var sfs = sf.file ? sf.file.size : sf.size;
+            return sfn === f.name && sfs === f.size;
+        });
+        if (dup) continue;
+        // 保留相对路径信息
+        var entry = {file: f, name: f.name, size: f.size, fromFolder: false};
+        if (f._relativePath) entry._relativePath = f._relativePath;
+        if (f.webkitRelativePath) entry._relativePath = f.webkitRelativePath;
+        selectedFiles.push(entry);
+        added++;
+    }
+    if (added > 0) {
+        renderFileList();
+        if (added < valid.length) {
+            showToast('已添加 ' + added + ' 个文件，跳过 ' + (valid.length - added) + ' 个重复文件');
+        }
+    } else if (valid.length > 0) {
+        showToast('所选文件已全部存在（重复）');
+    }
+}
+
+// ===== 通过系统原生对话框选择文件夹（累加模式） =====
+function pickFolder() {
+    showToast('正在打开文件夹选择对话框...');
+
+    fetch('/insurance/api/pick_folder', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.cancelled) return;
+            if (data.error) {
+                showToast(data.error);
+                return;
+            }
+            if (data.ok) {
+                pickIds.push(data.pick_id);
+                var added = 0;
+                for (var i = 0; i < data.files.length; i++) {
+                    var f = data.files[i];
+                    var dup = selectedFiles.some(function (sf) {
+                        var sfn = sf.file ? sf.file.name : sf.name;
+                        var sfs = sf.file ? sf.file.size : sf.size;
+                        return sfn === f.name && sfs === (f.size || 0);
+                    });
+                    if (dup) continue;
+                    selectedFiles.push({
+                        file: null,
+                        name: f.name,
+                        size: f.size || 0,
+                        fromFolder: true
+                    });
+                    added++;
+                }
+                renderFileList();
+                showToast('已添加文件夹: ' + data.folder_name + '，新增 ' + added + ' 个文件（共 ' + selectedFiles.length + ' 个）');
+            }
+        })
+        .catch(function(err) {
+            showToast('文件夹选择失败: ' + err.message);
+        });
 }
 
 function renderFileList() {
     fileCount.textContent = selectedFiles.length;
     fileItems.innerHTML = '';
     for (var i = 0; i < selectedFiles.length; i++) {
+        var item = selectedFiles[i];
         var li = document.createElement('li');
-        var sizeKB = (selectedFiles[i].size / 1024).toFixed(1);
-        var path = selectedFiles[i]._relativePath || selectedFiles[i].webkitRelativePath || selectedFiles[i].name;
-        li.textContent = path + '  (' + sizeKB + ' KB)';
+        li.className = 'file-list-item';
+        var sizeKB = (item.size / 1024).toFixed(1);
+        var path = item._relativePath || item.name;
+        var folderBadge = item.fromFolder ? '<span class="folder-badge" title="来自文件夹">📁</span> ' : '';
+        li.innerHTML = folderBadge + '<span class="file-path">' + esc(path) + '</span>' +
+            '<span class="file-size">(' + sizeKB + ' KB)</span>' +
+            '<button class="btn-remove" onclick="removeInsuranceFile(' + i + ')" title="删除此文件">✕</button>';
         fileItems.appendChild(li);
     }
     fileList.style.display = 'block';
 }
 
-// ===== 清空 =====
+// ===== 单条删除 =====
+function removeInsuranceFile(idx) {
+    selectedFiles.splice(idx, 1);
+    if (selectedFiles.length === 0) {
+        fileList.style.display = 'none';
+    } else {
+        renderFileList();
+    }
+    fileInput.value = '';
+    fileInputSingle.value = '';
+}
+
+// ===== 清空全部 =====
 btnClear.addEventListener('click', function() {
+    if (selectedFiles.length === 0) {
+        showToast('当前没有选中文件');
+        return;
+    }
+    if (!confirm('确定要清空所有已选文件吗？共 ' + selectedFiles.length + ' 个')) {
+        return;
+    }
     selectedFiles = [];
+    pickIds = [];
     fileList.style.display = 'none';
     fileInput.value = '';
     fileInputSingle.value = '';
+    showToast('已清空所有文件');
 });
 
 // ===== 上传并处理 =====
@@ -309,11 +455,15 @@ function compressImage(file, maxWidth, quality) {
     });
 }
 
-// ===== 批量压缩选中文件 =====
-async function compressAllFiles(files) {
+// ===== 批量压缩选中文件（仅压缩上传的File对象，文件夹选择的文件已在服务端） =====
+async function compressAllFiles(entries) {
     var results = [];
-    for (var i = 0; i < files.length; i++) {
-        results.push(await compressImage(files[i], 1600, 0.85));
+    for (var i = 0; i < entries.length; i++) {
+        if (entries[i].file) {
+            results.push(await compressImage(entries[i].file, 1600, 0.85));
+        } else {
+            results.push(null); // 文件夹选择的文件不需要压缩
+        }
     }
     return results;
 }
@@ -323,23 +473,45 @@ function uploadFiles() {
     btnUpload.textContent = '准备上传...';
     navStatus.querySelector('span:last-child').textContent = '准备中';
 
-    // 先压缩图片
-    compressAllFiles(selectedFiles).then(function(compressedFiles) {
+    // 分离File对象和文件夹选择条目
+    var fileEntries = selectedFiles.filter(function(e) { return e.file; });
+    var folderEntries = selectedFiles.filter(function(e) { return !e.file; });
+
+    // 先压缩图片（仅File对象）
+    compressAllFiles(fileEntries).then(function(compressedFiles) {
         // 统计压缩效果
         var totalOrig = 0, totalComp = 0;
         for (var i = 0; i < compressedFiles.length; i++) {
-            totalOrig += selectedFiles[i].size;
-            totalComp += compressedFiles[i].size;
+            if (compressedFiles[i]) {
+                totalOrig += fileEntries[i].file.size;
+                totalComp += compressedFiles[i].size;
+            }
         }
         var savedPct = totalOrig > 0 ? Math.round((1 - totalComp / totalOrig) * 100) : 0;
 
         var formData = new FormData();
+
+        // 添加压缩后的File对象
         for (var i = 0; i < compressedFiles.length; i++) {
-            formData.append('files', compressedFiles[i]);
+            if (compressedFiles[i]) {
+                formData.append('files', compressedFiles[i]);
+            }
         }
+
+        // 添加文件夹选择ID
+        if (pickIds.length > 0) {
+            formData.append('pick_ids', pickIds.join(','));
+        }
+
         formData.append('roster', JSON.stringify(rosterData));
         formData.append('roster_company', rosterCompany);
         formData.append('roster_source_path', rosterSourcePath);
+
+        // 添加用户选择的统计年月范围
+        formData.append('year_start', yearStartSelect.value);
+        formData.append('month_start', monthStartSelect.value);
+        formData.append('year_end', yearEndSelect.value);
+        formData.append('month_end', monthEndSelect.value);
 
         // 用 XMLHttpRequest 获取上传进度
         var xhr = new XMLHttpRequest();
@@ -367,7 +539,7 @@ function uploadFiles() {
                     }
                 }
                 progressText.textContent = speedText;
-                progressDetail.textContent = compressedFiles.length + ' 个文件';
+                progressDetail.textContent = selectedFiles.length + ' 个文件';
             }
         };
 
@@ -571,11 +743,12 @@ function renderResult(data) {
     progressActions.style.display = 'none';
     resultSection.style.display = 'block';
 
-    // 汇总信���
+    // 汇总信息
     summaryBar.innerHTML = '';
     var summaries = [
         { label: '识别图片', value: data.ocr_count },
         { label: '参保人员', value: data.person_count },
+        { label: '统计区间', value: yearStartSelect.value + '年' + monthStartSelect.value + '月<br>至' + yearEndSelect.value + '年' + monthEndSelect.value + '月' },
         { label: '年度列数', value: data.year_cols.length },
         { label: '年度台账', value: data.year_cols.length + '张' },
     ];
@@ -739,9 +912,9 @@ function renderResult(data) {
         html += '<td>' + (p + 1) + '</td>';
         html += '<td>' + esc(ps.name) + '</td>';
         html += '<td>' + esc(ps.idcard) + '</td>';
-        html += '<td>' + esc(ps.identity_type || '') + '</td>'; // 人员身份类型 - 来自花名册
-        html += '<td></td>'; // 退役证编号/就业创业证编号 - 待填
-        html += '<td></td>'; // 退役时间/登记失业时间 - 待填
+        html += '<td>' + esc(ps.identity_type || '') + '</td>';
+        html += '<td></td>';
+        html += '<td></td>';
 
         for (var t = 0; t < INSURANCE_ORDER.length; t++) {
             var ins = ps.insurances[INSURANCE_ORDER[t]];
@@ -764,7 +937,7 @@ function renderResult(data) {
             html += '<td>' + m + '</td>';
         }
 
-        html += '<td></td>'; // 合计申请退税总额 - 待填
+        html += '<td></td>';
 
         html += '</tr>';
     }
@@ -830,6 +1003,7 @@ btnRestart.addEventListener('click', function() {
     fileList.style.display = 'none';
     progressActions.style.display = 'none';
     selectedFiles = [];
+    pickIds = [];
     fileInput.value = '';
     fileInputSingle.value = '';
     currentTaskId = null;

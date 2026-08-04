@@ -97,20 +97,20 @@ body {
 .portal-main {
     max-width: 960px;
     margin: 0 auto;
-    padding: 48px 24px 60px;
+    padding: 28px 24px 24px;
     flex: 1 0 auto;
     width: 100%;
 }
 
 .portal-hero {
     text-align: center;
-    margin-bottom: 40px;
+    margin-bottom: 20px;
 }
 
 .portal-hero h1 {
-    font-size: 26px;
+    font-size: 22px;
     color: #1a3d5c;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     font-weight: 700;
 }
 
@@ -123,15 +123,15 @@ body {
 .module-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 28px;
+    gap: 18px;
 }
 
 .module-card {
     display: block;
     background: #fff;
-    border-radius: 14px;
-    padding: 32px 28px 24px;
-    box-shadow: 0 2px 16px rgba(0,0,0,0.07);
+    border-radius: 12px;
+    padding: 20px 20px 16px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
     text-decoration: none;
     color: #333;
     transition: transform 0.2s, box-shadow 0.2s;
@@ -155,39 +155,39 @@ body {
 }
 
 .module-icon {
-    font-size: 42px;
-    margin-bottom: 16px;
+    font-size: 30px;
+    margin-bottom: 10px;
     display: block;
 }
 
 .module-title {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
     color: #1a3d5c;
-    margin-bottom: 10px;
+    margin-bottom: 6px;
 }
 
 .module-desc {
-    font-size: 14px;
+    font-size: 13px;
     color: #666;
-    line-height: 1.7;
-    margin-bottom: 16px;
-    min-height: 48px;
+    line-height: 1.5;
+    margin-bottom: 10px;
+    min-height: 36px;
 }
 
 .module-features {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 18px;
+    gap: 6px;
+    margin-bottom: 12px;
 }
 
 .feature-tag {
     background: #EEF3F8;
     color: #2E5C8A;
-    padding: 4px 12px;
-    border-radius: 12px;
-    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 10px;
+    font-size: 11px;
     font-weight: 500;
 }
 
@@ -408,9 +408,9 @@ body {
 .portal-footer {
     background: linear-gradient(135deg, #1a3d5c 0%, #2E5C8A 100%);
     color: rgba(255,255,255,0.85);
-    padding: 18px 28px;
+    padding: 12px 28px;
     text-align: center;
-    font-size: 13px;
+    font-size: 12px;
     flex-shrink: 0;
 }
 
