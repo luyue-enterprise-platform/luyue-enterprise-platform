@@ -1,13 +1,11 @@
 {
-  "version": "1.1.17",
-  "version_code": 1117,
+  "version": "1.1.18",
+  "version_code": 1118,
   "release_date": "2026-08-04",
   "mandatory": false,
   "changelog": [
-    "v1.1.17 更新内容：",
-    "1. 汇总智能模块支持文件夹名称匹配：文件所在的文件夹名包含章节关键词时，该文件也匹配到对应章节",
-    "2. Word/Excel转PDF新增WPS COM降级支持：MS Office → WPS → LibreOffice 三级降级链",
-    "3. 转换能力检测自动识别MS Office、WPS、LibreOffice三种引擎"
+    "v1.1.18 更新内容：",
+    "1. 修复汇总智能模块文件夹名称匹配深度限制：取消3级父文件夹限制，支持任意层级文件夹名匹配"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.17"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.18"
 }

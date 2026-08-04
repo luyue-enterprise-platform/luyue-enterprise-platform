@@ -570,14 +570,12 @@ def match_files_from_paths(file_paths, mode, roster=None):
             logger.debug(f'文件格式不支持，跳过: {fp}')
             continue
 
-        # 提取父文件夹名称（从近到远，最多3级）
-        # 例: C:\\data\\劳动合同\\张三.pdf → folder_names = ["劳动合同", "data"]
-        # 例: C:\\data\\劳动合同\\2024年\\李四.pdf → folder_names = ["2024年", "劳动合同", "data"]
+        # 提取所有父文件夹名称（从近到远，不限层数）
+        # 例: C:\\data\\养老保险\\2024年\\01月\\张三.pdf → folder_names = ["01月", "2024年", "养老保险", "data"]
+        # 例: C:\\data\\合同\\养老保险\\参保证明.pdf → folder_names = ["养老保险", "合同", "data"]
         folder_names = []
         parent_dir = os.path.dirname(fp)
-        for _ in range(3):
-            if not parent_dir:
-                break
+        while parent_dir:
             folder_name = os.path.basename(parent_dir)
             if folder_name:
                 folder_names.append(folder_name)
