@@ -1,18 +1,16 @@
 {
-  "version": "1.1.20",
-  "version_code": 1120,
+  "version": "1.1.21",
+  "version_code": 1121,
   "release_date": "2026-08-05",
   "mandatory": false,
   "changelog": [
-    "v1.1.20 劳动合同模块功能恢复：",
-    "1. 恢复劳动合同模块原生文件夹选择功能（pickFolder）",
-    "2. 恢复劳动合同模块追加模式文件管理（多次添加、去重、单条删除）",
-    "3. 恢复劳动合同模块混合模式上传（文件+文件夹组合，pick_ids机制）",
-    "4. 恢复劳动合同模块文件夹名优先匹配花名册（folder_hints）",
-    "5. 恢复劳动合同模块PDF转换后文件夹名继承",
-    "6. 恢复劳动合同模块文件列表显示文件夹标签和删除按钮",
-    "7. 添加'添加文件'和'添加文件夹'按钮，支持多次添加",
-    "8. 清空文件时增加确认提示"
+    "v1.1.21 社保模块异常图片归类改进：",
+    "1. 恢复异常图片文件夹功能（识别失败/无时间段 → 异常图片文件夹）",
+    "2. 排除不计入统计的图片（缴费单位不一致）也纳入异常图片文件夹",
+    "3. 文件整理摘要中显示异常图片数量",
+    "4. 图片识别详情中区分'缴费单位不一致'和'识别失败'状态",
+    "5. 重传合并时同步公司过滤和异常归类逻辑",
+    "6. 修复重传合并时公司不一致图片混入统计的问题"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.20"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.21"
 }

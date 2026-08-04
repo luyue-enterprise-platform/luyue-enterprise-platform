@@ -216,21 +216,7 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
 
         with tasks_lock:
             tasks[task_id]['current'] = len(all_items)
-            tasks[task_id]['message'] = '正在整理文件...'
-
-        # ===== 按花名册重命名 + 按险种分文件夹 =====
-        organize_dir = os.path.join(OUTPUT_DIR, task_id, '参保证明')
-        os.makedirs(organize_dir, exist_ok=True)
-        try:
-            organize_result = organize_files(ocr_results, roster, organize_dir)
-            org_count = organize_result['organized_count']
-            logger.info(f'[task:{task_id}] 文件整理完成: {org_count} 个文件')
-        except Exception as e:
-            logger.error(f'[task:{task_id}] 文件整理失败: {e}\n{traceback.format_exc()}')
-            organize_result = {'organized_count': 0, 'folder_structure': {}, 'unmatched': [], 'no_roster': not roster}
-
-        with tasks_lock:
-            tasks[task_id]['message'] = '正在统计计算...'
+            tasks[task_id]['message'] = '正在分析识别结果...'
 
         # 区分成功和失败的OCR结果
         success_results = []
@@ -312,7 +298,32 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
         logger.info(f'[task:{task_id}] 缴费单位验证: 保留 {len(valid_results)} 条, '
                     f'排除 {excluded_count} 条, 花名册公司="{roster_company}"')
 
-        # 按人员分组（仅用缴费单位验证通过的结果）
+        # ===== 标记被排除的记录（缴费单位不一致），供 organize_files 归入异常图片文件夹 =====
+        valid_filenames = {r.get('filename', '') for r in valid_results}
+        for r in ocr_results:
+            fn = r.get('filename', '')
+            if fn and fn not in valid_filenames and not r.get('error'):
+                # 该记录是成功识别但被排除的（缴费单位不一致）
+                r['_excluded'] = True
+                logger.info(f'[task:{task_id}] 标记排除到异常图片: {fn}')
+
+        # ===== 按花名册重命名 + 按险种分文件夹（含异常图片归类） =====
+        with tasks_lock:
+            tasks[task_id]['message'] = '正在整理文件...'
+
+        organize_dir = os.path.join(OUTPUT_DIR, task_id, '参保证明')
+        os.makedirs(organize_dir, exist_ok=True)
+        try:
+            organize_result = organize_files(ocr_results, roster, organize_dir)
+            org_count = organize_result['organized_count']
+            abnormal_count = organize_result.get('abnormal_count', 0)
+            logger.info(f'[task:{task_id}] 文件整理完成: 正常 {org_count} 个, 异常 {abnormal_count} 个')
+        except Exception as e:
+            logger.error(f'[task:{task_id}] 文件整理失败: {e}\n{traceback.format_exc()}')
+            organize_result = {'organized_count': 0, 'folder_structure': {}, 'unmatched': [], 'no_roster': not roster, 'abnormal_count': 0}
+
+        with tasks_lock:
+            tasks[task_id]['message'] = '正在统计计算...'
         persons = group_by_person(valid_results)
         person_stats, year_cols = calc_all_stats(persons, year_range)
 
@@ -379,7 +390,18 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                         'period': r.get('period', ''),
                         'error': '',
                     }
-                    for r in success_results
+                    for r in valid_results
+                ] + [
+                    {
+                        'filename': r.get('filename', ''),
+                        'name': r.get('name', ''),
+                        'idcard': r.get('idcard', ''),
+                        'insurance_type': r.get('insurance_type') or '',
+                        'company_name': r.get('company_name', ''),
+                        'period': r.get('period', ''),
+                        'error': '缴费单位不一致（已排除）',
+                    }
+                    for r in success_results if r.get('_excluded')
                 ] + [
                     {
                         'filename': r.get('filename', ''),
@@ -397,6 +419,7 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                     'folder_structure': organize_result['folder_structure'],
                     'unmatched': organize_result['unmatched'],
                     'no_roster': organize_result['no_roster'],
+                    'abnormal_count': organize_result.get('abnormal_count', 0),
                 },
                 'organize_dir': organize_dir,
                 # 缴费单位信息
@@ -405,7 +428,7 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                 'ocr_companies': ocr_companies,
                 'company_mismatch_files': company_mismatch_files,
                 # 保存内部数据供重传合并使用
-                '_success_results': success_results,
+                '_success_results': valid_results,
                 '_task_dir': task_dir,
                 '_year_range': year_range,
             }
@@ -912,6 +935,7 @@ def retry_task(task_id):
                 new_failed.append({
                     'filename': os.path.basename(fp),
                     'error': f'PDF转换失败: {e}',
+                    '_source_path': fp,
                 })
         else:
             img_basename = os.path.basename(fp)
@@ -929,6 +953,7 @@ def retry_task(task_id):
             new_failed.append({
                 'filename': display_name,
                 'error': str(e),
+                '_source_path': fp,
             })
 
     # 分类新结果
@@ -949,13 +974,41 @@ def retry_task(task_id):
 
     logger.info(f'[task:{task_id}] 补充识别 — 新成功: {len(retry_success)}, 仍失败: {len(retry_failed)}, 合并后总成功: {len(all_success)}')
 
-    # 重新统计
+    # ===== 缴费单位过滤（与 process_task 一致） =====
+    company_name = old_result.get('company_name', '')
+    company_mismatch_files = list(old_result.get('company_mismatch_files', []))
+    valid_results = []
+    if company_name:
+        for r in all_success:
+            cn = r.get('company_name', '').strip()
+            if cn and cn != company_name:
+                # 缴费单位不一致 → 排除
+                company_mismatch_files.append({
+                    'filename': r.get('filename', ''),
+                    'ocr_company': cn,
+                    'expected_company': company_name,
+                })
+            else:
+                valid_results.append(r)
+    else:
+        valid_results = list(all_success)
+
+    excluded_count = len(all_success) - len(valid_results)
+    logger.info(f'[task:{task_id}] 重传缴费单位验证: 保留 {len(valid_results)} 条, 排除 {excluded_count} 条')
+
+    # 标记被排除的记录，供 organize_files 归入异常图片文件夹
+    valid_filenames = {r.get('filename', '') for r in valid_results}
+    for r in all_success:
+        fn = r.get('filename', '')
+        if fn and fn not in valid_filenames:
+            r['_excluded'] = True
+
+    # 重新统计（仅用缴费单位验证通过的结果）
     year_range = old_result.get('_year_range', None)
-    persons = group_by_person(all_success)
+    persons = group_by_person(valid_results)
     person_stats, year_cols = calc_all_stats(persons, year_range)
 
     # 重新生成Excel（保留补传前识别到的缴费单位）
-    company_name = old_result.get('company_name', '')
     excel_filename = f'申报重点群体税收优惠政策总台账_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
     excel_path = os.path.join(OUTPUT_DIR, excel_filename)
     gen_result = generate_excel(persons, excel_path, roster=roster, company_name=company_name, year_range=year_range)
@@ -968,13 +1021,18 @@ def retry_task(task_id):
             if nm:
                 roster_map[nm] = item.get('identity_type', '')
 
-    # 重新整理文件
+    # 重新整理文件（包含成功+排除+失败，全部传给 organize_files）
     organize_dir = os.path.join(OUTPUT_DIR, task_id, '参保证明')
     os.makedirs(organize_dir, exist_ok=True)
+    # 构建完整的 organize 列表：所有成功记录（含标记排除的）+ 有路径的失败记录
+    all_for_organize = list(all_success)  # 包含 _excluded 标记
+    for f in all_failed:
+        if f.get('_source_path'):
+            all_for_organize.append(f)
     try:
-        organize_result = organize_files(all_success, roster, organize_dir)
+        organize_result = organize_files(all_for_organize, roster, organize_dir)
     except Exception:
-        organize_result = {'organized_count': 0, 'folder_structure': {}, 'unmatched': [], 'no_roster': not roster}
+        organize_result = {'organized_count': 0, 'folder_structure': {}, 'unmatched': [], 'no_roster': not roster, 'abnormal_count': 0}
 
     total_ocr = len(success_results) + len(new_results)
     all_files = (old_result.get('all_files', []) +
@@ -1005,7 +1063,8 @@ def retry_task(task_id):
             'yearly_ledger_files': yearly_ledger_files,
             'ocr_count': total_ocr,
             'person_count': len(persons),
-            'success_count': len(all_success),
+            'success_count': len(valid_results),
+            'excluded_count': excluded_count,
             'failed_count': len(all_failed),
             'failed_files': all_failed,
             'all_files': all_files,
@@ -1014,13 +1073,14 @@ def retry_task(task_id):
                 'folder_structure': organize_result['folder_structure'],
                 'unmatched': organize_result['unmatched'],
                 'no_roster': organize_result['no_roster'],
+                'abnormal_count': organize_result.get('abnormal_count', 0),
             },
             'organize_dir': organize_dir,
             'company_name': company_name,
             'roster_company': old_result.get('roster_company', ''),
             'ocr_companies': old_result.get('ocr_companies', {}),
-            'company_mismatch_files': old_result.get('company_mismatch_files', []),
-            # 每张图片的识别详情（含失败信息）
+            'company_mismatch_files': company_mismatch_files,
+            # 每张图片的识别详情（含排除和失败信息）
             'image_details': [
                 {
                     'filename': r.get('filename', ''),
@@ -1031,7 +1091,18 @@ def retry_task(task_id):
                     'period': r.get('period', ''),
                     'error': '',
                 }
-                for r in all_success
+                for r in valid_results
+            ] + [
+                {
+                    'filename': r.get('filename', ''),
+                    'name': r.get('name', ''),
+                    'idcard': r.get('idcard', ''),
+                    'insurance_type': r.get('insurance_type') or '',
+                    'company_name': r.get('company_name', ''),
+                    'period': r.get('period', ''),
+                    'error': '缴费单位不一致（已排除）',
+                }
+                for r in all_success if r.get('_excluded')
             ] + [
                 {
                     'filename': r.get('filename', ''),
@@ -1044,7 +1115,7 @@ def retry_task(task_id):
                 }
                 for r in all_failed
             ],
-            '_success_results': all_success,
+            '_success_results': valid_results,
             '_task_dir': task_dir,
             '_year_range': year_range,
         }

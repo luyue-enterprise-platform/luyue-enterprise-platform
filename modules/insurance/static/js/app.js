@@ -794,6 +794,9 @@ function renderResult(data) {
     if (org) {
         var orgHtml = '<h3>文件整理结果</h3>';
         orgHtml += '<p class="organize-summary">已整理 ' + org.organized_count + ' 个文件';
+        if (org.abnormal_count && org.abnormal_count > 0) {
+            orgHtml += '，异常图片 ' + org.abnormal_count + ' 个（识别失败/无时间段/缴费单位不一致）';
+        }
         if (org.no_roster) {
             orgHtml += '（未上传花名册，按OCR识别姓名命名）';
         }
@@ -816,7 +819,9 @@ function renderResult(data) {
                     ? '<span class="tag-ok">' + esc(period) + '</span>'
                     : '<span class="tag-bad">⚠ 未识别</span>';
                 var statusCell = '';
-                if (det.error) {
+                if (det.error && det.error.indexOf('缴费单位不一致') >= 0) {
+                    statusCell = '<span class="tag-warn">⚠ ' + esc(det.error) + '</span>';
+                } else if (det.error) {
                     statusCell = '<span class="tag-bad">识别失败: ' + esc(det.error) + '</span>';
                 } else if (!ins) {
                     statusCell = '<span class="tag-bad">险种缺失（未归类）</span>';

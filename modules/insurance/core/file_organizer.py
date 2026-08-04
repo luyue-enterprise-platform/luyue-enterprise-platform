@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """文件整理模块 - 按花名册重命名图片，按险种分文件夹归类
 
-异常图片（识别失败/无参保时间段）单独归类到"异常图片"文件夹，
+异常图片（识别失败/无参保时间段/缴费单位不一致被排除）单独归类到"异常图片"文件夹，
 方便用户检查并重新提交识别。
 """
 import os
@@ -25,17 +25,21 @@ def _is_abnormal(rec):
     """判断该OCR记录是否为异常图片（需要单独归类）
 
     异常条件：
-    1. 有 error 字段（OCR识别失败）
-    2. 无姓名且无身份证号（未识别出有效信息）
-    3. 无参保时间段 period（period为None或空）
+    1. 有 _excluded 标记（缴费单位不一致，被排除不计入统计）
+    2. 有 error 字段（OCR识别失败）
+    3. 无姓名且无身份证号（未识别出有效信息）
+    4. 无参保时间段 period（period为None或空）
     """
-    # 条件1：OCR错误
+    # 条件1：缴费单位不一致，被排除
+    if rec.get('_excluded'):
+        return True
+    # 条件2：OCR错误
     if rec.get('error'):
         return True
-    # 条件2：无姓名且无身份证号
+    # 条件3：无姓名且无身份证号
     if not rec.get('name') and not rec.get('idcard'):
         return True
-    # 条件3：无参保时间段
+    # 条件4：无参保时间段
     period = rec.get('period')
     if not period:
         return True
@@ -46,7 +50,7 @@ def organize_files(ocr_results, roster, output_dir):
     """
     将识别后的图片按花名册重命名，并按险种分文件夹归类
 
-    异常图片（识别失败/无参保时间段）单独放入"异常图片"文件夹。
+    异常图片（识别失败/无参保时间段/缴费单位不一致）单独放入"异常图片"文件夹。
 
     Args:
         ocr_results: list of parse_ocr_result()返回的dict，每条包含:
@@ -56,6 +60,7 @@ def organize_files(ocr_results, roster, output_dir):
             - period: (start_ym, end_ym) 参保时间段 或 None
             - _source_path: 图片的实际路径（由调用方添加）
             - _source_origin: 原始源文件名（PDF多页时用于去重，可选）
+            - _excluded: bool  缴费单位不一致被排除（可选，由调用方添加）
         roster: list of {'seq': int, 'name': str}  花名册
         output_dir: 整理后的文件输出根目录
 
@@ -111,7 +116,7 @@ def organize_files(ocr_results, roster, output_dir):
             continue
         organized_origins.add(origin_key)
 
-        # === 异常图片判定：识别失败/无时间段 → 放入异常文件夹 ===
+        # === 异常图片判定：识别失败/无时间段/缴费单位不一致 → 放入异常文件夹 ===
         if _is_abnormal(rec):
             # 保留原文件名（异常图片不做花名册重命名，方便用户定位问题）
             orig_filename = rec.get('filename', os.path.basename(src_path))
