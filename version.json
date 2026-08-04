@@ -1,17 +1,14 @@
 {
-  "version": "1.2.0",
-  "version_code": 1200,
+  "version": "1.1.16",
+  "version_code": 1116,
   "release_date": "2026-08-04",
   "mandatory": false,
   "changelog": [
-    "v1.2.0 重大更新 — 全新汇总智能系统模块：",
-    "1. 新增汇总智能系统模块（OCR智能识别+自动排版）",
-    "2. 所有文件自动转为图片，OCR识别内容与名目智能匹配",
-    "3. 退税/抵税双模板，按指定顺序自动排版",
-    "4. 支持多年份资料自动分组排列",
-    "5. 自动生成封面、目录和页码",
-    "6. 支持拖拽调整顺序、补充材料、实时预览",
-    "7. 支持文件夹递归读取、多文件多选同时添加"
+    "v1.1.16 恢复版本：",
+    "1. 恢复到v1.1.16版本设置（留存备查资料汇总PDF智能生成系统）",
+    "2. 四模块布局：社保智能核算、劳动合同整理、PDF转Word、汇总智能系统",
+    "3. 汇总模块支持多次添加文件/文件夹混合",
+    "4. 支持文件夹递归读取、多文件多选同时添加"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.2.0"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.16"
 }
