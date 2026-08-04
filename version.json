@@ -1,18 +1,14 @@
 {
-  "version": "1.1.22",
-  "version_code": 1122,
+  "version": "1.1.23",
+  "version_code": 1123,
   "release_date": "2026-08-05",
   "mandatory": false,
   "changelog": [
-    "v1.1.22 修复动态邀请码生成失败问题：",
-    "1. 远程认证服务器不可用时，所有操作自动回退到本地数据库",
-    "2. 邀请码生成：远程失败时本地生成，确保管理员随时可生成邀请码",
-    "3. 邀请码验证：同时检查远程和本地数据库，兼容本地生成的邀请码",
-    "4. 用户注册：远程失败时若邀请码在本地有效，自动回退到本地注册",
-    "5. 用户登录：远程失败时回退到本地数据库验证",
-    "6. 用户管理（查看/停用/删除/重置密码）：远程失败时回退到本地",
-    "7. 获取用户数：取远程和本地的最大值，避免误判首次注册",
-    "8. 邀请码消费：无论远程/本地模式都同步本地数据库标记"
+    "v1.1.23 修复动态邀请码生成失败问题（根因修复）：",
+    "1. 远程服务器返回邀请码格式为{codes:[\"XXX\"]}，客户端误读code字段导致返回空",
+    "2. 兼容远程响应的code和codes两种格式",
+    "3. 远程返回200但无有效邀请码时自动回退本地生成",
+    "4. 本地生成代码增加异常保护，防止未捕获异常导致500错误"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.22"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.23"
 }

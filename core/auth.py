@@ -366,20 +366,34 @@ def generate_invite_code(created_by, note=''):
             result, status = _remote_request('/api/auth/generate_invite',
                                               {'note': note}, token=token)
             if status == 200:
-                return result.get('code', '')
-            _log_fallback('生成邀请码', status, result.get('error', ''))
+                # 远程可能返回 {'code': 'XXX'} 或 {'codes': ['XXX', ...]}
+                code = result.get('code', '')
+                if not code:
+                    codes_list = result.get('codes', [])
+                    if codes_list and isinstance(codes_list, list):
+                        code = codes_list[0]
+                if code:
+                    return code
+                # 远程返回200但无有效邀请码，回退到本地
+                _log_fallback('生成邀请码', status, '远程返回无有效邀请码')
+            else:
+                _log_fallback('生成邀请码', status, result.get('error', ''))
         else:
             _log_fallback('生成邀请码', '无token', 'session中无auth_token')
     # 本地模式（或远程失败的回退）
-    code = secrets.token_urlsafe(8).replace('-', '').replace('_', '')[:8].upper()
-    conn = get_db()
-    conn.execute(
-        'INSERT INTO invite_codes (code, created_by, created_at, note) VALUES (?, ?, ?, ?)',
-        (code, created_by, datetime.now().isoformat(), note)
-    )
-    conn.commit()
-    conn.close()
-    return code
+    try:
+        code = secrets.token_urlsafe(8).replace('-', '').replace('_', '')[:8].upper()
+        conn = get_db()
+        conn.execute(
+            'INSERT INTO invite_codes (code, created_by, created_at, note) VALUES (?, ?, ?, ?)',
+            (code, created_by, datetime.now().isoformat(), note)
+        )
+        conn.commit()
+        conn.close()
+        return code
+    except Exception as e:
+        _log_fallback('生成邀请码(本地)', '异常', str(e))
+        return ''
 
 
 def validate_invite_code(code):
