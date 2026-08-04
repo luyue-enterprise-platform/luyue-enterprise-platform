@@ -24,7 +24,7 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 0 28px;
-    height: 60px;
+    height: 54px;
     background: linear-gradient(135deg, #1a3d5c 0%, #2E5C8A 100%);
     color: #fff;
     flex-shrink: 0;
@@ -97,25 +97,25 @@ body {
 
 /* --- 主内容区 --- */
 .portal-main {
-    max-width: 960px;
+    max-width: 920px;
     margin: 0 auto;
-    padding: 48px 24px 60px;
+    padding: 18px 24px 16px;
 }
 
 .portal-hero {
     text-align: center;
-    margin-bottom: 40px;
+    margin-bottom: 14px;
 }
 
 .portal-hero h1 {
-    font-size: 26px;
+    font-size: 22px;
     color: #1a3d5c;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     font-weight: 700;
 }
 
 .portal-hero p {
-    font-size: 15px;
+    font-size: 14px;
     color: #666;
 }
 
@@ -123,15 +123,15 @@ body {
 .module-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 28px;
+    gap: 14px;
 }
 
 .module-card {
     display: block;
     background: #fff;
-    border-radius: 14px;
-    padding: 32px 28px 24px;
-    box-shadow: 0 2px 16px rgba(0,0,0,0.07);
+    border-radius: 12px;
+    padding: 16px 20px 14px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
     text-decoration: none;
     color: #333;
     transition: transform 0.2s, box-shadow 0.2s;
@@ -155,48 +155,48 @@ body {
 }
 
 .module-icon {
-    font-size: 42px;
-    margin-bottom: 16px;
+    font-size: 30px;
+    margin-bottom: 8px;
     display: block;
 }
 
 .module-title {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
     color: #1a3d5c;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 }
 
 .module-desc {
-    font-size: 14px;
+    font-size: 13px;
     color: #666;
-    line-height: 1.7;
-    margin-bottom: 16px;
-    min-height: 48px;
+    line-height: 1.6;
+    margin-bottom: 12px;
+    min-height: 42px;
 }
 
 .module-features {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 18px;
+    gap: 6px;
+    margin-bottom: 14px;
 }
 
 .feature-tag {
     background: #EEF3F8;
     color: #2E5C8A;
-    padding: 4px 12px;
-    border-radius: 12px;
-    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 10px;
+    font-size: 11px;
     font-weight: 500;
 }
 
 .module-action {
     display: inline-block;
     color: #2E5C8A;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
-    padding: 6px 0;
+    padding: 4px 0;
     border-bottom: 2px solid transparent;
     transition: border-color 0.2s;
 }
@@ -410,8 +410,8 @@ body {
     background: linear-gradient(135deg, #1a3d5c 0%, #2E5C8A 100%);
     color: rgba(255,255,255,0.85);
     text-align: center;
-    padding: 14px 0;
-    font-size: 13px;
+    padding: 10px 0;
+    font-size: 12px;
     flex-shrink: 0;
     margin-top: auto;
 }
@@ -436,5 +436,5 @@ body {
         font-size: 13px;
     }
 
-    .portal-hero h1 { font-size: 20px; }
+    .portal-hero h1 { font-size: 18px; }
 }

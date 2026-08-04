@@ -87,21 +87,37 @@ def api_select_folder():
     if not os.path.isdir(folder_path):
         return jsonify({'error': '选择的路径不是文件夹'}), 400
 
-    # 扫描文件夹内的所有支持文件
+    # 扫描文件夹内的所有支持文件（递归包含子文件夹）
     from .core.sections import SUPPORTED_EXTENSIONS
     file_list = []
-    for root_dir, dirs, files in os.walk(folder_path):
+    walk_errors = []
+
+    def _on_walk_error(err):
+        walk_errors.append(str(err))
+        logger.warning(f'文件夹扫描错误: {err}')
+
+    for root_dir, dirs, files in os.walk(folder_path, onerror=_on_walk_error):
         for f in files:
             ext = os.path.splitext(f)[1].lower()
             if ext in SUPPORTED_EXTENSIONS:
-                rel_path = os.path.relpath(os.path.join(root_dir, f), folder_path)
-                file_size = os.path.getsize(os.path.join(root_dir, f))
+                full_path = os.path.join(root_dir, f)
+                rel_path = os.path.relpath(full_path, folder_path)
+                try:
+                    file_size = os.path.getsize(full_path)
+                except Exception as e:
+                    logger.warning(f'无法获取文件大小，跳过: {full_path} ({e})')
+                    continue
                 file_list.append({
                     'name': f,
                     'path': rel_path,
+                    'abs_path': full_path,
                     'ext': ext,
                     'size': file_size,
                 })
+
+    if walk_errors:
+        logger.warning(f'文件夹扫描完成，但有 {len(walk_errors)} 个目录访问错误: {walk_errors[:3]}')
+    logger.info(f'文件夹扫描完成: {folder_path} -> {len(file_list)} 个支持文件')
 
     return jsonify({
         'ok': True,
@@ -111,33 +127,95 @@ def api_select_folder():
     })
 
 
+@pdfmerge_bp.route('/api/select_files', methods=['POST'])
+@login_required
+def api_select_files():
+    """弹出系统原生文件选择对话框（支持多选）"""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+
+        file_paths = filedialog.askopenfilenames(
+            title='选择留存备查资料文件（可多选）',
+            filetypes=[
+                ('所有支持的文件', '*.pdf *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.doc *.docx *.xls *.xlsx'),
+                ('PDF文件', '*.pdf'),
+                ('图片文件', '*.png *.jpg *.jpeg *.bmp *.tif *.tiff'),
+                ('Word文件', '*.doc *.docx'),
+                ('Excel文件', '*.xls *.xlsx'),
+            ],
+            initialdir=os.path.expanduser('~')
+        )
+        root.destroy()
+    except Exception as e:
+        logger.error(f'文件选择对话框异常: {e}')
+        return jsonify({'error': f'无法打开文件选择对话框: {e}'}), 500
+
+    if not file_paths:
+        return jsonify({'cancelled': True})
+
+    # 过滤支持的文件格式
+    from .core.sections import SUPPORTED_EXTENSIONS
+    file_list = []
+    for fp in file_paths:
+        ext = os.path.splitext(fp)[1].lower()
+        if ext not in SUPPORTED_EXTENSIONS:
+            continue
+        try:
+            file_size = os.path.getsize(fp)
+        except Exception as e:
+            logger.warning(f'无法获取文件大小，跳过: {fp} ({e})')
+            continue
+        file_list.append({
+            'name': os.path.basename(fp),
+            'abs_path': fp,
+            'ext': ext,
+            'size': file_size,
+        })
+
+    logger.info(f'文件选择完成: {len(file_list)} 个文件')
+
+    return jsonify({
+        'ok': True,
+        'file_count': len(file_list),
+        'files': file_list,
+    })
+
+
 @pdfmerge_bp.route('/api/scan_match', methods=['POST'])
 @login_required
 def api_scan_match():
-    """扫描文件夹并匹配文件到各章节（不生成PDF）"""
+    """扫描文件列表并匹配文件到各章节（不生成PDF）"""
     data = request.get_json(silent=True) or {}
-    folder_path = data.get('folder_path', '')
+    file_paths = data.get('file_paths', [])
     mode = data.get('mode', 'refund')  # refund / deduction
 
-    if not folder_path or not os.path.isdir(folder_path):
-        return jsonify({'error': '文件夹路径无效'}), 400
+    if not file_paths:
+        return jsonify({'error': '请先选择文件'}), 400
 
     if mode not in ('refund', 'deduction'):
         return jsonify({'error': '模式必须为 refund 或 deduction'}), 400
 
-    from .core.sections import match_files
+    from .core.sections import match_files_from_paths
 
     try:
-        result = match_files(folder_path, mode)
+        result = match_files_from_paths(file_paths, mode)
 
         # 转换为前端友好的格式
         sections_data = []
         for sec in result['sections']:
+            # 显示文件名（basename），方便用户识别
+            file_display = [os.path.basename(f) for f in sec['files']]
+
             sections_data.append({
                 'id': sec['id'],
                 'name': sec['name'],
                 'file_count': len(sec['files']),
-                'files': [os.path.basename(f) for f in sec['files']],
+                'files': file_display,
                 'matched': sec['matched'],
                 'required': sec['required'],
                 'sort_by_roster': sec['sort_by_roster'],
@@ -161,7 +239,7 @@ def api_scan_match():
 def api_generate():
     """启动PDF生成任务"""
     data = request.get_json(silent=True) or {}
-    folder_path = data.get('folder_path', '')
+    file_paths = data.get('file_paths', [])
     mode = data.get('mode', 'refund')
     cover_title = data.get('cover_title', '').strip()
     company_name = data.get('company_name', '').strip()
@@ -170,8 +248,8 @@ def api_generate():
     deduction_period = data.get('deduction_period', '')  # 抵税模式的所属期
     proof_period = data.get('proof_period', '')  # 抵税模式的证明时间段
 
-    if not folder_path or not os.path.isdir(folder_path):
-        return jsonify({'error': '文件夹路径无效'}), 400
+    if not file_paths:
+        return jsonify({'error': '请先选择文件'}), 400
 
     if not cover_title:
         return jsonify({'error': '请输入封面名称'}), 400
@@ -222,7 +300,7 @@ def api_generate():
     # 启动后台生成线程
     thread = threading.Thread(
         target=_process_generate_task,
-        args=(task_id, folder_path, mode, cover_title, company_name,
+        args=(task_id, file_paths, mode, cover_title, company_name,
               period_text, output_filename, task_dir),
         daemon=True
     )
@@ -235,11 +313,11 @@ def api_generate():
     })
 
 
-def _process_generate_task(task_id, folder_path, mode, cover_title, company_name,
+def _process_generate_task(task_id, file_paths, mode, cover_title, company_name,
                             period_text, output_filename, task_dir):
     """后台PDF生成任务"""
     try:
-        from .core.sections import match_files
+        from .core.sections import match_files_from_paths
         from .core.format_converter import convert_to_pdf
         from .core.pdf_builder import generate_cover, generate_toc, merge_pdfs, get_pdf_page_count
 
@@ -250,8 +328,8 @@ def _process_generate_task(task_id, folder_path, mode, cover_title, company_name
                 tasks[task_id]['message'] = message
 
         # Step 1: 匹配文件
-        update_progress(0, 100, '正在扫描文件夹并匹配文件...')
-        match_result = match_files(folder_path, mode)
+        update_progress(0, 100, '正在匹配文件...')
+        match_result = match_files_from_paths(file_paths, mode)
 
         matched_sections = [s for s in match_result['sections'] if s['matched']]
         total_files = sum(len(s['files']) for s in matched_sections)
@@ -259,7 +337,7 @@ def _process_generate_task(task_id, folder_path, mode, cover_title, company_name
         if total_files == 0:
             with tasks_lock:
                 tasks[task_id]['status'] = 'error'
-                tasks[task_id]['error'] = '未匹配到任何文件，请检查文件夹内容'
+                tasks[task_id]['error'] = '未匹配到任何文件，请检查已添加的文件'
             return
 
         logger.info(f'[task:{task_id}] 匹配到 {total_files} 个文件, {len(matched_sections)} 个章节')
@@ -281,14 +359,16 @@ def _process_generate_task(task_id, folder_path, mode, cover_title, company_name
             section_pdf_paths = []
             for file_path in section['files']:
                 converted_count += 1
+                rel_name = os.path.basename(file_path)
                 update_progress(converted_count, total_files,
-                                f'正在转换 ({converted_count}/{total_files}): {os.path.basename(file_path)}')
+                                f'正在转换 ({converted_count}/{total_files}): {rel_name}')
 
+                logger.info(f'[task:{task_id}] 转换文件: {file_path}')
                 pdf_path = convert_to_pdf(file_path, pdf_convert_dir)
                 if pdf_path:
                     section_pdf_paths.append(pdf_path)
                 else:
-                    logger.warning(f'转换失败，跳过: {file_path}')
+                    logger.warning(f'[task:{task_id}] 转换失败，跳过: {file_path}')
 
             if section_pdf_paths:
                 section_pdfs.append((section['name'], section_pdf_paths))

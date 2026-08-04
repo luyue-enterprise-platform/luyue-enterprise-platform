@@ -18,6 +18,19 @@ WORD_EXTS = {'.doc', '.docx'}
 EXCEL_EXTS = {'.xls', '.xlsx'}
 
 
+def _normalize_path(path):
+    """
+    规范化文件路径，处理Windows长路径问题
+    """
+    path = os.path.normpath(path)
+    if os.name == 'nt':
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+        if len(path) > 255 and not path.startswith('\\\\?\\'):
+            path = '\\\\?\\' + path
+    return path
+
+
 def convert_to_pdf(file_path, output_dir):
     """
     将任意支持的文件格式转换为PDF
@@ -29,6 +42,9 @@ def convert_to_pdf(file_path, output_dir):
     Returns:
         str: 生成的PDF文件路径, 失败返回None
     """
+    # 规范化路径
+    file_path = _normalize_path(file_path)
+
     if not os.path.isfile(file_path):
         logger.error(f'文件不存在: {file_path}')
         return None
@@ -37,7 +53,7 @@ def convert_to_pdf(file_path, output_dir):
     basename = os.path.splitext(os.path.basename(file_path))[0]
     pdf_path = os.path.join(output_dir, f'{basename}.pdf')
 
-    # 避免文件名冲突
+    # 避免文件名冲突（不同子文件夹中同名文件）
     counter = 1
     while os.path.exists(pdf_path):
         pdf_path = os.path.join(output_dir, f'{basename}_{counter}.pdf')
@@ -65,7 +81,7 @@ def convert_to_pdf(file_path, output_dir):
             return None
 
     except Exception as e:
-        logger.error(f'转换失败 {file_path}: {e}')
+        logger.error(f'转换失败 [{ext}] {file_path}: {e}')
         return None
 
 
@@ -125,6 +141,10 @@ def _word_to_pdf_com(word_path, pdf_path):
     import win32com.client
     import pythoncom
 
+    # 规范化路径（COM要求绝对路径，反斜杠分隔）
+    word_abs = os.path.abspath(word_path)
+    pdf_abs = os.path.abspath(pdf_path)
+
     pythoncom.CoInitialize()
     word_app = None
     doc = None
@@ -134,12 +154,12 @@ def _word_to_pdf_com(word_path, pdf_path):
         word_app.DisplayAlerts = False
 
         doc = word_app.Documents.Open(
-            os.path.abspath(word_path),
+            word_abs,
             ReadOnly=True,
             AddToRecentFiles=False
         )
         # 17 = wdFormatPDF
-        doc.SaveAs(os.path.abspath(pdf_path), FileFormat=17)
+        doc.SaveAs(pdf_abs, FileFormat=17)
         logger.info(f'Word转PDF(COM): {os.path.basename(word_path)}')
         return pdf_path
     finally:
@@ -164,6 +184,10 @@ def _excel_to_pdf_com(excel_path, pdf_path):
     import win32com.client
     import pythoncom
 
+    # 规范化路径（COM要求绝对路径，反斜杠分隔）
+    excel_abs = os.path.abspath(excel_path)
+    pdf_abs = os.path.abspath(pdf_path)
+
     pythoncom.CoInitialize()
     excel_app = None
     wb = None
@@ -173,11 +197,11 @@ def _excel_to_pdf_com(excel_path, pdf_path):
         excel_app.DisplayAlerts = False
 
         wb = excel_app.Workbooks.Open(
-            os.path.abspath(excel_path),
+            excel_abs,
             ReadOnly=True
         )
         # 0 = xlTypePDF
-        wb.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
+        wb.ExportAsFixedFormat(0, pdf_abs)
         logger.info(f'Excel转PDF(COM): {os.path.basename(excel_path)}')
         return pdf_path
     finally:

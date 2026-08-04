@@ -3,7 +3,8 @@
  */
 
 // ===== 全局状态 =====
-var selectedFiles = [];     // [File, ...]
+var selectedFiles = [];     // [{file: File|null, name: String, size: Number, fromFolder: Boolean}, ...]
+var pickIds = [];           // 文件夹选择ID列表（支持多个文件夹累加）
 var currentTaskId = null;
 var pollTimer = null;
 
@@ -67,11 +68,13 @@ function addFiles(fileList) {
         }
         // 避免重复
         var dup = selectedFiles.some(function (sf) {
-            return sf.name === f.name && sf.size === f.size;
+            var sfn = sf.file ? sf.file.name : sf.name;
+            var sfs = sf.file ? sf.file.size : sf.size;
+            return sfn === f.name && sfs === f.size;
         });
         if (dup) continue;
 
-        selectedFiles.push(f);
+        selectedFiles.push({file: f, name: f.name, size: f.size, fromFolder: false});
         added++;
     }
     if (skipped > 0) {
@@ -83,14 +86,58 @@ function addFiles(fileList) {
     }
 }
 
+// ===== 通过系统原生对话框选择文件夹（累加模式） =====
+function pickFolder() {
+    showToast('正在打开文件夹选择对话框...', 'info');
+
+    fetch('/pdf2word/api/pick_folder', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.cancelled) return;
+            if (data.error) {
+                showToast(data.error, 'error');
+                return;
+            }
+            if (data.ok) {
+                pickIds.push(data.pick_id);
+                var added = 0;
+                for (var i = 0; i < data.files.length; i++) {
+                    var f = data.files[i];
+                    var dup = selectedFiles.some(function (sf) {
+                        var sfn = sf.file ? sf.file.name : sf.name;
+                        var sfs = sf.file ? sf.file.size : sf.size;
+                        return sfn === f.name && sfs === (f.size || 0);
+                    });
+                    if (dup) continue;
+                    selectedFiles.push({
+                        file: null,
+                        name: f.name,
+                        size: f.size || 0,
+                        fromFolder: true
+                    });
+                    added++;
+                }
+                renderFileList();
+                checkReady();
+                showToast('已添加文件夹: ' + data.folder_name + '，新增 ' + added + ' 个PDF（共 ' + selectedFiles.length + ' 个）', 'success');
+            }
+        })
+        .catch(function (err) {
+            showToast('文件夹选择失败: ' + err.message, 'error');
+        });
+}
+
 function renderFileList() {
     document.getElementById('fileList').style.display = 'block';
     document.getElementById('fileCount').textContent = '共 ' + selectedFiles.length + ' 个 PDF 文件';
-    document.getElementById('fileItems').innerHTML = selectedFiles.map(function (f, idx) {
-        return '<span class="file-tag">' +
+    document.getElementById('fileItems').innerHTML = selectedFiles.map(function (item, idx) {
+        var folderBadge = item.fromFolder
+            ? '<span class="folder-badge" title="来自文件夹选择">📁</span>'
+            : '';
+        return '<span class="file-tag">' + folderBadge +
             '<span>📄</span>' +
-            '<span class="file-name" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
-            '<span style="color:#999;font-size:11px;">(' + formatSize(f.size) + ')</span>' +
+            '<span class="file-name" title="' + esc(item.name) + '">' + esc(item.name) + '</span>' +
+            '<span style="color:#999;font-size:11px;">(' + formatSize(item.size) + ')</span>' +
             '<span class="file-remove" onclick="removeFile(' + idx + ')">✕</span>' +
             '</span>';
     }).join('');
@@ -113,6 +160,7 @@ function clearFiles() {
         return;
     }
     selectedFiles = [];
+    pickIds = [];
     document.getElementById('fileList').style.display = 'none';
     hideActionAndResult();
 }
@@ -139,8 +187,17 @@ function startConvert() {
     startBtn.textContent = '转换中...';
 
     var formData = new FormData();
-    selectedFiles.forEach(function (f) {
-        formData.append('files', f);
+
+    // 发送文件夹选择ID（支持多个）
+    if (pickIds.length > 0) {
+        formData.append('pick_ids', pickIds.join(','));
+    }
+
+    // 添加上传的File对象
+    selectedFiles.forEach(function (item) {
+        if (item.file) {
+            formData.append('files', item.file);
+        }
     });
 
     // 显示进度区
@@ -377,6 +434,7 @@ function hideActionAndResult() {
 // ===== 全部重置 =====
 function resetAll() {
     clearFiles();
+    pickIds = [];
     hideActionAndResult();
     document.getElementById('startBtn').disabled = false;
     document.getElementById('startBtn').textContent = '🚀 开始转换';

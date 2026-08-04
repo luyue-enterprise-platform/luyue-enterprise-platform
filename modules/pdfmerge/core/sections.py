@@ -344,27 +344,35 @@ def _match_score(filename, section):
     return score
 
 
-def match_files(folder_path, mode, roster=None):
+def _normalize_path(path):
     """
-    扫描文件夹，将文件匹配到各章节
+    规范化文件路径，处理Windows长路径问题
+    Windows默认MAX_PATH=260，超过此长度的路径需要使用 \\\\?\\ 前缀
+    """
+    # 规范化路径分隔符
+    path = os.path.normpath(path)
+    # Windows长路径支持
+    if os.name == 'nt':
+        # 转为绝对路径
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+        # 如果路径超过255字符且没有长路径前缀，添加前缀
+        if len(path) > 255 and not path.startswith('\\\\?\\'):
+            path = '\\\\?\\' + path
+    return path
+
+
+def _match_core(all_files, mode, roster=None):
+    """
+    核心匹配逻辑：将 (filename, file_path) 列表匹配到各章节
 
     Args:
-        folder_path: 用户选择的文件夹路径
+        all_files: [(filename, file_path), ...] 列表
         mode: 'refund' 或 'deduction'
         roster: 花名册列表 [{'seq': int, 'name': str, 'idcard': str}], 可选
 
     Returns:
-        dict: {
-            'sections': [
-                {
-                    'id': str, 'name': str, 'files': [file_path, ...],
-                    'matched': bool, 'required': bool, 'sort_by_roster': bool
-                }, ...
-            ],
-            'unmatched': [file_path, ...],  # 未匹配到任何章节的文件
-            'total_files': int,
-            'matched_files': int,
-        }
+        dict: 同 match_files 返回格式
     """
     sections = get_sections(mode)
     section_results = {s['id']: {
@@ -378,20 +386,7 @@ def match_files(folder_path, mode, roster=None):
     } for s in sections}
 
     unmatched = []
-    total_files = 0
-
-    # 递归扫描文件夹
-    all_files = []
-    for root, dirs, files in os.walk(folder_path):
-        for f in files:
-            ext = os.path.splitext(f)[1].lower()
-            if ext not in SUPPORTED_EXTENSIONS:
-                continue
-            file_path = os.path.join(root, f)
-            all_files.append((f, file_path))
-            total_files += 1
-
-    logger.info(f'扫描到 {total_files} 个支持文件')
+    total_files = len(all_files)
 
     # 对每个文件计算所有章节的匹配分数
     for filename, file_path in all_files:
@@ -432,6 +427,99 @@ def match_files(folder_path, mode, roster=None):
         'total_files': total_files,
         'matched_files': matched_count,
     }
+
+
+def match_files(folder_path, mode, roster=None):
+    """
+    扫描文件夹，将文件匹配到各章节
+
+    Args:
+        folder_path: 用户选择的文件夹路径
+        mode: 'refund' 或 'deduction'
+        roster: 花名册列表 [{'seq': int, 'name': str, 'idcard': str}], 可选
+
+    Returns:
+        dict: {
+            'sections': [
+                {
+                    'id': str, 'name': str, 'files': [file_path, ...],
+                    'matched': bool, 'required': bool, 'sort_by_roster': bool
+                }, ...
+            ],
+            'unmatched': [file_path, ...],  # 未匹配到任何章节的文件
+            'total_files': int,
+            'matched_files': int,
+        }
+    """
+    # 递归扫描文件夹（包含子文件夹）
+    all_files = []
+    walk_errors = []
+
+    def _on_walk_error(err):
+        """os.walk 错误回调：记录目录访问错误"""
+        walk_errors.append(str(err))
+        logger.warning(f'目录访问错误: {err}')
+
+    for root, dirs, files in os.walk(folder_path, onerror=_on_walk_error):
+        rel_dir = os.path.relpath(root, folder_path)
+        logger.info(f'扫描目录: {rel_dir} (找到 {len(files)} 个文件)')
+        for f in files:
+            ext = os.path.splitext(f)[1].lower()
+            if ext not in SUPPORTED_EXTENSIONS:
+                continue
+            file_path = os.path.join(root, f)
+            # 验证文件可访问
+            if not os.path.isfile(file_path):
+                # 尝试长路径前缀
+                long_path = _normalize_path(file_path)
+                if long_path != file_path and os.path.isfile(long_path):
+                    file_path = long_path
+                else:
+                    logger.warning(f'文件无法访问，跳过: {file_path}')
+                    continue
+            all_files.append((f, file_path))
+            logger.debug(f'  发现文件: {os.path.relpath(file_path, folder_path)}')
+
+    if walk_errors:
+        logger.warning(f'扫描完成，但有 {len(walk_errors)} 个目录访问错误')
+    logger.info(f'扫描到 {len(all_files)} 个支持文件 (来自 {folder_path})')
+
+    return _match_core(all_files, mode, roster)
+
+
+def match_files_from_paths(file_paths, mode, roster=None):
+    """
+    从文件路径列表匹配文件到各章节（不需要文件夹扫描）
+
+    用于前端传入多个文件夹/文件选择后的合并文件路径列表。
+
+    Args:
+        file_paths: 绝对文件路径列表
+        mode: 'refund' 或 'deduction'
+        roster: 花名册列表, 可选
+
+    Returns:
+        dict: 同 match_files 返回格式
+    """
+    all_files = []
+    for fp in file_paths:
+        # 验证文件可访问
+        if not os.path.isfile(fp):
+            long_path = _normalize_path(fp)
+            if long_path != fp and os.path.isfile(long_path):
+                fp = long_path
+            else:
+                logger.warning(f'文件不存在，跳过: {fp}')
+                continue
+        filename = os.path.basename(fp)
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in SUPPORTED_EXTENSIONS:
+            logger.debug(f'文件格式不支持，跳过: {fp}')
+            continue
+        all_files.append((filename, fp))
+
+    logger.info(f'从路径列表匹配 {len(all_files)} 个支持文件')
+    return _match_core(all_files, mode, roster)
 
 
 def _sort_by_roster(file_paths, roster_names):

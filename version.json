@@ -1,14 +1,15 @@
 {
-  "version": "1.1.15",
-  "version_code": 1115,
+  "version": "1.1.16",
+  "version_code": 1116,
   "release_date": "2026-08-04",
   "mandatory": false,
   "changelog": [
-    "v1.1.15 更新内容：",
-    "1. 留存备查资料汇总PDF模块新增页面编辑功能",
-    "2. 生成PDF后可手动插入页面（支持PDF/图片/Word/Excel）",
-    "3. 生成PDF后可手动删除个别页面",
-    "4. 页面编辑后目录内容及页码自动调整"
+    "v1.1.16 更新内容：",
+    "1. 全部四个模块统一支持多次添加文件或文件夹",
+    "2. 支持混合添加文件+文件夹（可反复添加）",
+    "3. 添加后可单个文件或文件夹删除，也可全部清除",
+    "4. 社保核算、劳动合同、PDF转Word、留存备查资料汇总PDF四个模块全部改造",
+    "5. 优化主界面模块卡片尺寸，确保底部信息完整显示"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.15"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.16"
 }

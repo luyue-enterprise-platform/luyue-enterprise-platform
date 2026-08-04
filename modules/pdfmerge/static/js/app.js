@@ -1,6 +1,6 @@
 // ===== 全局状态 =====
 var currentMode = 'refund';
-var folderPath = '';
+var selectedFiles = [];  // [{name, absPath, size, fromFolder, folderName}, ...]
 var task_id = null;
 
 // ===== 初始化 =====
@@ -17,7 +17,7 @@ function selectMode(mode) {
     document.getElementById('deductionFields').classList.toggle('hidden', mode !== 'deduction');
 
     // 重新匹配
-    if (folderPath) {
+    if (selectedFiles.length > 0) {
         scanMatch();
     }
 }
@@ -53,7 +53,7 @@ function checkCapabilities() {
         .catch(function() {});
 }
 
-// ===== 选择文件夹 =====
+// ===== 选择文件夹（累加模式） =====
 function selectFolder() {
     fetch('/pdfmerge/api/select_folder', {
         method: 'POST',
@@ -67,13 +67,25 @@ function selectFolder() {
                 alert(data.error);
                 return;
             }
-            folderPath = data.folder_path;
-            document.getElementById('folderSelectBox').classList.add('hidden');
-            var sel = document.getElementById('folderSelected');
-            sel.classList.remove('hidden');
-            document.getElementById('folderPath').textContent = data.folder_path;
-            document.getElementById('folderCount').textContent = '共 ' + data.file_count + ' 个文件';
-
+            // 累加模式：添加文件夹中的文件到已选列表
+            var folderName = data.folder_path.split(/[\\\/]/).pop();
+            for (var i = 0; i < data.files.length; i++) {
+                var f = data.files[i];
+                // 去重：同名+同大小
+                var exists = selectedFiles.some(function(s) {
+                    return s.name === f.name && s.size === f.size;
+                });
+                if (!exists) {
+                    selectedFiles.push({
+                        name: f.name,
+                        absPath: f.abs_path,
+                        size: f.size,
+                        fromFolder: true,
+                        folderName: folderName,
+                    });
+                }
+            }
+            renderFileList();
             // 自动扫描匹配
             scanMatch();
         })
@@ -82,9 +94,113 @@ function selectFolder() {
         });
 }
 
+// ===== 选择文件（累加模式） =====
+function selectFiles() {
+    fetch('/pdfmerge/api/select_files', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({})
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.cancelled) return;
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+            // 累加模式
+            for (var i = 0; i < data.files.length; i++) {
+                var f = data.files[i];
+                var exists = selectedFiles.some(function(s) {
+                    return s.name === f.name && s.size === f.size;
+                });
+                if (!exists) {
+                    selectedFiles.push({
+                        name: f.name,
+                        absPath: f.abs_path,
+                        size: f.size,
+                        fromFolder: false,
+                        folderName: '',
+                    });
+                }
+            }
+            renderFileList();
+            scanMatch();
+        })
+        .catch(function(err) {
+            alert('选择文件失败: ' + err.message);
+        });
+}
+
+// ===== 移除单个文件 =====
+function removeFile(index) {
+    selectedFiles.splice(index, 1);
+    renderFileList();
+    if (selectedFiles.length > 0) {
+        scanMatch();
+    } else {
+        document.getElementById('matchCard').classList.add('hidden');
+        document.getElementById('btnGenerate').disabled = true;
+        document.getElementById('btnGenerate').textContent = '📑 开始生成PDF';
+    }
+}
+
+// ===== 清除所有文件 =====
+function clearAllFiles() {
+    if (selectedFiles.length === 0) return;
+    if (!confirm('确认清除所有已添加的文件？')) return;
+    selectedFiles = [];
+    renderFileList();
+    document.getElementById('matchCard').classList.add('hidden');
+    document.getElementById('btnGenerate').disabled = true;
+    document.getElementById('btnGenerate').textContent = '📑 开始生成PDF';
+}
+
+// ===== 格式化文件大小 =====
+function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// ===== 渲染文件列表 =====
+function renderFileList() {
+    var container = document.getElementById('fileListContainer');
+    var emptyHint = document.getElementById('emptyFileHint');
+
+    if (selectedFiles.length === 0) {
+        container.classList.add('hidden');
+        emptyHint.classList.remove('hidden');
+        return;
+    }
+
+    container.classList.remove('hidden');
+    emptyHint.classList.add('hidden');
+
+    var totalSize = selectedFiles.reduce(function(sum, f) { return sum + f.size; }, 0);
+    document.getElementById('fileListSummary').textContent =
+        '共 ' + selectedFiles.length + ' 个文件，总计 ' + formatSize(totalSize);
+
+    var html = '';
+    for (var i = 0; i < selectedFiles.length; i++) {
+        var f = selectedFiles[i];
+        var icon = f.fromFolder ? '📁' : '📄';
+        var folderInfo = f.fromFolder && f.folderName ? ' <span class="file-folder">(' + f.folderName + ')</span>' : '';
+        html += '<div class="file-list-item">';
+        html += '<span class="file-list-icon">' + icon + '</span>';
+        html += '<span class="file-list-name">' + f.name + folderInfo + '</span>';
+        html += '<span class="file-list-size">' + formatSize(f.size) + '</span>';
+        html += '<button class="file-list-remove" onclick="removeFile(' + i + ')" title="移除">✕</button>';
+        html += '</div>';
+    }
+    document.getElementById('fileList').innerHTML = html;
+}
+
 // ===== 扫描匹配 =====
 function scanMatch() {
-    if (!folderPath) return;
+    if (selectedFiles.length === 0) return;
+
+    var filePaths = selectedFiles.map(function(f) { return f.absPath; });
 
     document.getElementById('btnGenerate').disabled = true;
 
@@ -92,7 +208,7 @@ function scanMatch() {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
-            folder_path: folderPath,
+            file_paths: filePaths,
             mode: currentMode,
         })
     })
@@ -129,8 +245,8 @@ function renderMatchResult(data) {
             cls += ' matched';
             statusCls = 'ok';
             statusIcon = '✓';
-            filesText = sec.file_count + ' 个文件: ' + sec.files.join(', ').substring(0, 80);
-            if (sec.files.join(', ').length > 80) filesText += '...';
+            filesText = sec.file_count + ' 个文件: ' + sec.files.join(', ').substring(0, 120);
+            if (sec.files.join(', ').length > 120) filesText += '...';
         } else if (sec.required) {
             cls += ' unmatched';
             statusCls = 'miss';
@@ -157,8 +273,8 @@ function renderMatchResult(data) {
     if (data.unmatched_count > 0) {
         unmatchedEl.classList.remove('hidden');
         unmatchedEl.textContent = '⚠️ ' + data.unmatched_count + ' 个文件未匹配到任何章节，将被忽略: ' +
-            data.unmatched_files.join(', ').substring(0, 200);
-        if (data.unmatched_files.join(', ').length > 200) {
+            data.unmatched_files.join(', ').substring(0, 300);
+        if (data.unmatched_files.join(', ').length > 300) {
             unmatchedEl.textContent += '...';
         }
     } else {
@@ -194,13 +310,15 @@ function startGenerate() {
         document.getElementById('coverTitle').focus();
         return;
     }
-    if (!folderPath) {
-        alert('请先选择资料文件夹');
+    if (selectedFiles.length === 0) {
+        alert('请先添加资料文件');
         return;
     }
 
+    var filePaths = selectedFiles.map(function(f) { return f.absPath; });
+
     var payload = {
-        folder_path: folderPath,
+        file_paths: filePaths,
         mode: currentMode,
         cover_title: coverTitle,
         company_name: coverTitle, // 封面标题即公司名

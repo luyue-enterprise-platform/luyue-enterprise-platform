@@ -95,6 +95,9 @@ init_db(data_dir=os.path.join(DATA_DIR, 'data'))
 tasks = {}
 tasks_lock = threading.Lock()
 
+# ============ 文件夹选择临时存储 ============
+picked_folders = {}  # {pick_id: {'file_paths': [path, ...], 'files': [...]}}
+
 
 def process_task(task_id, file_paths, roster, roster_company='', roster_source_path='', year_range=None):
     """后台线程：PDF转图片 -> 逐张OCR识别 -> 解析 -> 分组 -> 统计 -> 文件整理 -> 生成Excel"""
@@ -594,13 +597,92 @@ def index():
                            is_admin=session.get('is_admin', False))
 
 
+# ============ 文件夹选择（原生对话框） ============
+@insurance_bp.route('/api/pick_folder', methods=['POST'])
+@login_required
+def api_pick_folder():
+    """弹出系统原生文件夹选择对话框，递归扫描文件夹中的图片/PDF文件"""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+
+        folder_path = filedialog.askdirectory(
+            title='选择社保参保证明文件夹（可包含子文件夹）',
+            initialdir=os.path.expanduser('~')
+        )
+        root.destroy()
+    except Exception as e:
+        logger.error(f'文件夹选择对话框异常: {e}')
+        return jsonify({'error': f'无法打开文件夹选择对话框: {e}'}), 500
+
+    if not folder_path:
+        return jsonify({'cancelled': True})
+
+    # 递归遍历文件夹，查找所有图片和PDF文件
+    valid_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.pdf'}
+    file_list = []
+    file_paths = []
+
+    picked_folder_name = os.path.basename(folder_path)
+
+    for dirpath, dirnames, filenames in os.walk(folder_path):
+        for fname in sorted(filenames):
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in valid_exts:
+                continue
+            full_path = os.path.join(dirpath, fname)
+            try:
+                file_size = os.path.getsize(full_path)
+            except Exception:
+                continue
+            file_paths.append(full_path)
+            file_list.append({
+                'name': fname,
+                'size': file_size,
+            })
+
+    if not file_list:
+        return jsonify({'error': '所选文件夹中没有找到图片或PDF文件（支持 .jpg .png .bmp .tif .pdf）'})
+
+    # 存储选中文件信息
+    pick_id = uuid.uuid4().hex[:8]
+    with tasks_lock:
+        picked_folders[pick_id] = {
+            'file_paths': file_paths,
+            'files': file_list,
+        }
+
+    logger.info(f'[pick:{pick_id}] 用户选择文件夹: {folder_path}, 找到 {len(file_list)} 个文件')
+
+    return jsonify({
+        'ok': True,
+        'pick_id': pick_id,
+        'folder_name': picked_folder_name,
+        'files': file_list,
+        'count': len(file_list),
+    })
+
+
 # ============ 上传社保图片 ============
 @insurance_bp.route('/api/upload', methods=['POST'])
 @login_required
 def upload():
-    """上传图片/PDF，返回task_id"""
+    """上传图片/PDF，返回task_id
+    支持混合模式：同时上传文件 + 多个文件夹选择(pick_ids)
+    """
+    # 获取上传的文件
     files = request.files.getlist('files')
-    if not files or all(f.filename == '' for f in files):
+    has_uploaded_files = files and not (len(files) == 1 and files[0].filename == '')
+
+    # 获取文件夹选择的 pick_ids（逗号分隔，支持多个文件夹）
+    pick_ids_str = request.form.get('pick_ids', '')
+    pick_ids = [pid.strip() for pid in pick_ids_str.split(',') if pid.strip()] if pick_ids_str else []
+
+    if not has_uploaded_files and not pick_ids:
         return jsonify({'error': '未选择文件'}), 400
 
     # 获取花名册（从表单数据）
@@ -639,18 +721,47 @@ def upload():
 
     file_paths = []
     saved_files = []
-    for f in files:
-        ext = os.path.splitext(f.filename)[1].lower()
-        if ext not in ('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.pdf'):
+
+    # 1. 保存上传的文件
+    if has_uploaded_files:
+        for f in files:
+            ext = os.path.splitext(f.filename)[1].lower()
+            if ext not in ('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.pdf'):
+                continue
+            # 文件夹上传时filename可能含子目录路径，需创建子目录
+            save_path = os.path.join(task_dir, f.filename)
+            save_dir = os.path.dirname(save_path)
+            if save_dir and not os.path.exists(save_dir):
+                os.makedirs(save_dir, exist_ok=True)
+            f.save(save_path)
+            file_paths.append(save_path)
+            saved_files.append(f.filename)
+
+    # 2. 从 picked_folders 复制文件（支持多个 pick_id）
+    for pick_id in pick_ids:
+        with tasks_lock:
+            picked = picked_folders.get(pick_id)
+
+        if not picked:
+            logger.warning(f'[upload] pick_id {pick_id} 已过期，跳过')
             continue
-        # 文件夹上传时filename可能含子目录路径，需创建子目录
-        save_path = os.path.join(task_dir, f.filename)
-        save_dir = os.path.dirname(save_path)
-        if save_dir and not os.path.exists(save_dir):
-            os.makedirs(save_dir, exist_ok=True)
-        f.save(save_path)
-        file_paths.append(save_path)
-        saved_files.append(f.filename)
+
+        for idx, src_path in enumerate(picked['file_paths']):
+            safe_name = os.path.basename(src_path)
+            dest_path = os.path.join(task_dir, safe_name)
+            if os.path.exists(dest_path):
+                dest_path = os.path.join(task_dir, f'p{pick_id[:4]}_{idx}_{safe_name}')
+            try:
+                shutil.copy2(src_path, dest_path)
+            except Exception as e:
+                logger.error(f'复制文件失败: {src_path} -> {dest_path}: {e}')
+                continue
+            file_paths.append(dest_path)
+            saved_files.append(safe_name)
+
+        # 清理 picked_folders 中的临时数据
+        with tasks_lock:
+            picked_folders.pop(pick_id, None)
 
     if not file_paths:
         return jsonify({'error': '未找到支持的文件（JPG/PNG/BMP/TIF/PDF）'}), 400

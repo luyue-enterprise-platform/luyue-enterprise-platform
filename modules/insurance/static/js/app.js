@@ -3,8 +3,9 @@
 // 四险标准顺序
 var INSURANCE_ORDER = ['养老保险', '医疗保险', '工伤保险', '失业保险'];
 
-// 当前选中的文件
-var selectedFiles = [];
+// 当前选中的文件（支持混合：File对象 + 文件夹选择的文件）
+var selectedFiles = [];  // [{file: File|null, name: String, size: Number, fromFolder: Boolean}, ...]
+var pickIds = [];        // 文件夹选择ID列表（支持多个文件夹累加）
 var currentTaskId = null;
 var pollTimer = null;
 // 花名册数据
@@ -17,7 +18,6 @@ var rosterSourcePath = '';
 var dropzone = document.getElementById('dropzone');
 var fileInput = document.getElementById('fileInput');
 var fileInputSingle = document.getElementById('fileInputSingle');
-var selectFilesLink = document.getElementById('selectFilesLink');
 var fileList = document.getElementById('fileList');
 var fileItems = document.getElementById('fileItems');
 var fileCount = document.getElementById('fileCount');
@@ -429,7 +429,7 @@ function deleteUser(uid, username) {
 
 // ===== 拖拽上传 =====
 dropzone.addEventListener('click', function() {
-    fileInput.click();
+    fileInputSingle.click();
 });
 
 dropzone.addEventListener('dragover', function(e) {
@@ -467,16 +467,9 @@ fileInput.addEventListener('change', function(e) {
     handleFiles(e.target.files);
 });
 
-selectFilesLink.addEventListener('click', function(e) {
-    e.stopPropagation();
-    fileInputSingle.click();
-});
-
 fileInputSingle.addEventListener('change', function(e) {
     handleFiles(e.target.files);
 });
-
-// ===== 递归读取文件夹（拖拽目录时使用） =====
 function traverseEntries(entries, callback) {
     var allFiles = [];
     var pending = entries.length;
@@ -535,10 +528,16 @@ function handleFiles(files) {
     for (var j = 0; j < valid.length; j++) {
         var f = valid[j];
         var dup = selectedFiles.some(function (sf) {
-            return sf.name === f.name && sf.size === f.size;
+            var sfn = sf.file ? sf.file.name : sf.name;
+            var sfs = sf.file ? sf.file.size : sf.size;
+            return sfn === f.name && sfs === f.size;
         });
         if (dup) continue;
-        selectedFiles.push(f);
+        // 保留相对路径信息
+        var entry = {file: f, name: f.name, size: f.size, fromFolder: false};
+        if (f._relativePath) entry._relativePath = f._relativePath;
+        if (f.webkitRelativePath) entry._relativePath = f.webkitRelativePath;
+        selectedFiles.push(entry);
         added++;
     }
     if (added > 0) {
@@ -551,15 +550,57 @@ function handleFiles(files) {
     }
 }
 
+// ===== 通过系统原生对话框选择文件夹（累加模式） =====
+function pickFolder() {
+    showToast('正在打开文件夹选择对话框...');
+
+    fetch('/insurance/api/pick_folder', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.cancelled) return;
+            if (data.error) {
+                showToast(data.error);
+                return;
+            }
+            if (data.ok) {
+                pickIds.push(data.pick_id);
+                var added = 0;
+                for (var i = 0; i < data.files.length; i++) {
+                    var f = data.files[i];
+                    var dup = selectedFiles.some(function (sf) {
+                        var sfn = sf.file ? sf.file.name : sf.name;
+                        var sfs = sf.file ? sf.file.size : sf.size;
+                        return sfn === f.name && sfs === (f.size || 0);
+                    });
+                    if (dup) continue;
+                    selectedFiles.push({
+                        file: null,
+                        name: f.name,
+                        size: f.size || 0,
+                        fromFolder: true
+                    });
+                    added++;
+                }
+                renderFileList();
+                showToast('已添加文件夹: ' + data.folder_name + '，新增 ' + added + ' 个文件（共 ' + selectedFiles.length + ' 个）');
+            }
+        })
+        .catch(function(err) {
+            showToast('文件夹选择失败: ' + err.message);
+        });
+}
+
 function renderFileList() {
     fileCount.textContent = selectedFiles.length;
     fileItems.innerHTML = '';
     for (var i = 0; i < selectedFiles.length; i++) {
+        var item = selectedFiles[i];
         var li = document.createElement('li');
         li.className = 'file-list-item';
-        var sizeKB = (selectedFiles[i].size / 1024).toFixed(1);
-        var path = selectedFiles[i]._relativePath || selectedFiles[i].webkitRelativePath || selectedFiles[i].name;
-        li.innerHTML = '<span class="file-path">' + esc(path) + '</span>' +
+        var sizeKB = (item.size / 1024).toFixed(1);
+        var path = item._relativePath || item.name;
+        var folderBadge = item.fromFolder ? '<span class="folder-badge" title="来自文件夹">📁</span> ' : '';
+        li.innerHTML = folderBadge + '<span class="file-path">' + esc(path) + '</span>' +
             '<span class="file-size">(' + sizeKB + ' KB)</span>' +
             '<button class="btn-remove" onclick="removeInsuranceFile(' + i + ')" title="删除此文件">✕</button>';
         fileItems.appendChild(li);
@@ -589,6 +630,7 @@ btnClear.addEventListener('click', function() {
         return;
     }
     selectedFiles = [];
+    pickIds = [];
     fileList.style.display = 'none';
     fileInput.value = '';
     fileInputSingle.value = '';
@@ -647,11 +689,15 @@ function compressImage(file, maxWidth, quality) {
     });
 }
 
-// ===== 批量压缩选中文件 =====
-async function compressAllFiles(files) {
+// ===== 批量压缩选中文件（仅压缩上传的File对象，文件夹选择的文件已在服务端） =====
+async function compressAllFiles(entries) {
     var results = [];
-    for (var i = 0; i < files.length; i++) {
-        results.push(await compressImage(files[i], 1600, 0.85));
+    for (var i = 0; i < entries.length; i++) {
+        if (entries[i].file) {
+            results.push(await compressImage(entries[i].file, 1600, 0.85));
+        } else {
+            results.push(null); // 文件夹选择的文件不需要压缩
+        }
     }
     return results;
 }
@@ -661,20 +707,36 @@ function uploadFiles() {
     btnUpload.textContent = '准备上传...';
     navStatus.querySelector('span:last-child').textContent = '准备中';
 
-    // 先压缩图片
-    compressAllFiles(selectedFiles).then(function(compressedFiles) {
+    // 分离File对象和文件夹选择条目
+    var fileEntries = selectedFiles.filter(function(e) { return e.file; });
+    var folderEntries = selectedFiles.filter(function(e) { return !e.file; });
+
+    // 先压缩图片（仅File对象）
+    compressAllFiles(fileEntries).then(function(compressedFiles) {
         // 统计压缩效果
         var totalOrig = 0, totalComp = 0;
         for (var i = 0; i < compressedFiles.length; i++) {
-            totalOrig += selectedFiles[i].size;
-            totalComp += compressedFiles[i].size;
+            if (compressedFiles[i]) {
+                totalOrig += fileEntries[i].file.size;
+                totalComp += compressedFiles[i].size;
+            }
         }
         var savedPct = totalOrig > 0 ? Math.round((1 - totalComp / totalOrig) * 100) : 0;
 
         var formData = new FormData();
+
+        // 添加压缩后的File对象
         for (var i = 0; i < compressedFiles.length; i++) {
-            formData.append('files', compressedFiles[i]);
+            if (compressedFiles[i]) {
+                formData.append('files', compressedFiles[i]);
+            }
         }
+
+        // 添加文件夹选择ID
+        if (pickIds.length > 0) {
+            formData.append('pick_ids', pickIds.join(','));
+        }
+
         formData.append('roster', JSON.stringify(rosterData));
         formData.append('roster_company', rosterCompany);
         formData.append('roster_source_path', rosterSourcePath);
@@ -711,7 +773,7 @@ function uploadFiles() {
                     }
                 }
                 progressText.textContent = speedText;
-                progressDetail.textContent = compressedFiles.length + ' 个文件';
+                progressDetail.textContent = selectedFiles.length + ' 个文件';
             }
         };
 
@@ -1178,6 +1240,7 @@ btnRestart.addEventListener('click', function() {
     fileList.style.display = 'none';
     progressActions.style.display = 'none';
     selectedFiles = [];
+    pickIds = [];
     fileInput.value = '';
     fileInputSingle.value = '';
     currentTaskId = null;

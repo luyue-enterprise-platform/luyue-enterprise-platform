@@ -4,8 +4,8 @@
 
 // ===== 全局状态 =====
 var rosterData = [];           // [{seq, name, idcard}, ...]
-var selectedFiles = [];        // [{file: File|null, name: String, folder: String|null, size: Number}, ...]
-var pickId = null;             // 文件夹选择ID（非null表示文件来自文件夹选择器）
+var selectedFiles = [];        // [{file: File|null, name: String, folder: String|null, size: Number, fromFolder: Boolean}, ...]
+var pickIds = [];              // 文件夹选择ID列表（支持多个文件夹累加）
 var currentTaskId = null;
 var pollTimer = null;
 
@@ -140,10 +140,7 @@ fileInput.addEventListener('change', function () {
 
 function addFiles(fileList) {
     // fileList 可以是 [File, ...] 或 [{file, folder}, ...]
-    // 通过拖拽/选择文件方式添加时，清除之前的文件夹选择状态
-    if (fileList.length > 0 && (fileList[0].file || fileList[0] instanceof File)) {
-        pickId = null;
-    }
+    // 累加模式：不清除之前的选择（文件和文件夹可以混合）
     var added = 0;
     for (var i = 0; i < fileList.length; i++) {
         var item = fileList[i];
@@ -194,13 +191,7 @@ function renderFileList() {
 
 // ===== 单条删除 =====
 function removeContractFile(idx) {
-    var item = selectedFiles[idx];
     selectedFiles.splice(idx, 1);
-    // 如果删除的是通过文件夹选择的文件，并且当前selectedFiles中没有其他文件夹来源文件，则清空pickId
-    var hasFolderFile = selectedFiles.some(function (it) { return it.fromFolder; });
-    if (!hasFolderFile) {
-        pickId = null;
-    }
     if (selectedFiles.length === 0) {
         clearFiles();
     } else {
@@ -220,7 +211,7 @@ function clearFiles() {
         return;
     }
     selectedFiles = [];
-    pickId = null;
+    pickIds = [];
     document.getElementById('fileList').style.display = 'none';
     hideActionAndResult();
 }
@@ -235,7 +226,7 @@ function checkReady() {
     }
 }
 
-// ===== 通过系统原生对话框选择文件夹 =====
+// ===== 通过系统原生对话框选择文件夹（累加模式，支持多次选择） =====
 function pickFolder() {
     showToast('正在打开文件夹选择对话框...', 'info');
 
@@ -252,19 +243,17 @@ function pickFolder() {
                 return;
             }
             if (data.ok) {
-                // ===== 追加模式：将新选择的文件夹中的文件追加到 selectedFiles =====
-                // pickId 只保留最后一个（最近一次文件夹选择）
-                pickId = data.pick_id;
-                // 去除之前通过"选择文件夹"添加的所有条目（pickId 只能指向一个文件夹）
-                selectedFiles = selectedFiles.filter(function (it) { return !it.fromFolder; });
-                // 添加新文件夹的文件
+                // ===== 累加模式：将新选择的文件夹中的文件追加到 selectedFiles =====
+                // 不清除之前的文件夹选择，支持多个文件夹累加
+                pickIds.push(data.pick_id);
+                // 添加新文件夹的文件（去重）
                 var added = 0;
                 for (var i = 0; i < data.files.length; i++) {
                     var f = data.files[i];
                     var dup = selectedFiles.some(function (sf) {
                         var sfn = sf.file ? sf.file.name : sf.name;
                         var sfs = sf.file ? sf.file.size : sf.size;
-                        return sfn === f.name && sfs === (f.size || 0);
+                        return sfn === f.name && sfs === (f.size || 0) && (sf.folder || '') === (f.folder || '');
                     });
                     if (dup) continue;
                     selectedFiles.push({
@@ -278,7 +267,7 @@ function pickFolder() {
                 }
                 renderFileList();
                 checkReady();
-                showToast('已选择文件夹: ' + data.folder_name + '，新增 ' + added + ' 个文件（' + data.count + ' 个）', 'success');
+                showToast('已添加文件夹: ' + data.folder_name + '，新增 ' + added + ' 个文件（共 ' + selectedFiles.length + ' 个）', 'success');
             }
         })
         .catch(function (err) {
@@ -307,75 +296,56 @@ function startProcess() {
     document.getElementById('progressText').textContent = '正在上传文件...';
     document.getElementById('resultSection').style.display = 'none';
 
-    if (pickId) {
-        // 文件夹选择模式：使用 process_picked 端点
-        var formData = new FormData();
-        formData.append('pick_id', pickId);
-        formData.append('roster', JSON.stringify(rosterData));
+    // 统一使用 upload 端点，同时发送文件和 pick_ids
+    var formData = new FormData();
+    formData.append('roster', JSON.stringify(rosterData));
 
-        fetch('/contract/api/process_picked', { method: 'POST', body: formData })
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-                if (data.error) {
-                    showToast(data.error, 'error');
-                    startBtn.disabled = false;
-                    startBtn.textContent = '🚀 开始整理';
-                    document.getElementById('progressSection').style.display = 'none';
-                    return;
-                }
-                currentTaskId = data.task_id;
-                document.getElementById('progressText').textContent = '处理中，共 ' + data.total_files + ' 个文件...';
-                document.getElementById('progressBar').style.width = '20%';
-                startPolling();
-            })
-            .catch(function (err) {
-                showToast('处理失败: ' + err.message, 'error');
-                startBtn.disabled = false;
-                startBtn.textContent = '🚀 开始整理';
-                document.getElementById('progressSection').style.display = 'none';
-            });
-    } else {
-        // 普通上传模式：使用 upload 端点
-        var formData2 = new FormData();
-        formData2.append('roster', JSON.stringify(rosterData));
-
-        // 构建文件夹映射：{文件索引: 文件夹名}
-        var folderMap = {};
-        selectedFiles.forEach(function (item, idx) {
-            if (item.folder) {
-                folderMap[idx] = item.folder;
-            }
-        });
-        formData2.append('folder_map', JSON.stringify(folderMap));
-
-        selectedFiles.forEach(function (item) {
-            if (item.file) {
-                formData2.append('files', item.file);
-            }
-        });
-
-        fetch('/contract/api/upload', { method: 'POST', body: formData2 })
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-                if (data.error) {
-                    showToast(data.error, 'error');
-                    startBtn.disabled = false;
-                    startBtn.textContent = '🚀 开始整理';
-                    document.getElementById('progressSection').style.display = 'none';
-                    return;
-                }
-                currentTaskId = data.task_id;
-                document.getElementById('progressText').textContent = '处理中，共 ' + data.total_files + ' 个文件...';
-                document.getElementById('progressBar').style.width = '20%';
-                startPolling();
-            })
-            .catch(function (err) {
-                showToast('上传失败: ' + err.message, 'error');
-                startBtn.disabled = false;
-                startBtn.textContent = '🚀 开始整理';
-                document.getElementById('progressSection').style.display = 'none';
-            });
+    // 发送文件夹选择ID（支持多个）
+    if (pickIds.length > 0) {
+        formData.append('pick_ids', pickIds.join(','));
     }
+
+    // 构建文件夹映射：{文件索引: 文件夹名} —— 仅对上传的File对象有效
+    var folderMap = {};
+    var fileIdx = 0;
+    selectedFiles.forEach(function (item) {
+        if (item.file) {
+            if (item.folder) {
+                folderMap[fileIdx] = item.folder;
+            }
+            fileIdx++;
+        }
+    });
+    formData.append('folder_map', JSON.stringify(folderMap));
+
+    // 添加上传的File对象
+    selectedFiles.forEach(function (item) {
+        if (item.file) {
+            formData.append('files', item.file);
+        }
+    });
+
+    fetch('/contract/api/upload', { method: 'POST', body: formData })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.error) {
+                showToast(data.error, 'error');
+                startBtn.disabled = false;
+                startBtn.textContent = '🚀 开始整理';
+                document.getElementById('progressSection').style.display = 'none';
+                return;
+            }
+            currentTaskId = data.task_id;
+            document.getElementById('progressText').textContent = '处理中，共 ' + data.total_files + ' 个文件...';
+            document.getElementById('progressBar').style.width = '20%';
+            startPolling();
+        })
+        .catch(function (err) {
+            showToast('上传失败: ' + err.message, 'error');
+            startBtn.disabled = false;
+            startBtn.textContent = '🚀 开始整理';
+            document.getElementById('progressSection').style.display = 'none';
+        });
 }
 
 // ===== 进度轮询 =====
@@ -541,7 +511,7 @@ function hideActionAndResult() {
 function resetAll() {
     clearRoster();
     clearFiles();
-    pickId = null;
+    pickIds = [];
     hideActionAndResult();
     document.getElementById('startBtn').disabled = false;
     document.getElementById('startBtn').textContent = '🚀 开始整理';

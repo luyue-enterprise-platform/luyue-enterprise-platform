@@ -33,15 +33,20 @@
                     <div class="dropzone-content">
                         <span class="upload-icon">📄</span>
                         <p>拖拽 PDF 文件到此处</p>
-                        <p class="upload-hint">或 <a href="#" onclick="document.getElementById('fileInput').click();return false;">点击选择文件</a></p>
-                        <p class="upload-hint">支持批量上传多个 PDF 文件</p>
+                        <p class="upload-hint">或
+                            <a href="#" onclick="document.getElementById('fileInput').click();return false;">选择文件</a>
+                            <span style="margin:0 6px;color:#ccc;">|</span>
+                            <a href="#" onclick="pickFolder();return false;">选择文件夹</a>
+                        </p>
+                        <p class="upload-hint">支持批量上传多个 PDF 文件，可混合添加文件和文件夹</p>
                     </div>
                 </div>
                 <div class="file-list" id="fileList" style="display:none;">
                     <div class="file-list-header">
                         <span id="fileCount"></span>
                         <div>
-                            <button class="btn-ghost btn-sm" onclick="document.getElementById('fileInput').click();">+ 添加更多</button>
+                            <button class="btn-ghost btn-sm" onclick="document.getElementById('fileInput').click();">+ 添加文件</button>
+                            <button class="btn-ghost btn-sm" onclick="pickFolder();">+ 添加文件夹</button>
                             <button class="btn-ghost btn-sm" onclick="clearFiles()">清空全部</button>
                         </div>
                     </div>

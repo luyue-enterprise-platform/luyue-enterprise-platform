@@ -124,7 +124,9 @@ def api_roster():
 
 @contract_bp.route('/api/upload', methods=['POST'])
 def api_upload():
-    """上传劳动合同图片/PDF并启动后台处理任务"""
+    """上传劳动合同图片/PDF并启动后台处理任务
+    支持混合模式：同时上传文件 + 多个文件夹选择(pick_ids)
+    """
     roster_json = request.form.get('roster', '')
     if not roster_json:
         return jsonify({'error': '请先上传花名册'}), 400
@@ -137,11 +139,18 @@ def api_upload():
     if not roster:
         return jsonify({'error': '花名册为空'}), 400
 
+    # 获取上传的文件
     files = request.files.getlist('files')
-    if not files or (len(files) == 1 and files[0].filename == ''):
-        return jsonify({'error': '请选择劳动合同文件'}), 400
+    has_uploaded_files = files and not (len(files) == 1 and files[0].filename == '')
 
-    # 读取文件夹映射（文件索引 -> 文件夹名）
+    # 获取文件夹选择的 pick_ids（逗号分隔，支持多个文件夹）
+    pick_ids_str = request.form.get('pick_ids', '')
+    pick_ids = [pid.strip() for pid in pick_ids_str.split(',') if pid.strip()] if pick_ids_str else []
+
+    if not has_uploaded_files and not pick_ids:
+        return jsonify({'error': '请选择劳动合同文件或文件夹'}), 400
+
+    # 读取文件夹映射（文件索引 -> 文件夹名）—— 仅对上传的文件有效
     folder_map = {}
     folder_map_json = request.form.get('folder_map', '')
     if folder_map_json:
@@ -157,16 +166,50 @@ def api_upload():
     # 保存所有文件，同时记录文件夹名
     saved_paths = []
     folder_hints = {}  # {saved_path: folder_name}
-    for idx, f in enumerate(files):
-        if f.filename:
-            safe_name = os.path.basename(f.filename)
-            fp = os.path.join(task_dir, safe_name)
-            f.save(fp)
-            saved_paths.append(fp)
-            # 如果该文件来自文件夹，记录文件夹名
-            folder_name = folder_map.get(str(idx), '')
+
+    # 1. 保存上传的文件
+    if has_uploaded_files:
+        for idx, f in enumerate(files):
+            if f.filename:
+                safe_name = os.path.basename(f.filename)
+                fp = os.path.join(task_dir, safe_name)
+                f.save(fp)
+                saved_paths.append(fp)
+                # 如果该文件来自文件夹，记录文件夹名
+                folder_name = folder_map.get(str(idx), '')
+                if folder_name:
+                    folder_hints[fp] = folder_name
+
+    # 2. 从 picked_folders 复制文件（支持多个 pick_id）
+    for pick_id in pick_ids:
+        with tasks_lock:
+            picked = picked_folders.get(pick_id)
+
+        if not picked:
+            logger.warning(f'[upload] pick_id {pick_id} 已过期，跳过')
+            continue
+
+        for idx2, (src_path, folder_name) in enumerate(picked['file_paths']):
+            safe_name = os.path.basename(src_path)
+            dest_path = os.path.join(task_dir, safe_name)
+            # 避免重名
+            if os.path.exists(dest_path):
+                dest_path = os.path.join(task_dir, f'p{pick_id[:4]}_{idx2}_{safe_name}')
+            try:
+                shutil.copy2(src_path, dest_path)
+            except Exception as e:
+                logger.error(f'复制文件失败: {src_path} -> {dest_path}: {e}')
+                continue
+            saved_paths.append(dest_path)
             if folder_name:
-                folder_hints[fp] = folder_name
+                folder_hints[dest_path] = folder_name
+
+        # 清理 picked_folders 中的临时数据
+        with tasks_lock:
+            picked_folders.pop(pick_id, None)
+
+    if not saved_paths:
+        return jsonify({'error': '没有有效的文件可处理'}), 400
 
     # 初始化任务状态
     with tasks_lock:

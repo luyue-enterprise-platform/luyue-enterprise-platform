@@ -80,26 +80,27 @@
             </div>
         </section>
 
-        <!-- 第三步：选择资料文件夹 -->
+        <!-- 第三步：选择资料文件 -->
         <section class="card">
             <div class="card-header">
                 <span class="step-badge">3</span>
-                <h2>选择资料文件夹</h2>
-                <span class="card-tip">系统将自动匹配文件</span>
+                <h2>选择资料文件</h2>
+                <span class="card-tip">可多次添加文件或文件夹</span>
             </div>
             <div class="card-body">
-                <div id="folderSelectBox" class="folder-select-box" onclick="selectFolder()">
-                    <div class="icon">📁</div>
-                    <div class="title">点击选择资料文件夹</div>
-                    <div class="hint">支持图片、Word、Excel、PDF等格式</div>
+                <div class="file-add-buttons">
+                    <button class="btn-primary btn-sm" onclick="selectFiles()">📄 添加文件</button>
+                    <button class="btn-primary btn-sm" onclick="selectFolder()">📁 添加文件夹</button>
+                    <button class="btn-ghost btn-sm" onclick="clearAllFiles()">🗑️ 全部清除</button>
                 </div>
-                <div id="folderSelected" class="folder-selected hidden">
-                    <span class="folder-icon">📂</span>
-                    <div class="folder-info">
-                        <div class="folder-path" id="folderPath"></div>
-                        <div class="folder-count" id="folderCount"></div>
-                    </div>
-                    <button class="btn-ghost btn-sm" onclick="selectFolder()">更换文件夹</button>
+                <div id="emptyFileHint" class="empty-file-hint">
+                    <div class="icon">📂</div>
+                    <div class="title">请添加资料文件</div>
+                    <div class="hint">支持图片、Word、Excel、PDF等格式，可混合添加文件和文件夹</div>
+                </div>
+                <div id="fileListContainer" class="file-list-container hidden">
+                    <div class="file-list-summary" id="fileListSummary"></div>
+                    <div class="file-list" id="fileList"></div>
                 </div>
                 <div id="capabilityInfo" class="alert alert-info hidden" style="margin-top:12px;"></div>
             </div>

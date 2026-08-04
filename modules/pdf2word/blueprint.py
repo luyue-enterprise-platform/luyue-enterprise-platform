@@ -53,6 +53,9 @@ logger = logging.getLogger('pdf2word')
 tasks = {}
 tasks_lock = threading.Lock()
 
+# ===== 文件夹选择临时存储 =====
+picked_folders = {}  # {pick_id: {'file_paths': [path, ...], 'files': [...]}}
+
 
 # ===== 路由 =====
 
@@ -63,13 +66,93 @@ def index():
     return render_template('pdf2word_index.html')
 
 
+# ---------- 文件夹选择（原生对话框） ----------
+
+@pdf2word_bp.route('/api/pick_folder', methods=['POST'])
+@login_required
+def api_pick_folder():
+    """弹出系统原生文件夹选择对话框，递归扫描文件夹中的PDF文件"""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+
+        folder_path = filedialog.askdirectory(
+            title='选择包含PDF文件的文件夹',
+            initialdir=os.path.expanduser('~')
+        )
+        root.destroy()
+    except Exception as e:
+        logger.error(f'文件夹选择对话框异常: {e}')
+        return jsonify({'error': f'无法打开文件夹选择对话框: {e}'}), 500
+
+    if not folder_path:
+        return jsonify({'cancelled': True})
+
+    # 递归遍历文件夹，查找所有PDF文件
+    file_list = []
+    file_paths = []
+
+    picked_folder_name = os.path.basename(folder_path)
+
+    for dirpath, dirnames, filenames in os.walk(folder_path):
+        for fname in sorted(filenames):
+            ext = os.path.splitext(fname)[1].lower()
+            if ext != '.pdf':
+                continue
+            full_path = os.path.join(dirpath, fname)
+            try:
+                file_size = os.path.getsize(full_path)
+            except Exception:
+                continue
+            file_paths.append(full_path)
+            file_list.append({
+                'name': fname,
+                'size': file_size,
+            })
+
+    if not file_list:
+        return jsonify({'error': '所选文件夹中没有找到PDF文件'})
+
+    # 存储选中文件信息
+    pick_id = uuid.uuid4().hex[:8]
+    with tasks_lock:
+        picked_folders[pick_id] = {
+            'file_paths': file_paths,
+            'files': file_list,
+        }
+
+    logger.info(f'[pick:{pick_id}] 用户选择文件夹: {folder_path}, 找到 {len(file_list)} 个PDF文件')
+
+    return jsonify({
+        'ok': True,
+        'pick_id': pick_id,
+        'folder_name': picked_folder_name,
+        'files': file_list,
+        'count': len(file_list),
+    })
+
+
 # ---------- 上传并转换 ----------
 
 @pdf2word_bp.route('/api/upload', methods=['POST'])
+@login_required
 def api_upload():
-    """上传 PDF 文件并启动后台转换任务"""
+    """上传 PDF 文件并启动后台转换任务
+    支持混合模式：同时上传文件 + 多个文件夹选择(pick_ids)
+    """
+    # 获取上传的文件
     files = request.files.getlist('files')
-    if not files or (len(files) == 1 and files[0].filename == ''):
+    has_uploaded_files = files and not (len(files) == 1 and files[0].filename == '')
+
+    # 获取文件夹选择的 pick_ids（逗号分隔，支持多个文件夹）
+    pick_ids_str = request.form.get('pick_ids', '')
+    pick_ids = [pid.strip() for pid in pick_ids_str.split(',') if pid.strip()] if pick_ids_str else []
+
+    if not has_uploaded_files and not pick_ids:
         return jsonify({'error': '请选择 PDF 文件'}), 400
 
     task_id = uuid.uuid4().hex[:8]
@@ -79,17 +162,45 @@ def api_upload():
     # 保存所有 PDF 文件
     saved_paths = []
     skipped = []
-    for f in files:
-        if not f.filename:
+
+    # 1. 保存上传的文件
+    if has_uploaded_files:
+        for f in files:
+            if not f.filename:
+                continue
+            ext = os.path.splitext(f.filename)[1].lower()
+            if ext != '.pdf':
+                skipped.append(f.filename)
+                continue
+            safe_name = os.path.basename(f.filename)
+            fp = os.path.join(task_dir, safe_name)
+            f.save(fp)
+            saved_paths.append(fp)
+
+    # 2. 从 picked_folders 复制文件（支持多个 pick_id）
+    for pick_id in pick_ids:
+        with tasks_lock:
+            picked = picked_folders.get(pick_id)
+
+        if not picked:
+            logger.warning(f'[upload] pick_id {pick_id} 已过期，跳过')
             continue
-        ext = os.path.splitext(f.filename)[1].lower()
-        if ext != '.pdf':
-            skipped.append(f.filename)
-            continue
-        safe_name = os.path.basename(f.filename)
-        fp = os.path.join(task_dir, safe_name)
-        f.save(fp)
-        saved_paths.append(fp)
+
+        for idx, src_path in enumerate(picked['file_paths']):
+            safe_name = os.path.basename(src_path)
+            dest_path = os.path.join(task_dir, safe_name)
+            if os.path.exists(dest_path):
+                dest_path = os.path.join(task_dir, f'p{pick_id[:4]}_{idx}_{safe_name}')
+            try:
+                shutil.copy2(src_path, dest_path)
+            except Exception as e:
+                logger.error(f'复制文件失败: {src_path} -> {dest_path}: {e}')
+                continue
+            saved_paths.append(dest_path)
+
+        # 清理 picked_folders 中的临时数据
+        with tasks_lock:
+            picked_folders.pop(pick_id, None)
 
     if not saved_paths:
         return jsonify({'error': '没有找到有效的 PDF 文件' + (f'，跳过了: {", ".join(skipped)}' if skipped else '')}), 400
