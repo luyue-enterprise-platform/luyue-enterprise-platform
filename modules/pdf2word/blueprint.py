@@ -22,16 +22,13 @@ from .core.converter import batch_convert
 from core.auth import login_required
 
 # ===== 路径设置 =====
-# 用户数据（数据库/上传/输出/日志）放在可写数据目录
-# 自动处理 Program Files 受保护目录：重定向到 %APPDATA%\\鲁岳企业服务
-from core.paths import data_dir
-DATA_DIR = data_dir()
-
 IS_FROZEN = getattr(sys, 'frozen', False)
 if IS_FROZEN:
     RESOURCE_DIR = os.path.join(sys._MEIPASS, 'modules', 'pdf2word')
+    DATA_DIR = os.path.dirname(sys.executable)
 else:
     RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATA_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ===== Blueprint 创建 =====
 pdf2word_bp = Blueprint(

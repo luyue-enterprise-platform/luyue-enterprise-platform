@@ -9,7 +9,7 @@
 
 #define MyAppName "鲁岳企业服务·综合智能平台"
 #define MyAppShortName "LY重点群体涉税申报综合智能平台"
-#define MyAppVersion "1.1.13"
+#define MyAppVersion "1.1.14"
 #define MyAppPublisher "鲁岳企业服务"
 #define MyAppURL "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform"
 #define MyAppExeName "鲁岳企业服务_综合智能平台.exe"
@@ -60,8 +60,8 @@ Name: "startup"; Description: "加入开机启动（可选）"; GroupDescription
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; 配置文件（云端认证）
 Source: "dist\auth_config.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist skipifsourcedoesntexist
-; WebView2 Runtime 离线安装包（首次启动时自动安装）
-Source: "WebView2RuntimeInstaller.exe"; DestDir: "{tmp}"; Flags: ignoreversion skipifsourcedoesntexist; Check: WebView2NotInstalled
+; WebView2 Runtime 安装包（安装过程中自动安装，解决其他电脑无法启动问题）
+Source: "MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: ignoreversion skipifsourcedoesntexist; Check: WebView2NotInstalled
 ; 版本信息
 Source: "version.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 ; 卸载程序图标（Inno Setup 自动生成）
@@ -76,6 +76,8 @@ Name: "{group}\{#MyAppShortName}"; Filename: "{app}\{#MyAppExeName}"; IconFilena
 Name: "{group}\卸载 {#MyAppShortName}"; Filename: "{uninstallexe}"
 
 [Run]
+; 安装 WebView2 Runtime（如果未安装）——静默安装，无需用户交互
+Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "正在安装 WebView2 运行时组件..."; Check: WebView2NotInstalled; Flags: waituntilterminated
 ; 安装完成后询问是否立即运行
 Filename: "{app}\{#MyAppExeName}"; Description: "立即运行 {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
@@ -93,22 +95,6 @@ begin
   RegKey := 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
   if RegKeyExists(HKLM, RegKey) or RegKeyExists(HKCU, RegKey) then
     Result := False;
-end;
-
-// 静默安装 WebView2（如果需要）
-function NeedsWebView2(): Boolean;
-begin
-  Result := WebView2NotInstalled();
-end;
-
-procedure CurStepChanged(CurStep: TSetupStep);
-begin
-  if CurStep = ssPostInstall then begin
-    if NeedsWebView2() then begin
-      // 这里可加静默安装 WebView2 的逻辑
-      // 暂不处理，因为首次启动会引导用户安装
-    end;
-  end;
 end;
 
 // 安装前确认

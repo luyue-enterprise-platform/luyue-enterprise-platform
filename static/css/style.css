@@ -477,15 +477,18 @@ body {
 }
 
 .auth-logo {
-    width: 56px;
-    height: 56px;
+    width: 48px;
+    height: 48px;
+    background: linear-gradient(135deg, #1a3d5c, #2E5C8A);
     border-radius: 10px;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: 2px;
     margin-bottom: 10px;
-    object-fit: contain;
-    background: #fff;
-    padding: 4px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
 
 .auth-header h1 {

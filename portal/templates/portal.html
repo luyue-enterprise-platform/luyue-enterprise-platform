@@ -84,6 +84,23 @@
                 </div>
                 <span class="module-action">进入系统 →</span>
             </a>
+
+            <!-- 留存备查资料汇总PDF -->
+            <a href="/pdfmerge/" class="module-card">
+                <div class="module-icon">📑</div>
+                <h2 class="module-title">留存备查资料汇总PDF智能生成系统</h2>
+                <p class="module-desc">
+                    选择资料文件夹，自动匹配退税/抵税所需材料，将图片、Word、Excel、PDF
+                    统一转换为PDF，按样本顺序合成带封面和目录的汇总备查资料。
+                </p>
+                <div class="module-features">
+                    <span class="feature-tag">智能匹配</span>
+                    <span class="feature-tag">格式转换</span>
+                    <span class="feature-tag">封面目录</span>
+                    <span class="feature-tag">退税/抵税</span>
+                </div>
+                <span class="module-action">进入系统 →</span>
+            </a>
         </div>
     </main>
 
@@ -463,8 +480,7 @@
         }, 500);
     });
 
-    // 页面加载完成后自动静默检查更新
-    setTimeout(function() { checkAppUpdate(false); }, 1500);
+    // 更新检查改为手动触发（点击顶部"检查更新"按钮），不再自动静默检查
     </script>
 </body>
 </html>

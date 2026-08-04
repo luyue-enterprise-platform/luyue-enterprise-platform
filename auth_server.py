@@ -27,6 +27,20 @@ DB_PATH = os.path.join(DATA_DIR, 'users.db')
 
 app = Flask(__name__)
 
+# ============ 预置邀请码 ============
+PRESET_INVITE_CODES = [
+    'LYA3K7M2', 'LYB8X4N6', 'LYC2P9Q5', 'LYD6R1S3', 'LYE5T7U8',
+    'LYF4V2W9', 'LYG9X3Y1', 'LYH7Z5A2', 'LYI1B6C4', 'LYJ3D8E7',
+    'LYK5F2G9', 'LYL8H4J1', 'LYM6K3S7', 'LYN2L5T8', 'LYO9Q4U6',
+    'LYP7R1V3', 'LYQ4S9W2', 'LYR8T5X1', 'LYS3U6Y4', 'LYT6V7Z8',
+    'LYU2W9A3', 'LYV5X4B1', 'LYW8Y6C7', 'LYX3Z9D2', 'LYY7A4E5',
+    'LYZ1B8F6', 'LYA9C3G2', 'LYB4D7H5', 'LYC6E1J8', 'LYD8F3K4',
+    'LYE2G7L5', 'LYF5H9M1', 'LYG7J3N6', 'LYH1K8Q4', 'LYI3L5R2',
+    'LYJ9M7S4', 'LYK4N1T8', 'LYL6Q3U5', 'LYM8R7V2', 'LYN2S9W4',
+    'LYO5T1X6', 'LYP7U3Y8', 'LYQ9V5Z1', 'LYR2W7A4', 'LYS4X9B6',
+    'LYT6Y3C8', 'LYU8Z5D1', 'LYV1A7E4', 'LYW3B9F6', 'LYX5C2G8',
+]
+
 # Token 有效期（秒）- 用于远程 API 认证后的会话
 TOKEN_EXPIRY = 86400 * 7  # 7 天
 
@@ -37,16 +51,6 @@ def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
-
-
-# 启动时挂载静态文件路由，提供 /static/version.json
-@app.route('/static/<path:filename>', methods=['GET'])
-def serve_static(filename):
-    from flask import send_from_directory
-    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
-    if not os.path.isdir(static_dir):
-        os.makedirs(static_dir, exist_ok=True)
-    return send_from_directory(static_dir, filename)
 
 
 def init_db():
@@ -89,6 +93,23 @@ def init_db():
         FOREIGN KEY (user_id) REFERENCES users(id)
     )''')
     conn.commit()
+
+    # 预置邀请码
+    inserted = 0
+    now = datetime.now().isoformat()
+    for code in PRESET_INVITE_CODES:
+        row = c.execute('SELECT id FROM invite_codes WHERE code = ?', (code,)).fetchone()
+        if row is None:
+            c.execute(
+                'INSERT OR IGNORE INTO invite_codes (code, created_by, created_at, note) VALUES (?, NULL, ?, ?)',
+                (code, now, '系统预置')
+            )
+            inserted += 1
+    if inserted > 0:
+        conn.commit()
+        import logging
+        logging.info(f'已预置 {inserted} 个邀请码')
+
     conn.close()
 
 
@@ -138,30 +159,6 @@ def require_token(f):
 def ping():
     """健康检查"""
     return jsonify({'ok': True, 'version': '1.0'})
-
-
-@app.route('/api/version', methods=['GET'])
-def api_version():
-    """返回软件最新版本信息，供客户端检查更新"""
-    import json as _json
-    import os as _os
-
-    version_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'version.json')
-    if _os.path.isfile(version_path):
-        try:
-            with open(version_path, 'r', encoding='utf-8') as f:
-                data = _json.load(f)
-            return jsonify(data)
-        except Exception as e:
-            return jsonify({'error': f'读取版本文件失败: {e}'}), 500
-
-    return jsonify({
-        'version': '1.0.0',
-        'version_code': 100,
-        'download_url': '',
-        'changelog': '',
-        'mandatory': False,
-    })
 
 
 # ---- 注册 ----
@@ -370,7 +367,7 @@ def auth_invite_codes():
     return jsonify({'codes': [dict(r) for r in rows]})
 
 
-# ---- 生成邀请码（支持批量） ----
+# ---- 生成邀请码 ----
 @app.route('/api/auth/generate_invite', methods=['POST'])
 @require_api_key
 @require_token
@@ -378,21 +375,16 @@ def auth_generate_invite():
     if not g.is_admin:
         return jsonify({'error': '需要管理员权限'}), 403
     data = request.get_json(silent=True) or {}
-    count = max(1, min(100, int(data.get('count', 1) or 1)))
     note = data.get('note', '')
+    code = secrets.token_urlsafe(8).replace('-', '').replace('_', '')[:8].upper()
     conn = get_db()
-    codes = []
-    now = datetime.now().isoformat()
-    for _ in range(count):
-        code = secrets.token_urlsafe(8).replace('-', '').replace('_', '')[:8].upper()
-        conn.execute(
-            'INSERT INTO invite_codes (code, created_by, created_at, note) VALUES (?, ?, ?, ?)',
-            (code, g.user_id, now, note)
-        )
-        codes.append(code)
+    conn.execute(
+        'INSERT INTO invite_codes (code, created_by, created_at, note) VALUES (?, ?, ?, ?)',
+        (code, g.user_id, datetime.now().isoformat(), note)
+    )
     conn.commit()
     conn.close()
-    return jsonify({'codes': codes, 'count': len(codes)})
+    return jsonify({'code': code})
 
 
 # ---- 用户列表 ----
@@ -408,24 +400,6 @@ def auth_users():
     ).fetchall()
     conn.close()
     return jsonify({'users': [dict(r) for r in rows]})
-
-
-# ---- 获取单个用户 ----
-@app.route('/api/auth/users/<int:uid>', methods=['GET'])
-@require_api_key
-@require_token
-def auth_get_user(uid):
-    if not g.is_admin:
-        return jsonify({'error': '需要管理员权限'}), 403
-    conn = get_db()
-    row = conn.execute(
-        'SELECT id, username, is_admin, is_active, created_at FROM users WHERE id = ?',
-        (uid,)
-    ).fetchone()
-    conn.close()
-    if not row:
-        return jsonify({'error': '用户不存在'}), 404
-    return jsonify({'user': dict(row)})
 
 
 # ---- 切换用户启用/停用 ----
