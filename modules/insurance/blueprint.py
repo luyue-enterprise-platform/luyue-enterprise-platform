@@ -88,8 +88,8 @@ def _get_identity_type(person, roster_index):
     return ''
 
 # ============ 导入保险系统核心模块 ============
-from modules.insurance.core.ocr_engine import ocr_to_text, pdf_to_images
-from modules.insurance.core.data_parser import parse_ocr_result, group_by_person, extract_company_name
+from modules.insurance.core.ocr_engine import pdf_to_images
+from modules.insurance.core.data_parser import parse_ocr_result, parse_ocr_result_from_image, group_by_person, extract_company_name
 from modules.insurance.core.stats_calculator import calc_all_stats
 from modules.insurance.core.excel_generator import generate_excel
 from modules.insurance.core.roster_parser import (parse_roster, parse_roster_from_table,
@@ -213,8 +213,7 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                 tasks[task_id]['message'] = f'正在识别 ({i+1}/{len(all_items)}): {display_name}'
 
             try:
-                text = ocr_to_text(fp)
-                parsed = parse_ocr_result(text)
+                parsed = parse_ocr_result_from_image(fp)
                 parsed['filename'] = display_name
                 parsed['_source_path'] = fp  # 保留源文件路径供整理使用
                 parsed['_source_origin'] = source_origin  # 原始源文件名，用于PDF多页去重
@@ -982,8 +981,7 @@ def retry_task(task_id):
 
     for display_name, fp, source_origin in all_items:
         try:
-            text = ocr_to_text(fp)
-            parsed = parse_ocr_result(text)
+            parsed = parse_ocr_result_from_image(fp)
             parsed['filename'] = display_name
             parsed['_source_path'] = fp
             parsed['_source_origin'] = source_origin

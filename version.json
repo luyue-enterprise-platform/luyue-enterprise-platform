@@ -1,14 +1,14 @@
 {
-  "version": "1.1.31",
-  "version_code": 1131,
+  "version": "1.1.32",
+  "version_code": 1132,
   "release_date": "2026-08-05",
   "mandatory": false,
   "changelog": [
-    "v1.1.31 调整社保模块总台账Excel表格格式：",
-    "1. 行高：第1行55、第2行40、第3行起均为25",
-    "2. 字体统一为宋体，第1行和第2行加粗",
-    "3. 去除所有背景色，字体颜色均为黑色",
-    "4. 序号结束后下一行合并A:B列并添加"结束标识""
+    "v1.1.32 社保模块医疗保险OCR及缴费时间段优化：",
+    "1. 医疗保险图片OCR改用x坐标分列解析，修复年份与月数错配问题",
+    "2. 连续段首年起始月修正为13-缴费月数（如10月→3月起）",
+    "3. 新增最近连续段过滤逻辑：不连续年度只取最近连续缴费时间段，其余忽略",
+    "4. 所有险种统一应用连续段过滤逻辑"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.31"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.32"
 }

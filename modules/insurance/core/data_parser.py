@@ -149,6 +149,56 @@ def parse_period_str(s):
     return None
 
 
+def _ym_key(ym):
+    """将 'YYYY-MM' 转为可比较的整数"""
+    y, m = map(int, ym.split('-'))
+    return y * 12 + m
+
+
+def _keep_latest_segment(periods):
+    """
+    从多个时间段中，只保留最近的一段连续时间段。
+
+    将重叠或相邻（首尾相接）的时间段合并为一段，
+    然后返回结束时间最晚的那一段，其余忽略。
+
+    例如：
+        [('2020-01','2021-06'), ('2024-01','2026-06')]
+        → [('2024-01', '2026-06')]   # 2020-2021 被忽略
+
+        [('2024-01','2024-12'), ('2025-01','2026-06')]
+        → [('2024-01', '2026-06')]   # 相邻合并为一段
+
+    Args:
+        periods: list of (start_ym, end_ym)
+
+    Returns:
+        list of (start_ym, end_ym)：只包含最近一段，空列表表示无时间段
+    """
+    if not periods:
+        return []
+
+    # 按 start 排序
+    sorted_periods = sorted(periods, key=lambda p: _ym_key(p[0]))
+
+    # 合并重叠/相邻时间段
+    merged = []
+    cur_start, cur_end = sorted_periods[0]
+
+    for i in range(1, len(sorted_periods)):
+        s, e = sorted_periods[i]
+        if _ym_key(s) <= _ym_key(cur_end) + 1:
+            # 相邻或重叠，合并
+            cur_end = max(cur_end, e, key=_ym_key)
+        else:
+            merged.append((cur_start, cur_end))
+            cur_start, cur_end = s, e
+    merged.append((cur_start, cur_end))
+
+    # 返回结束时间最晚的一段
+    return [max(merged, key=lambda p: _ym_key(p[1]))]
+
+
 def extract_periods(text):
     """
     从OCR文本中提取所有参保时间段
@@ -216,31 +266,41 @@ def extract_periods(text):
             if p:
                 periods.append(p)
 
-    # 模式5：跨行 — 起始/截止在不同行（如"起始时间：2024年01月" / "截止时间：2026年04月"）
+    # 模式5：跨行/同行 — 起始/截止关键词 + 日期
+    # 支持：同行 "起始时间：2024年01月 截止时间：2026年06月"
+    #       跨行 "起始时间：2024年01月" / "截止时间：2026年06月"
+    #       多对 "起始...截止...起始...截止..."
     if not periods:
         lines = text.split('\n')
-        start_ym = None
-        end_ym = None
+        pending_starts = []  # 未配对的起始时间
         for i, line in enumerate(lines):
-            search_text = line
-            if i + 1 < len(lines):
-                search_text += ' ' + lines[i + 1]
-            if any(kw in line for kw in ['起始', '开始', '起期', '起止']):
-                m = re.search(r'(\d{4})\s*[-./年]\s*(\d{1,2})', search_text)
-                if m:
-                    y, mo = int(m.group(1)), int(m.group(2))
-                    if 1900 <= y <= 2100 and 1 <= mo <= 12:
-                        start_ym = (y, mo)
-            if any(kw in line for kw in ['截止', '结束', '止期', '终止']):
-                m = re.search(r'(\d{4})\s*[-./年]\s*(\d{1,2})', search_text)
-                if m:
-                    y, mo = int(m.group(1)), int(m.group(2))
-                    if 1900 <= y <= 2100 and 1 <= mo <= 12:
-                        end_ym = (y, mo)
-        if start_ym and end_ym:
-            p = make_period(start_ym[0], start_ym[1], end_ym[0], end_ym[1])
-            if p:
-                periods.append(p)
+            # 搜索起始时间（在关键词之后找日期）
+            for kw in ['起始', '开始', '起期', '起止']:
+                idx = line.find(kw)
+                if idx >= 0:
+                    after = line[idx + len(kw):]
+                    m = re.search(r'(\d{4})\s*[-./年]\s*(\d{1,2})', after)
+                    if m:
+                        y, mo = int(m.group(1)), int(m.group(2))
+                        if 1900 <= y <= 2100 and 1 <= mo <= 12:
+                            pending_starts.append((y, mo))
+                    break
+
+            # 搜索截止时间（在关键词之后找日期，避免误匹配起始日期）
+            for kw in ['截止', '结束', '止期', '终止']:
+                idx = line.find(kw)
+                if idx >= 0:
+                    after = line[idx + len(kw):]
+                    m = re.search(r'(\d{4})\s*[-./年]\s*(\d{1,2})', after)
+                    if m:
+                        y, mo = int(m.group(1)), int(m.group(2))
+                        if 1900 <= y <= 2100 and 1 <= mo <= 12:
+                            if pending_starts:
+                                s = pending_starts.pop()
+                                p = make_period(s[0], s[1], y, mo)
+                                if p:
+                                    periods.append(p)
+                    break
 
     return periods
 
@@ -260,7 +320,7 @@ def extract_period_from_yearly_table(text):
     2. 在表格区域内匹配 (年份, 月份数) 对（必须有"月"字标识）
     3. 过滤月份数>0的年份（=0表示当年未参保）
     4. 合并连续年份为一段
-    5. 每年的起止为 (年份-01, 年份-月份数)
+    5. 每年的起止为 (年份-(13-月份数), 年份-月份数)，如10月→3月起12月止
 
     Returns:
         list of (start_ym, end_ym) 元组列表，按开始时间升序
@@ -278,49 +338,190 @@ def extract_period_from_yearly_table(text):
 
     table_text = text[table_start:]
 
-    # 在表格区域内匹配必须有"月"字的年份+月份数
+    # 收集 (year, months) 对
     pairs = []
     pattern = r'(\d{4})[\s\u3000]+(\d{1,2})\s*[（(]?\s*月\s*[）)]?'
     for m in re.finditer(pattern, table_text):
         year = int(m.group(1))
         months = int(m.group(2))
         if 1900 <= year <= 2100 and 0 <= months <= 12 and months > 0:
-            start = f'{year:04d}-01'
-            end = f'{year:04d}-{months:02d}'
-            pairs.append((start, end, year, months))
+            pairs.append((year, months))
 
     if not pairs:
         return []
 
-    # 去重：同年多次出现保留最后一次（容错）
+    # 去重：同年保留最大月数（容错）
     by_year = {}
-    for start, end, year, months in pairs:
-        if year not in by_year or months > by_year[year][3]:
-            by_year[year] = (start, end, year, months)
+    for year, months in pairs:
+        if year not in by_year or months > by_year[year]:
+            by_year[year] = months
 
-    pairs = sorted(by_year.values(), key=lambda x: x[2])
+    sorted_pairs = sorted(by_year.items())  # [(year, months), ...]
 
-    # 合并连续年份为一段（连续年间隔 = 1 年）
+    # 合并连续年份为段，再根据段内位置计算起止月
     merged = []
-    cur_start, cur_end = pairs[0][0], pairs[0][1]
-    for i in range(1, len(pairs)):
-        prev_year = pairs[i - 1][2]
-        cur_year = pairs[i][2]
-        cur_start_i, cur_end_i = pairs[i][0], pairs[i][1]
-        if cur_year == prev_year + 1:
-            cur_end = cur_end_i
-        else:
-            merged.append((cur_start, cur_end))
-            cur_start, cur_end = cur_start_i, cur_end_i
-    merged.append((cur_start, cur_end))
+    seg_first_y, seg_first_m = sorted_pairs[0]
+    seg_last_y, seg_last_m = sorted_pairs[0]
 
-    return merged
+    for i in range(1, len(sorted_pairs)):
+        y, m = sorted_pairs[i]
+        if y == seg_last_y + 1:
+            seg_last_y = y
+            seg_last_m = m
+        else:
+            # 结束当前段
+            if seg_first_y == seg_last_y:
+                # 单年段：01 到 月数
+                merged.append((f'{seg_first_y:04d}-01', f'{seg_last_y:04d}-{seg_last_m:02d}'))
+            else:
+                # 多年段：首年 (13-月数) 起，末年 月数 止
+                merged.append((f'{seg_first_y:04d}-{13 - seg_first_m:02d}',
+                               f'{seg_last_y:04d}-{seg_last_m:02d}'))
+            seg_first_y, seg_first_m = y, m
+            seg_last_y, seg_last_m = y, m
+
+    # 最后一段
+    if seg_first_y == seg_last_y:
+        merged.append((f'{seg_first_y:04d}-01', f'{seg_last_y:04d}-{seg_last_m:02d}'))
+    else:
+        merged.append((f'{seg_first_y:04d}-{13 - seg_first_m:02d}',
+                       f'{seg_last_y:04d}-{seg_last_m:02d}'))
+
+    # 只保留最近连续段（结束时间最晚的一段）
+    return _keep_latest_segment(merged)
+
+
+def extract_period_from_yearly_table_items(items):
+    """
+    从OCR items中提取年度表格型参保时间段（用于"城镇职工基本医疗保险参保缴费证明"）
+
+    表格结构：3对 (缴费年度, 缴费月份) 列，共 6 列
+    通过 x 坐标聚类识别 6 列，每列内按 y 顺序排列后配对
+    相比纯文本解析，可以正确处理"年份"和"月份"在不同 y_bucket 的情况
+
+    Args:
+        items: list of dict, each with 'text', 'x', 'y', 'score'
+
+    Returns:
+        list of (start_ym, end_ym) 元组列表，按开始时间升序
+        找不到有效记录返回 []
+    """
+    if not items:
+        return []
+
+    # Step 1: 找到 6 个表头（缴费年度/缴费月份 x 3）
+    headers = [it for it in items
+               if '缴费年度' in it['text'] or '缴费月份' in it['text']]
+    if len(headers) < 6:
+        return []
+
+    # 按 x 排序：缴费年度, 缴费月份, 缴费年度, 缴费月份, 缴费年度, 缴费月份
+    headers.sort(key=lambda h: h['x'])
+    col_centers = [h['x'] for h in headers]
+    n_cols = len(col_centers)
+
+    # Step 2: 计算列边界（相邻表头的中点）
+    col_bounds = []
+    for i, cx in enumerate(col_centers):
+        left = -float('inf') if i == 0 else (col_centers[i - 1] + cx) / 2
+        right = float('inf') if i == n_cols - 1 else (cx + col_centers[i + 1]) / 2
+        col_bounds.append((left, right))
+
+    # Step 3: 仅保留表头以下的 items
+    header_y = max(h['y'] for h in headers)
+    table_items = [it for it in items if it['y'] > header_y + 10]
+
+    # Step 4: 将每个 item 分配到对应的列
+    col_items = [[] for _ in col_centers]
+    for it in table_items:
+        for i, (left, right) in enumerate(col_bounds):
+            if left <= it['x'] < right:
+                col_items[i].append(it)
+                break
+
+    # Step 5: 解析年份和月份
+    def parse_year(text):
+        m = re.match(r'^\s*(\d{4})\s*$', text)
+        if m:
+            y = int(m.group(1))
+            if 1900 <= y <= 2100:
+                return y
+        return None
+
+    def parse_month(text):
+        # 匹配 N月 / N（月）/ N(月) 等
+        m = re.search(r'(\d{1,2})\s*[（(]?\s*月\s*[）)]?', text)
+        if m:
+            val = int(m.group(1))
+            if 0 <= val <= 12:
+                return val
+        return None
+
+    # Step 6: 对每对 (year_col, month_col) 按 y 顺序配对
+    year_month_pairs = []
+    for col_idx in range(0, n_cols, 2):
+        yc_sorted = sorted(col_items[col_idx], key=lambda it: it['y'])
+        mc_sorted = sorted(col_items[col_idx + 1], key=lambda it: it['y'])
+
+        years = [y for it in yc_sorted
+                 for y in [parse_year(it['text'])] if y is not None]
+        months = [m for it in mc_sorted
+                  for m in [parse_month(it['text'])] if m is not None]
+
+        for y, m in zip(years, months):
+            if m > 0:
+                year_month_pairs.append((y, m))
+
+    if not year_month_pairs:
+        return []
+
+    # Step 7: 同年去重（保留最大月数，容错）
+    by_year = {}
+    for y, m in year_month_pairs:
+        if y not in by_year or m > by_year[y]:
+            by_year[y] = m
+
+    sorted_pairs = sorted(by_year.items())
+
+    # Step 8: 合并连续年份为一段
+    segments = []
+    cur_start_y = sorted_pairs[0][0]
+    cur_start_m = sorted_pairs[0][1]  # 首年月数（用于计算起始月）
+    cur_end_y = cur_start_y
+    cur_end_m = sorted_pairs[0][1]
+
+    for i in range(1, len(sorted_pairs)):
+        y, m = sorted_pairs[i]
+        if y == cur_end_y + 1:
+            cur_end_y = y
+            cur_end_m = m
+        else:
+            segments.append((cur_start_y, cur_end_y, cur_end_m, cur_start_m))
+            cur_start_y = y
+            cur_start_m = m
+            cur_end_y = y
+            cur_end_m = m
+    segments.append((cur_start_y, cur_end_y, cur_end_m, cur_start_m))
+
+    # Step 9: 转换为 (start_ym, end_ym)
+    # 单年段：01 到 月数
+    # 多年段：首年 (13-月数) 起（如10月→3月起），末年 月数 止（如6月→6月止）
+    result = []
+    for sy, ey, em, sm in segments:
+        if sy == ey:
+            result.append((f'{sy:04d}-01', f'{ey:04d}-{em:02d}'))
+        else:
+            result.append((f'{sy:04d}-{13 - sm:02d}', f'{ey:04d}-{em:02d}'))
+
+    # 只保留最近连续段（结束时间最晚的一段）
+    return _keep_latest_segment(result)
 
 
 def get_full_period(text):
     """
-    从OCR文本中提取完整参保时间段（取所有时间段的最早起始和最晚截止）
+    从OCR文本中提取完整参保时间段
 
+    只保留最近连续缴费段（不连续的旧时间段忽略）。
     优先尝试"起始-截止"型时间段（extract_periods），
     若结果为空，尝试"年份+月数"表格型（城镇职工基本医疗保险证明）。
 
@@ -329,24 +530,53 @@ def get_full_period(text):
     """
     periods = extract_periods(text)
     if periods:
-        def ym_key(ym):
-            y, m = map(int, ym.split('-'))
-            return y * 12 + m
+        # 只保留最近连续段
+        latest = _keep_latest_segment(periods)
+        return latest[0][0], latest[0][1]
 
-        earliest_start = min(periods, key=lambda p: ym_key(p[0]))[0]
-        latest_end = max(periods, key=lambda p: ym_key(p[1]))[1]
-        return earliest_start, latest_end
-
-    # 回退：年度+月数表格
+    # 回退：年度+月数表格（纯文本方式，已内置过滤）
     table_periods = extract_period_from_yearly_table(text)
     if table_periods:
-        def ym_key(ym):
-            y, m = map(int, ym.split('-'))
-            return y * 12 + m
+        return table_periods[0][0], table_periods[0][1]
 
-        earliest_start = min(table_periods, key=lambda p: ym_key(p[0]))[0]
-        latest_end = max(table_periods, key=lambda p: ym_key(p[1]))[1]
-        return earliest_start, latest_end
+    return None
+
+
+def get_full_period_from_items(items):
+    """
+    从OCR items中提取完整参保时间段（更稳健的 items 方式）
+
+    只保留最近连续缴费段（不连续的旧时间段忽略）。
+    优先尝试"起始-截止"型时间段（先用纯文本匹配），
+    若结果为空，使用"年份+月数"表格型（用 x/y 坐标配对）。
+
+    Returns:
+        tuple: (start_ym, end_ym) 如 ('2024-01', '2026-04')，无法提取返回None
+    """
+    # 构造 raw_text 供文本匹配使用
+    from collections import defaultdict
+    line_groups = defaultdict(list)
+    for it in items:
+        bucket = round(it['y'] / 15)
+        line_groups[bucket].append(it)
+
+    lines = []
+    for bucket in sorted(line_groups.keys()):
+        sorted_items = sorted(line_groups[bucket], key=lambda it: it['x'])
+        lines.append(' '.join(it['text'] for it in sorted_items))
+    raw_text = '\n'.join(lines)
+
+    # 优先尝试文本中的"起始-截止"型
+    text_periods = extract_periods(raw_text)
+    if text_periods:
+        # 只保留最近连续段
+        latest = _keep_latest_segment(text_periods)
+        return latest[0][0], latest[0][1]
+
+    # 回退：年度+月数表格（items 方式，已内置过滤）
+    table_periods = extract_period_from_yearly_table_items(items)
+    if table_periods:
+        return table_periods[0][0], table_periods[0][1]
 
     return None
 
@@ -415,6 +645,60 @@ def parse_ocr_result(text):
     return result
 
 
+def parse_ocr_result_from_image(image_path):
+    """
+    对图片进行OCR并解析（使用 items + x/y 坐标，更稳健）
+
+    相比 parse_ocr_result(text)，时间表解析使用 x 坐标分列配对，
+    可以正确处理"年份"和"月份"在不同 y_bucket 的情况
+    （如城镇职工基本医疗保险参保缴费证明：3对列布局，年份和月份在视觉上
+    相邻但 y 坐标差 3-5 像素，刚好跨越 round(y/15) 边界）。
+
+    Args:
+        image_path: 图片文件路径
+
+    Returns:
+        dict: 与 parse_ocr_result 相同结构
+    """
+    from modules.insurance.core.ocr_engine import ocr_image
+
+    items = ocr_image(image_path)
+    if not items:
+        return {
+            'insurance_type': None,
+            'name': '',
+            'idcard': '',
+            'period': None,
+            'company_name': '',
+            'raw_text': '',
+        }
+
+    # 构造 raw_text 供其他字段提取使用（与 ocr_to_text 一致）
+    from collections import defaultdict
+    line_groups = defaultdict(list)
+    for it in items:
+        bucket = round(it['y'] / 15)
+        line_groups[bucket].append(it)
+
+    lines = []
+    for bucket in sorted(line_groups.keys()):
+        sorted_items = sorted(line_groups[bucket], key=lambda it: it['x'])
+        lines.append(' '.join(it['text'] for it in sorted_items))
+    raw_text = '\n'.join(lines)
+
+    # 用 items 提取时间表（更稳健）
+    period = get_full_period_from_items(items)
+
+    return {
+        'insurance_type': detect_insurance_type(raw_text),
+        'name': extract_name(raw_text),
+        'idcard': extract_idcard(raw_text),
+        'period': period,
+        'company_name': extract_company_name(raw_text),
+        'raw_text': raw_text,
+    }
+
+
 def group_by_person(records):
     """
     将多条OCR解析记录按人员分组（姓名+身份证号）
@@ -440,7 +724,7 @@ def group_by_person(records):
             persons[key] = {
                 'name': rec['name'],
                 'idcard': rec['idcard'],
-                'insurances': {}
+                'insurances': {}  # {ins_type: [(start, end), ...]}
             }
         else:
             # 更新身份证号（如果当前为空）
@@ -450,16 +734,19 @@ def group_by_person(records):
         ins_type = rec['insurance_type']
         period = rec['period']
         if period:
-            # 如果同一险种有多条记录，取并集（最早起始到最晚截止）
-            if ins_type in persons[key]['insurances']:
-                old_start, old_end = persons[key]['insurances'][ins_type]
-                def ym_key(ym):
-                    y, m = map(int, ym.split('-'))
-                    return y * 12 + m
-                new_start = min(old_start, period[0], key=ym_key)
-                new_end = max(old_end, period[1], key=ym_key)
-                persons[key]['insurances'][ins_type] = (new_start, new_end)
-            else:
-                persons[key]['insurances'][ins_type] = period
+            if ins_type not in persons[key]['insurances']:
+                persons[key]['insurances'][ins_type] = []
+            persons[key]['insurances'][ins_type].append(period)
 
-    return list(persons.values())
+    # 对每个人的每个险种：合并所有记录的时间段，只保留最近连续段
+    result = []
+    for p in persons.values():
+        filtered = {}
+        for ins_type, periods in p['insurances'].items():
+            latest = _keep_latest_segment(periods)
+            if latest:
+                filtered[ins_type] = latest[0]
+        p['insurances'] = filtered
+        result.append(p)
+
+    return result
