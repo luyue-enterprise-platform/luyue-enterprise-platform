@@ -1,14 +1,14 @@
 {
-  "version": "1.1.23",
-  "version_code": 1123,
+  "version": "1.1.24",
+  "version_code": 1124,
   "release_date": "2026-08-05",
   "mandatory": false,
   "changelog": [
-    "v1.1.23 修复动态邀请码生成失败问题（根因修复）：",
-    "1. 远程服务器返回邀请码格式为{codes:[\"XXX\"]}，客户端误读code字段导致返回空",
-    "2. 兼容远程响应的code和codes两种格式",
-    "3. 远程返回200但无有效邀请码时自动回退本地生成",
-    "4. 本地生成代码增加异常保护，防止未捕获异常导致500错误"
+    "v1.1.24 修复其他电脑首次注册不要求邀请码的问题：",
+    "1. 注册时始终要求邀请码，不再因远程服务器不可达而跳过验证",
+    "2. 首位管理员使用预置邀请码注册（如LYA3K7M2等）",
+    "3. create_user本地回退时正确使用is_admin参数（之前硬编码为0）",
+    "4. 移除无邀请码的首次注册分支，消除安全漏洞"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.23"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.24"
 }

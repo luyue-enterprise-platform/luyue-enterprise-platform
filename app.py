@@ -207,51 +207,42 @@ def register():
             return render_template('register.html', user_count=user_count,
                                   is_first=(user_count == 0), error=err)
 
-        if user_count == 0:
-            uid, err = create_user(username, password, is_admin=True)
-            if uid is None:
-                err_msg = err or '用户名已存在'
-                if request.is_json:
-                    return jsonify({'error': err_msg}), 400
-                return render_template('register.html', user_count=user_count,
-                                      is_first=True, error=err_msg)
-            session['user_id'] = uid
-            session['username'] = username
-            session['is_admin'] = True
-            # 远程模式：存储 API token 到 session
-            remote_token = get_remote_token()
-            if remote_token:
-                session['_auth_token'] = remote_token
+        # 始终要求邀请码（首位管理员使用预置邀请码注册）
+        invite_code = data.get('invite_code', '').strip()
+        if not invite_code:
+            err = '请输入邀请码'
             if request.is_json:
-                return jsonify({'ok': True})
-            return redirect('/')
-        else:
-            invite_code = data.get('invite_code', '').strip()
-            if not validate_invite_code(invite_code):
-                err = '邀请码无效或已被使用'
-                if request.is_json:
-                    return jsonify({'error': err}), 400
-                return render_template('register.html', user_count=user_count,
-                                      is_first=False, error=err)
-            # 远程模式下将邀请码传给 create_user
-            uid2, err2 = create_user(username, password, invite_code=invite_code)
-            if uid2 is None:
-                err_msg2 = err2 or '用户名已存在'
-                if request.is_json:
-                    return jsonify({'error': err_msg2}), 400
-                return render_template('register.html', user_count=user_count,
-                                      is_first=False, error=err_msg2)
-            consume_invite_code(invite_code, uid2)
-            session['user_id'] = uid2
-            session['username'] = username
-            session['is_admin'] = False
-            # 远程模式：存储 API token 到 session
-            remote_token2 = get_remote_token()
-            if remote_token2:
-                session['_auth_token'] = remote_token2
+                return jsonify({'error': err}), 400
+            return render_template('register.html', user_count=user_count,
+                                  is_first=(user_count == 0), error=err)
+        if not validate_invite_code(invite_code):
+            err = '邀请码无效或已被使用'
             if request.is_json:
-                return jsonify({'ok': True})
-            return redirect('/')
+                return jsonify({'error': err}), 400
+            return render_template('register.html', user_count=user_count,
+                                  is_first=(user_count == 0), error=err)
+
+        is_first = (user_count == 0)
+        # 远程模式下将邀请码传给 create_user
+        uid, err2 = create_user(username, password,
+                                is_admin=is_first, invite_code=invite_code)
+        if uid is None:
+            err_msg = err2 or '用户名已存在'
+            if request.is_json:
+                return jsonify({'error': err_msg}), 400
+            return render_template('register.html', user_count=user_count,
+                                  is_first=is_first, error=err_msg)
+        consume_invite_code(invite_code, uid)
+        session['user_id'] = uid
+        session['username'] = username
+        session['is_admin'] = is_first
+        # 远程模式：存储 API token 到 session
+        remote_token = get_remote_token()
+        if remote_token:
+            session['_auth_token'] = remote_token
+        if request.is_json:
+            return jsonify({'ok': True})
+        return redirect('/')
 
     return render_template('register.html', user_count=user_count,
                           is_first=(user_count == 0))

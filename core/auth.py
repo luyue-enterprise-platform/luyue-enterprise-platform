@@ -227,10 +227,10 @@ def create_user(username, password, is_admin=False, invite_code=''):
         result, status = _remote_request('/api/auth/register', payload)
         if status == 200 and result.get('ok'):
             return result.get('user_id'), None
-        # 远程注册失败：尝试本地回退
+        # 远程注册失败：尝试本地回退（必须提供有效邀请码）
         conn = get_db()
         if invite_code:
-            # 非首次注册：检查邀请码是否在本地有效
+            # 检查邀请码是否在本地有效
             local_row = conn.execute(
                 'SELECT id FROM invite_codes WHERE code = ? AND used_by IS NULL',
                 (invite_code,)
@@ -241,29 +241,8 @@ def create_user(username, password, is_admin=False, invite_code=''):
                     conn.execute(
                         'INSERT INTO users (username, password_hash, is_admin, created_at) '
                         'VALUES (?, ?, ?, ?)',
-                        (username, _hash_password(password), 0,
-                         datetime.now().isoformat())
-                    )
-                    conn.commit()
-                    uid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
-                    conn.close()
-                    return uid, None
-                except sqlite3.IntegrityError:
-                    conn.close()
-                    return None, '用户名已存在'
-                except Exception as e:
-                    conn.close()
-                    return None, f'本地注册失败: {e}'
-        else:
-            # 首次注册（无邀请码）：如果本地无用户，允许本地注册为管理员
-            local_count = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
-            if local_count == 0:
-                _log_fallback('注册', status, result.get('error', ''))
-                try:
-                    conn.execute(
-                        'INSERT INTO users (username, password_hash, is_admin, created_at) '
-                        'VALUES (?, ?, ?, ?)',
-                        (username, _hash_password(password), 1,
+                        (username, _hash_password(password),
+                         1 if is_admin else 0,
                          datetime.now().isoformat())
                     )
                     conn.commit()
