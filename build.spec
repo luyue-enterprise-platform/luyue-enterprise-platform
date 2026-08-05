@@ -69,6 +69,8 @@ all_datas = [
     ('modules/pdf2word/static', 'modules/pdf2word/static'),
     # 版本信息（用于远程更新检查）
     ('version.json', '.'),
+    # 远程认证配置（内嵌回退：外部 auth_config.json 丢失时使用）
+    ('auth_config.json', '.'),
 ] + rapidocr_data + webview_data + clr_loader_data + pythonnet_data + pdf2docx_data + docx_data + pywin32_data
 
 a = Analysis(

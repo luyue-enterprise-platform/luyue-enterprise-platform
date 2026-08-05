@@ -30,7 +30,12 @@ def _load_auth_config():
     global AUTH_SERVER_URL, AUTH_API_KEY
     config_paths = []
     if getattr(sys, 'frozen', False):
+        # 1. EXE 同目录（优先：用户可自定义覆盖）
         config_paths.append(os.path.join(os.path.dirname(sys.executable), 'auth_config.json'))
+        # 2. PyInstaller 临时解压目录（内嵌回退：外部文件丢失时使用）
+        meipass = getattr(sys, '_MEIPASS', None)
+        if meipass:
+            config_paths.append(os.path.join(meipass, 'auth_config.json'))
     else:
         config_paths.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'auth_config.json'))
     config_paths.append(os.path.join(os.path.expanduser('~'), '.luyue_auth_config.json'))
