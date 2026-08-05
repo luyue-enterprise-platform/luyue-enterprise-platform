@@ -11,12 +11,14 @@ from .stats_calculator import INSURANCE_ORDER, calc_all_stats, parse_ym
 
 
 def _thin_border():
-    side = Side(style='thin', color='000000')
+    side = Side(style='thin', color='999999')
     return Border(left=side, right=side, top=side, bottom=side)
 
 
 def _style_header(cell):
-    cell.font = Font(name='宋体', bold=True, size=14)
+    cell.font = Font(bold=True, size=11, color='FFFFFF')
+    cell.fill = PatternFill(start_color='2E5C8A', end_color='2E5C8A',
+                            fill_type='solid')
     cell.alignment = Alignment(horizontal='center', vertical='center',
                                wrap_text=True)
     cell.border = _thin_border()
@@ -28,27 +30,28 @@ def _style_cell(cell, center=True, bold=False):
         vertical='center', wrap_text=True
     )
     cell.border = _thin_border()
-    cell.font = Font(name='宋体', size=12, bold=bold)
+    cell.font = Font(size=10, bold=bold)
 
 
 def _style_summary_label(cell):
-    cell.font = Font(name='宋体', bold=True, size=14)
+    cell.font = Font(bold=True, size=10, color='2E5C8A')
     cell.alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
     cell.border = _thin_border()
+    cell.fill = PatternFill(start_color='E8F0FE', end_color='E8F0FE', fill_type='solid')
 
 
 def _style_summary_cell(cell):
-    cell.font = Font(name='宋体', bold=True, size=14)
+    cell.font = Font(bold=True, size=10)
     cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     cell.border = _thin_border()
+    cell.fill = PatternFill(start_color='E8F0FE', end_color='E8F0FE', fill_type='solid')
 
 
-def _style_grand_total_cell(cell, highlight=False):
-    cell.font = Font(name='宋体', bold=True, size=14)
+def _style_grand_total_cell(cell):
+    cell.font = Font(bold=True, size=10, color='FFFFFF')
     cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     cell.border = _thin_border()
-    if highlight:
-        cell.fill = PatternFill(start_color='FFFF0000', end_color='FFFF0000', fill_type='solid')
+    cell.fill = PatternFill(start_color='2E5C8A', end_color='2E5C8A', fill_type='solid')
 
 
 def _fmt_period(start, end):
@@ -58,32 +61,21 @@ def _fmt_period(start, end):
 
 
 def _build_roster_map(roster):
-    """构建花名册映射（优先按身份证号，回退到姓名）"""
-    by_idcard = {}
-    by_name = {}
+    mapping = {}
     if not roster:
-        return by_idcard, by_name
+        return mapping
     for item in roster:
-        idc = item.get('idcard', '').strip().upper()
-        nm = item.get('name', '').strip()
-        if idc:
-            by_idcard[idc] = item
-        if nm:
-            by_name[nm] = item
-    return by_idcard, by_name
+        name = item.get('name', '').strip()
+        if name:
+            mapping[name] = item
+    return mapping
 
 
-def _classify_persons(person_stats, roster_by_idcard, roster_by_name):
-    """按身份证号匹配花名册获取身份类型，回退到姓名"""
+def _classify_persons(person_stats, roster_map):
     result = []
     for ps in person_stats:
-        idc = ps.get('idcard', '').strip().upper()
-        nm = ps.get('name', '').strip()
-        roster_entry = {}
-        if idc and idc in roster_by_idcard:
-            roster_entry = roster_by_idcard[idc]
-        elif nm and nm in roster_by_name:
-            roster_entry = roster_by_name[nm]
+        name = ps.get('name', '').strip()
+        roster_entry = roster_map.get(name, {})
         identity_type = roster_entry.get('identity_type', '')
         result.append((ps, identity_type))
     return result
@@ -106,7 +98,7 @@ def _get_year_overlap_period(overlap_start, overlap_end, year):
     return start_ym, end_ym
 
 
-def _generate_yearly_ledger(year, classified, company_name, output_dir, timestamp):
+def _generate_yearly_ledger(year, classified, roster_map, company_name, output_dir, timestamp):
     """为指定年份生成年度台账（独立Excel文件）
 
     列结构（动态）：
@@ -304,33 +296,20 @@ def _generate_yearly_ledger(year, classified, company_name, output_dir, timestam
 
 
 def generate_excel(persons, output_path, roster=None, company_name='', year_range=None):
-    person_stats, year_cols = calc_all_stats(persons, year_range)
-    roster_by_idcard, roster_by_name = _build_roster_map(roster or [])
+    person_stats, year_cols = calc_all_stats(persons, year_range=year_range)
+    roster_map = _build_roster_map(roster or [])
 
     # ========== 分类人员并按花名册顺序排序 ==========
-    classified = _classify_persons(person_stats, roster_by_idcard, roster_by_name)
+    classified = _classify_persons(person_stats, roster_map)
 
-    # 按花名册中序号排序（优先按身份证号匹配，回退到姓名）
+    # 按花名册中序号排序
     if roster:
-        roster_order_by_idcard = {}
-        roster_order_by_name = {}
+        roster_order = {}
         for i, item in enumerate(roster):
-            idc = item.get('idcard', '').strip().upper()
-            nm = item.get('name', '').strip()
-            if idc and idc not in roster_order_by_idcard:
-                roster_order_by_idcard[idc] = i
-            if nm and nm not in roster_order_by_name:
-                roster_order_by_name[nm] = i
-
-        def _sort_key(x):
-            idc = x[0].get('idcard', '').strip().upper()
-            nm = x[0].get('name', '').strip()
-            if idc and idc in roster_order_by_idcard:
-                return roster_order_by_idcard[idc]
-            if nm and nm in roster_order_by_name:
-                return roster_order_by_name[nm]
-            return 99999
-        classified.sort(key=_sort_key)
+            name = item.get('name', '').strip()
+            if name and name not in roster_order:
+                roster_order[name] = i
+        classified.sort(key=lambda x: roster_order.get(x[0].get('name', '').strip(), 99999))
 
     # ========== 检查是否有退役士兵 ==========
     has_tuiwu = any(identity_type == '自主就业退役士兵' for _, identity_type in classified)
@@ -357,7 +336,7 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
         label_col_idx = 11
         total_months_col_idx = 12
         empty_prefix_cols = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
-        widths = [6, 10, 23.5, 18, 22, 20, 20, 20, 20, 20, 30, 12] + [14] * len(year_cols) + [12]
+        widths = [6, 10, 22, 18, 22, 20, 24, 24, 24, 24, 30, 14] + [14] * len(year_cols) + [16]
     else:
         # 没有退役士兵，不显示退役证编号和退役时间列
         headers = [
@@ -378,7 +357,7 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
         label_col_idx = 9
         total_months_col_idx = 10
         empty_prefix_cols = (1, 2, 3, 4, 5, 6, 7, 8)
-        widths = [6, 10, 23.5, 18, 20, 20, 20, 20, 30, 12] + [14] * len(year_cols) + [12]
+        widths = [6, 10, 22, 18, 24, 24, 24, 24, 30, 14] + [14] * len(year_cols) + [16]
 
     total_col_count = len(headers)
     col_total_letter = get_column_letter(total_col_count)
@@ -389,25 +368,24 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
 
     # ========== 标题行（第1行）==========
     if company_name:
-        title_text = f'{company_name}\n企业申报重点群体税收优惠政策总台账'
+        title_text = f'{company_name}企业申报重点群体税收优惠政策总台账'
     else:
         title_text = '企业申报重点群体税收优惠政策总台账'
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_col_count)
     title_cell = ws.cell(row=1, column=1, value=title_text)
-    title_cell.font = Font(name='宋体', bold=True, size=24)
-    title_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    title_bottom = Side(style='thin', color='000000')
+    title_cell.font = Font(bold=True, size=16, color='2E5C8A', name='微软雅黑')
+    title_cell.alignment = Alignment(horizontal='center', vertical='center')
+    title_cell.fill = PatternFill(start_color='F0F5FF', end_color='F0F5FF', fill_type='solid')
+    title_bottom = Side(style='thin', color='2E5C8A')
     for col in range(1, total_col_count + 1):
         cell = ws.cell(row=1, column=col)
         cell.border = Border(bottom=title_bottom)
-    ws.row_dimensions[1].height = 80
 
     # ========== 表头行（第2行）==========
     ws.append(headers)
     for cell in ws[2]:
         _style_header(cell)
-    ws.row_dimensions[2].height = 60
 
     # ========== 人员身份类型下拉验证 ==========
     dv = DataValidation(
@@ -507,15 +485,7 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
     if tuwu_stats:
         tuwu_stats['label'] = '自主就业退役士兵'
 
-    # ========== 结束标识行 ==========
-    ws.append(['结束标识'] + [''] * (total_col_count - 1))
-    end_row = ws.max_row
-    ws.merge_cells(start_row=end_row, start_column=1, end_row=end_row, end_column=2)
-    end_cell = ws.cell(row=end_row, column=1)
-    end_cell.font = Font(name='宋体', bold=True, size=12)
-    end_cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    for col_idx in range(1, total_col_count + 1):
-        ws.cell(row=end_row, column=col_idx).border = _thin_border()
+    ws.append([])
 
     summary_types = []
     if tupin_stats:
@@ -631,8 +601,8 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
                 total_row.append(formula)
 
         ws.append(total_row)
-        for cell_idx, cell in enumerate(ws[ws.max_row], start=1):
-            _style_grand_total_cell(cell, highlight=(cell_idx == total_months_col_idx))
+        for cell in ws[ws.max_row]:
+            _style_grand_total_cell(cell)
 
     # ========== 列宽 ==========
     for i, w in enumerate(widths):
@@ -651,7 +621,7 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
     yearly_ledger_files = []
     for year in year_cols:
         result = _generate_yearly_ledger(
-            year, classified, company_name, output_dir, timestamp
+            year, classified, roster_map, company_name, output_dir, timestamp
         )
         if result:
             yearly_ledgers.append(result['filename'])
