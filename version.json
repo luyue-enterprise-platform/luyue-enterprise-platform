@@ -1,16 +1,15 @@
 {
-  "version": "1.1.26",
-  "version_code": 1126,
+  "version": "1.1.27",
+  "version_code": 1127,
   "release_date": "2026-08-05",
   "mandatory": false,
   "changelog": [
-    "v1.1.26 修复 auth_config.json 未打包导致注册逻辑失效：",
-    "1. 根因：v1.1.19起 auth_config.json 不再包含在安装包中",
-    "2. 导致所有电脑进入本地模式，每台新电脑本地DB为空(count=0)误判为首次注册",
-    "3. 修复：installer.iss 从项目根目录包含 auth_config.json",
-    "4. 加固：build.spec 内嵌 auth_config.json 作为回退",
-    "5. 加固：auth.py 的 _load_auth_config 增加 sys._MEIPASS 回退路径",
-    "6. 确保所有电脑使用远程认证服务器，首次注册为管理员免邀请码，其他电脑必须邀请码"
+    "v1.1.27 修复社保模块 calc_all_stats() 函数签名不匹配导致处理失败：",
+    "1. 根因：calc_all_stats(persons) 函数定义只接受1个参数，但调用方传入了 (persons, year_range)",
+    "2. 报错：calc_all_stats() takes 1 positional argument but 2 were given",
+    "3. 修复：calc_all_stats 增加 year_range=None 参数",
+    "4. 修复：get_overlap_years 增加 year_range=None 参数，限制年度列范围在用户选择的区间内",
+    "5. 兼容：excel_generator.py 的 generate_excel 中调用 calc_all_stats(persons) 仍可正常工作（year_range 默认 None）"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.26"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.27"
 }
