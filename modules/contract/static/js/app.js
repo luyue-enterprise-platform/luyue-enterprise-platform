@@ -255,8 +255,11 @@ function addFiles(fileList) {
         if (validExts.indexOf(ext) === -1) continue;
 
         // 避免重复（同名+同大小+同文件夹）
+        // 注意：通过文件夹选择添加的文件 sf.file 为 null，需兼容处理
         var dup = selectedFiles.some(function (sf) {
-            return sf.file.name === f.name && sf.file.size === f.size && (sf.folder || '') === (folder || '');
+            var sfn = sf.file ? sf.file.name : sf.name;
+            var sfs = sf.file ? sf.file.size : sf.size;
+            return sfn === f.name && sfs === f.size && (sf.folder || '') === (folder || '');
         });
         if (dup) continue;
 

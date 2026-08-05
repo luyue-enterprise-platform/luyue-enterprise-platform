@@ -1,13 +1,12 @@
 {
-  "version": "1.1.29",
-  "version_code": 1129,
+  "version": "1.1.30",
+  "version_code": 1130,
   "release_date": "2026-08-05",
   "mandatory": false,
   "changelog": [
-    "v1.1.29 修复社保模块三个核心问题（之前版本已有但丢失的逻辑恢复）：",
-    "1. 图片和花名册匹配逻辑改为以身份证号为核心因素——身份证号匹配则为此人，姓名仅作兜底",
-    "2. 医疗保险图片（城镇职工基本医疗保险参保缴费证明）OCR解析恢复——新增年度+月数表格解析函数",
-    "3. 重叠参保时间段改为选择的时间段与四险重叠时间段的交集——calc_overlap增加year_range参数取交集"
+    "v1.1.30 修复劳动合同模块添加文件bug：",
+    "先添加文件夹后再无法继续添加单个文件——去重检查直接访问sf.file.name但文件夹文件的sf.file为null导致JS异常",
+    "修复：去重检查改为兼容写法 sf.file ? sf.file.name : sf.name"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.29"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.30"
 }
