@@ -60,6 +60,33 @@ OUTPUT_DIR = os.path.join(DATA_DIR, 'outputs')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+
+def _get_identity_type(person, roster_index):
+    """
+    在花名册中查找人员的身份类型（先按身份证号，再按姓名）
+
+    Args:
+        person: dict {'name', 'idcard', ...}
+        roster_index: 花名册索引
+
+    Returns:
+        str: 身份类型，未找到返回空字符串
+    """
+    idcard = person.get('idcard', '').strip()
+    name = person.get('name', '').strip()
+
+    # 1. 优先按身份证号
+    if idcard and roster_index.get('idcard_to_entry', {}).get(idcard):
+        return roster_index['idcard_to_entry'][idcard].get('identity_type', '')
+
+    # 2. 兜底按姓名
+    if name and roster_index.get('name_to_entries', {}).get(name):
+        entries = roster_index['name_to_entries'][name]
+        if entries:
+            return entries[0].get('identity_type', '')
+
+    return ''
+
 # ============ 导入保险系统核心模块 ============
 from modules.insurance.core.ocr_engine import ocr_to_text, pdf_to_images
 from modules.insurance.core.data_parser import parse_ocr_result, group_by_person, extract_company_name
@@ -338,13 +365,25 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
         for yf in yearly_ledger_files:
             logger.info(f'[task:{task_id}] 年度台账: {yf["filepath"]}')
 
-        # 构建花名册映射
-        roster_map = {}
+        # 构建花名册索引：优先按身份证号匹配，其次姓名
+        roster_index = {
+            'idcard_to_entry': {},
+            'name_to_entries': {},
+            'order_idcard': {},
+            'order_name': {},
+        }
         if roster:
-            for item in roster:
+            for idx, item in enumerate(roster):
                 nm = item.get('name', '').strip()
+                idc = item.get('idcard', '').strip()
+                if idc:
+                    if idc not in roster_index['idcard_to_entry']:
+                        roster_index['idcard_to_entry'][idc] = item
+                        roster_index['order_idcard'][idc] = idx
                 if nm:
-                    roster_map[nm] = item.get('identity_type', '')
+                    roster_index['name_to_entries'].setdefault(nm, []).append(item)
+                    if nm not in roster_index['order_name']:
+                        roster_index['order_name'][nm] = idx
 
         with tasks_lock:
             tasks[task_id]['status'] = 'done'
@@ -354,7 +393,7 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                     {
                         'name': ps['name'],
                         'idcard': ps['idcard'],
-                        'identity_type': roster_map.get(ps['name'], ''),
+                        'identity_type': _get_identity_type(ps, roster_index),
                         'insurances': {
                             k: {'start': v[0], 'end': v[1]}
                             for k, v in ps['insurances'].items()
@@ -1014,12 +1053,24 @@ def retry_task(task_id):
     gen_result = generate_excel(persons, excel_path, roster=roster, company_name=company_name, year_range=year_range)
     yearly_ledger_files = gen_result.get('yearly_ledger_files', [])
 
-    roster_map = {}
+    roster_index = {
+        'idcard_to_entry': {},
+        'name_to_entries': {},
+        'order_idcard': {},
+        'order_name': {},
+    }
     if roster:
-        for item in roster:
+        for idx, item in enumerate(roster):
             nm = item.get('name', '').strip()
+            idc = item.get('idcard', '').strip()
+            if idc:
+                if idc not in roster_index['idcard_to_entry']:
+                    roster_index['idcard_to_entry'][idc] = item
+                    roster_index['order_idcard'][idc] = idx
             if nm:
-                roster_map[nm] = item.get('identity_type', '')
+                roster_index['name_to_entries'].setdefault(nm, []).append(item)
+                if nm not in roster_index['order_name']:
+                    roster_index['order_name'][nm] = idx
 
     # 重新整理文件（包含成功+排除+失败，全部传给 organize_files）
     organize_dir = os.path.join(OUTPUT_DIR, task_id, '参保证明')

@@ -60,23 +60,100 @@ def _fmt_period(start, end):
     return '-'
 
 
-def _build_roster_map(roster):
-    mapping = {}
+def _build_roster_index(roster):
+    """
+    构建花名册索引（优先用身份证号）
+
+    Returns:
+        dict: {
+            'idcard_to_entry': {idcard: entry},  # 身份证号精确匹配
+            'name_to_entries': {name: [entries]},  # 姓名索引（重名时多个）
+            'order_idcard': {idcard: order},  # 身份证号→花名册序号（用于排序）
+            'order_name': {name: order},  # 姓名→花名册序号（兜底排序）
+            'entries': [all entries]  # 全部原始条目
+        }
+    """
+    index = {
+        'idcard_to_entry': {},
+        'name_to_entries': {},
+        'order_idcard': {},
+        'order_name': {},
+        'entries': [],
+    }
     if not roster:
-        return mapping
-    for item in roster:
+        return index
+
+    for i, item in enumerate(roster):
         name = item.get('name', '').strip()
+        idcard = item.get('idcard', '').strip()
+        index['entries'].append(item)
+
+        if idcard:
+            # 同身份证号可能多次出现（合并到第一次出现的）
+            if idcard not in index['idcard_to_entry']:
+                index['idcard_to_entry'][idcard] = item
+                index['order_idcard'][idcard] = i
+
         if name:
-            mapping[name] = item
-    return mapping
+            index['name_to_entries'].setdefault(name, []).append(item)
+            if name not in index['order_name']:
+                index['order_name'][name] = i
+
+    return index
 
 
-def _classify_persons(person_stats, roster_map):
+def _find_in_roster(person, roster_index):
+    """
+    在花名册中查找人员（先按身份证号，再按姓名）
+
+    Args:
+        person: dict {'name', 'idcard'}
+        roster_index: _build_roster_index() 返回的索引
+
+    Returns:
+        matching entry 或 None
+    """
+    if not roster_index or not roster_index['entries']:
+        return None
+
+    idcard = person.get('idcard', '').strip()
+    name = person.get('name', '').strip()
+
+    # 1. 优先按身份证号匹配
+    if idcard and idcard in roster_index['idcard_to_entry']:
+        return roster_index['idcard_to_entry'][idcard]
+
+    # 2. 兜底按姓名匹配（取第一个）
+    if name and name in roster_index['name_to_entries']:
+        entries = roster_index['name_to_entries'][name]
+        if entries:
+            return entries[0]
+
+    return None
+
+
+def _roster_order_for(person, roster_index):
+    """
+    返回人员在花名册中的序号位置（用于按花名册顺序排序）
+
+    优先按身份证号，否则按姓名
+    """
+    idcard = person.get('idcard', '').strip()
+    name = person.get('name', '').strip()
+
+    if idcard and idcard in roster_index['order_idcard']:
+        return roster_index['order_idcard'][idcard]
+    if name and name in roster_index['order_name']:
+        return roster_index['order_name'][name]
+    return 99999
+
+
+def _classify_persons(person_stats, roster_index):
+    """将人员匹配到花名册（先按身份证号，再按姓名），返回 (ps, identity_type) 列表"""
     result = []
     for ps in person_stats:
-        name = ps.get('name', '').strip()
-        roster_entry = roster_map.get(name, {})
-        identity_type = roster_entry.get('identity_type', '')
+        entry = _find_in_roster(ps, roster_index)
+        identity_type = entry.get('identity_type', '') if entry else ''
         result.append((ps, identity_type))
     return result
 
@@ -98,7 +175,7 @@ def _get_year_overlap_period(overlap_start, overlap_end, year):
     return start_ym, end_ym
 
 
-def _generate_yearly_ledger(year, classified, roster_map, company_name, output_dir, timestamp):
+def _generate_yearly_ledger(year, classified, roster_index, company_name, output_dir, timestamp):
     """为指定年份生成年度台账（独立Excel文件）
 
     列结构（动态）：
@@ -297,19 +374,14 @@ def _generate_yearly_ledger(year, classified, roster_map, company_name, output_d
 
 def generate_excel(persons, output_path, roster=None, company_name='', year_range=None):
     person_stats, year_cols = calc_all_stats(persons, year_range=year_range)
-    roster_map = _build_roster_map(roster or [])
+    roster_index = _build_roster_index(roster or [])
 
     # ========== 分类人员并按花名册顺序排序 ==========
-    classified = _classify_persons(person_stats, roster_map)
+    classified = _classify_persons(person_stats, roster_index)
 
-    # 按花名册中序号排序
-    if roster:
-        roster_order = {}
-        for i, item in enumerate(roster):
-            name = item.get('name', '').strip()
-            if name and name not in roster_order:
-                roster_order[name] = i
-        classified.sort(key=lambda x: roster_order.get(x[0].get('name', '').strip(), 99999))
+    # 按花名册中序号排序（先按身份证号，再按姓名）
+    if roster_index['entries']:
+        classified.sort(key=lambda x: _roster_order_for(x[0], roster_index))
 
     # ========== 检查是否有退役士兵 ==========
     has_tuiwu = any(identity_type == '自主就业退役士兵' for _, identity_type in classified)
@@ -621,7 +693,7 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
     yearly_ledger_files = []
     for year in year_cols:
         result = _generate_yearly_ledger(
-            year, classified, roster_map, company_name, output_dir, timestamp
+            year, classified, roster_index, company_name, output_dir, timestamp
         )
         if result:
             yearly_ledgers.append(result['filename'])

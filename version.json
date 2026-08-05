@@ -1,15 +1,13 @@
 {
-  "version": "1.1.28",
-  "version_code": 1128,
+  "version": "1.1.29",
+  "version_code": 1129,
   "release_date": "2026-08-05",
   "mandatory": false,
   "changelog": [
-    "v1.1.28 修复 generate_excel 函数签名不匹配导致处理失败：",
-    "1. 根因：v1.1.27 修复了 calc_all_stats 但遗漏了 generate_excel — generate_excel() 函数定义没有 year_range 参数",
-    "2. 报错：generate_excel() got an unexpected keyword argument 'year_range'",
-    "3. 修复：generate_excel 增加 year_range=None 参数",
-    "4. 修复：generate_excel 内部将 year_range 传递给 calc_all_stats(year_range=year_range)",
-    "5. 兼容：旧调用 generate_excel(persons, output_path, roster, company_name) 仍可工作（year_range 默认 None）"
+    "v1.1.29 修复社保模块三个核心问题（之前版本已有但丢失的逻辑恢复）：",
+    "1. 图片和花名册匹配逻辑改为以身份证号为核心因素——身份证号匹配则为此人，姓名仅作兜底",
+    "2. 医疗保险图片（城镇职工基本医疗保险参保缴费证明）OCR解析恢复——新增年度+月数表格解析函数",
+    "3. 重叠参保时间段改为选择的时间段与四险重叠时间段的交集——calc_overlap增加year_range参数取交集"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.28"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.29"
 }

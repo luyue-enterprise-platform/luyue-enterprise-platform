@@ -242,117 +242,113 @@ def extract_periods(text):
             if p:
                 periods.append(p)
 
-    # 模式6：表格型医保证明（"缴费年度 | 缴费月份" 多列多行）
-    # 识别特征：文档同时包含"参保状态"、"经办机构"或"总缴费月数"，且有大量 (YYYY, MM) 数字对
-    if not periods:
-        periods.extend(_extract_period_from_table(text))
-
     return periods
 
 
-def _extract_period_from_table(text):
+def extract_period_from_yearly_table(text):
     """
-    表格型医保证明识别（如"城镇职工基本医疗保险参保缴费证明"）：
-    表格列出每一年（3列）和对应缴费月份（3列），月份为0表示未缴费。
-    提取所有"YYYY年MM月"对（MM>0），最早月份作为起始，最晚月份作为截止。
+    从"城镇职工基本医疗保险参保缴费证明"格式中提取时间段
 
-    Args:
-        text: OCR识别的全文文本
+    OCR文本格式（3列布局）：
+        缴费年度 缴费月份 缴费年度 缴费月份 缴费年度 缴费月份
+        2000 0（月） 2010 0（月） 2020 0（月）
+        2023 11（月） 2024 12（月） 2025 12（月）
+        ...
+
+    解析策略：
+    1. 先用"缴费年度"关键词定位表格区域（避免身份证号等长字符串干扰）
+    2. 在表格区域内匹配 (年份, 月份数) 对（必须有"月"字标识）
+    3. 过滤月份数>0的年份（=0表示当年未参保）
+    4. 合并连续年份为一段
+    5. 每年的起止为 (年份-01, 年份-月份数)
 
     Returns:
-        list of (start_ym, end_ym) tuples，如果无法识别返回空列表
+        list of (start_ym, end_ym) 元组列表，按开始时间升序
+        找不到有效记录返回 []
     """
-    # 表格型识别的特征关键词（同时出现多个才视为表格型）
-    table_indicators = ['参保状态', '经办机构', '总缴费月数', '现缴费单位名称', '个人编号']
-    indicator_count = sum(1 for kw in table_indicators if kw in text)
-    if indicator_count < 2:
-        return []  # 特征不足，按非表格处理
+    # 定位表格区域：从"缴费年度"或"缴费月份"后开始
+    table_start = -1
+    for kw in ['缴费年度', '缴费月份']:
+        idx = text.find(kw)
+        if idx >= 0 and (table_start < 0 or idx < table_start):
+            table_start = idx
 
-    # 按行扫描：每行通常格式为 "YYYY MM"（年份+月份），或 "YYYY 0"（未缴费）
-    lines = text.split('\n')
-    paid_months = []
-    # 也支持整行空格分隔的多列场景
-    full_text = text.replace('\n', ' ')
-
-    # 模式A：同行 "YYYY  MM"（空格分隔，月份非0）
-    # 允许多列配对（3对/行）
-    for line in lines:
-        # 找所有4位年份
-        year_matches = list(re.finditer(r'\b(\d{4})\b', line))
-        for i, ym in enumerate(year_matches):
-            year = int(ym.group(1))
-            if not (1990 <= year <= 2050):
-                continue
-            # 在当前年份右侧找1-2位月份数字
-            rest = line[ym.end():]
-            # 月份通常紧跟一个或多个空格
-            m = re.search(r'\s+(\d{1,2})\b', rest)
-            if m:
-                try:
-                    month = int(m.group(1))
-                except ValueError:
-                    continue
-                # 只收集月份为1-12且非0的有效缴费记录
-                if 1 <= month <= 12:
-                    paid_months.append((year, month))
-
-    # 模式B：跨行的 "YYYY\nMM" 形式（OCR经常把每列单独识别）
-    if not paid_months:
-        for i, line in enumerate(lines):
-            year_match = re.match(r'\s*(\d{4})\s*$', line)
-            if year_match:
-                year = int(year_match.group(1))
-                if not (1990 <= year <= 2050):
-                    continue
-                # 在后续若干行查找月份（最多找5行）
-                for j in range(1, min(6, len(lines) - i)):
-                    next_line = lines[i + j].strip()
-                    m = re.match(r'^(\d{1,2})\s*月?$', next_line)
-                    if m:
-                        try:
-                            month = int(m.group(1))
-                        except ValueError:
-                            continue
-                        if 1 <= month <= 12:
-                            paid_months.append((year, month))
-                        break
-
-    if not paid_months:
+    if table_start < 0:
         return []
 
-    # 去重
-    paid_months = list(set(paid_months))
+    table_text = text[table_start:]
 
-    # 取最早年份最早月份、最晚年份最晚月份
-    earliest = min(paid_months, key=lambda x: (x[0], x[1]))
-    latest = max(paid_months, key=lambda x: (x[0], x[1]))
+    # 在表格区域内匹配必须有"月"字的年份+月份数
+    pairs = []
+    pattern = r'(\d{4})[\s\u3000]+(\d{1,2})\s*[（(]?\s*月\s*[）)]?'
+    for m in re.finditer(pattern, table_text):
+        year = int(m.group(1))
+        months = int(m.group(2))
+        if 1900 <= year <= 2100 and 0 <= months <= 12 and months > 0:
+            start = f'{year:04d}-01'
+            end = f'{year:04d}-{months:02d}'
+            pairs.append((start, end, year, months))
 
-    if earliest == latest:
-        return []  # 只有1个月，不构成区间
+    if not pairs:
+        return []
 
-    start_ym = (f'{earliest[0]:04d}-{earliest[1]:02d}', f'{latest[0]:04d}-{latest[1]:02d}')
-    return [start_ym]
+    # 去重：同年多次出现保留最后一次（容错）
+    by_year = {}
+    for start, end, year, months in pairs:
+        if year not in by_year or months > by_year[year][3]:
+            by_year[year] = (start, end, year, months)
+
+    pairs = sorted(by_year.values(), key=lambda x: x[2])
+
+    # 合并连续年份为一段（连续年间隔 = 1 年）
+    merged = []
+    cur_start, cur_end = pairs[0][0], pairs[0][1]
+    for i in range(1, len(pairs)):
+        prev_year = pairs[i - 1][2]
+        cur_year = pairs[i][2]
+        cur_start_i, cur_end_i = pairs[i][0], pairs[i][1]
+        if cur_year == prev_year + 1:
+            cur_end = cur_end_i
+        else:
+            merged.append((cur_start, cur_end))
+            cur_start, cur_end = cur_start_i, cur_end_i
+    merged.append((cur_start, cur_end))
+
+    return merged
 
 
 def get_full_period(text):
     """
     从OCR文本中提取完整参保时间段（取所有时间段的最早起始和最晚截止）
 
+    优先尝试"起始-截止"型时间段（extract_periods），
+    若结果为空，尝试"年份+月数"表格型（城镇职工基本医疗保险证明）。
+
     Returns:
         tuple: (start_ym, end_ym) 如 ('2024-01', '2026-04')，无法提取返回None
     """
     periods = extract_periods(text)
-    if not periods:
-        return None
+    if periods:
+        def ym_key(ym):
+            y, m = map(int, ym.split('-'))
+            return y * 12 + m
 
-    def ym_key(ym):
-        y, m = map(int, ym.split('-'))
-        return y * 12 + m
+        earliest_start = min(periods, key=lambda p: ym_key(p[0]))[0]
+        latest_end = max(periods, key=lambda p: ym_key(p[1]))[1]
+        return earliest_start, latest_end
 
-    earliest_start = min(periods, key=lambda p: ym_key(p[0]))[0]
-    latest_end = max(periods, key=lambda p: ym_key(p[1]))[1]
+    # 回退：年度+月数表格
+    table_periods = extract_period_from_yearly_table(text)
+    if table_periods:
+        def ym_key(ym):
+            y, m = map(int, ym.split('-'))
+            return y * 12 + m
 
-    return earliest_start, latest_end
+        earliest_start = min(table_periods, key=lambda p: ym_key(p[0]))[0]
+        latest_end = max(table_periods, key=lambda p: ym_key(p[1]))[1]
+        return earliest_start, latest_end
+
+    return None
 
 
 # ============ 缴费单位提取 ============
@@ -421,10 +417,7 @@ def parse_ocr_result(text):
 
 def group_by_person(records):
     """
-    将多条OCR解析记录按人员分组
-
-    分组策略：优先按身份证号分组（花名册身份证号与社保图片身份证号一致），
-    身份证号为空时按姓名匹配到已有分组或新建分组。
+    将多条OCR解析记录按人员分组（姓名+身份证号）
 
     Args:
         records: list of parse_ocr_result()返回的dict
@@ -437,74 +430,36 @@ def group_by_person(records):
     """
     persons = {}
 
-    def _merge_insurance(person_key, ins_type, period):
-        """合并险种时间段到指定人员"""
-        if not period:
-            return
-        if ins_type in persons[person_key]['insurances']:
-            old_start, old_end = persons[person_key]['insurances'][ins_type]
-            def ym_key(ym):
-                y, m = map(int, ym.split('-'))
-                return y * 12 + m
-            new_start = min(old_start, period[0], key=ym_key)
-            new_end = max(old_end, period[1], key=ym_key)
-            persons[person_key]['insurances'][ins_type] = (new_start, new_end)
-        else:
-            persons[person_key]['insurances'][ins_type] = period
-
-    # 第一轮：按身份证号分组（仅有身份证号的记录）
-    # 同时建立 姓名 -> 分组key 的映射，供无身份证号的记录回退匹配
-    name_to_key = {}
-
     for rec in records:
         if not rec['name'] or not rec['insurance_type']:
             continue
 
-        idcard = rec['idcard']
-        name = rec['name']
-
-        if idcard:
-            key = f'id:{idcard}'
-            if key not in persons:
-                persons[key] = {
-                    'name': name,
-                    'idcard': idcard,
-                    'insurances': {}
-                }
-            # 记录姓名到key的映射
-            if name and name not in name_to_key:
-                name_to_key[name] = key
-            _merge_insurance(key, rec['insurance_type'], rec['period'])
-
-    # 第二轮：无身份证号的记录，按姓名匹配到已有分组
-    for rec in records:
-        if not rec['name'] or not rec['insurance_type']:
-            continue
-
-        idcard = rec['idcard']
-        name = rec['name']
-
-        if idcard:
-            continue  # 已在第一轮处理
-
-        # 按姓名匹配到已有分组
-        if name and name in name_to_key:
-            key = name_to_key[name]
-            # 补填身份证号（如果之前为空）
-            if not persons[key]['idcard'] and idcard:
-                persons[key]['idcard'] = idcard
-            _merge_insurance(key, rec['insurance_type'], rec['period'])
+        # 用姓名作为分组key（身份证号可能OCR不准）
+        key = rec['name']
+        if key not in persons:
+            persons[key] = {
+                'name': rec['name'],
+                'idcard': rec['idcard'],
+                'insurances': {}
+            }
         else:
-            # 无法匹配到已有分组，新建（以姓名为key）
-            key = f'nm:{name}'
-            if key not in persons:
-                persons[key] = {
-                    'name': name,
-                    'idcard': '',
-                    'insurances': {}
-                }
-                if name and name not in name_to_key:
-                    name_to_key[name] = key
-            _merge_insurance(key, rec['insurance_type'], rec['period'])
+            # 更新身份证号（如果当前为空）
+            if not persons[key]['idcard'] and rec['idcard']:
+                persons[key]['idcard'] = rec['idcard']
+
+        ins_type = rec['insurance_type']
+        period = rec['period']
+        if period:
+            # 如果同一险种有多条记录，取并集（最早起始到最晚截止）
+            if ins_type in persons[key]['insurances']:
+                old_start, old_end = persons[key]['insurances'][ins_type]
+                def ym_key(ym):
+                    y, m = map(int, ym.split('-'))
+                    return y * 12 + m
+                new_start = min(old_start, period[0], key=ym_key)
+                new_end = max(old_end, period[1], key=ym_key)
+                persons[key]['insurances'][ins_type] = (new_start, new_end)
+            else:
+                persons[key]['insurances'][ins_type] = period
 
     return list(persons.values())

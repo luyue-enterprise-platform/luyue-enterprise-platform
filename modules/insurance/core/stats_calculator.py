@@ -22,12 +22,14 @@ def months_between(start, end):
     return ym_to_int(end) - ym_to_int(start) + 1
 
 
-def calc_overlap(insurances):
+def calc_overlap(insurances, year_range=None):
     """
-    计算四险重叠时间段
+    计算四险重叠时间段（与用户选择的年月范围取交集）
 
     Args:
         insurances: dict {险种: (start_ym, end_ym)}
+        year_range: 可选, (start_ym, end_ym) 元组，限制重叠的时间范围
+                   重叠 = 四险重叠 ∩ year_range
 
     Returns:
         dict: {
@@ -48,13 +50,27 @@ def calc_overlap(insurances):
     overlap_start = max(starts, key=ym_to_int)
     overlap_end = min(ends, key=ym_to_int)
 
-    if ym_to_int(overlap_start) <= ym_to_int(overlap_end):
-        months = months_between(overlap_start, overlap_end)
-        return {'overlap_start': overlap_start, 'overlap_end': overlap_end,
-                'overlap_months': months, 'has_overlap': True}
-    else:
+    if ym_to_int(overlap_start) > ym_to_int(overlap_end):
         return {'overlap_start': None, 'overlap_end': None,
                 'overlap_months': 0, 'has_overlap': False}
+
+    # 与用户选择的年月范围取交集
+    if year_range:
+        try:
+            rs, re_ = year_range
+            if ym_to_int(overlap_start) < ym_to_int(rs):
+                overlap_start = rs
+            if ym_to_int(overlap_end) > ym_to_int(re_):
+                overlap_end = re_
+            if ym_to_int(overlap_start) > ym_to_int(overlap_end):
+                return {'overlap_start': None, 'overlap_end': None,
+                        'overlap_months': 0, 'has_overlap': False}
+        except (ValueError, TypeError, AttributeError):
+            pass
+
+    months = months_between(overlap_start, overlap_end)
+    return {'overlap_start': overlap_start, 'overlap_end': overlap_end,
+            'overlap_months': months, 'has_overlap': True}
 
 
 def year_overlap_months(overlap_start, overlap_end, year):
@@ -118,17 +134,18 @@ def get_overlap_years(persons_overlaps, year_range=None):
     return sorted(all_years)
 
 
-def calc_person_stats(person):
+def calc_person_stats(person, year_range=None):
     """
     计算单个人的完整统计信息
 
     Args:
         person: dict {'name', 'idcard', 'insurances': {险种: (start, end)}}
+        year_range: 可选, (start_ym, end_ym) 元组，限制重叠的时间范围
 
     Returns:
         dict: 完整统计信息
     """
-    overlap = calc_overlap(person['insurances'])
+    overlap = calc_overlap(person['insurances'], year_range=year_range)
 
     # 确定年度列
     years = []
@@ -168,7 +185,7 @@ def calc_all_stats(persons, year_range=None):
     Returns:
         tuple: (list of person_stats, list of year_columns)
     """
-    person_stats = [calc_person_stats(p) for p in persons]
+    person_stats = [calc_person_stats(p, year_range=year_range) for p in persons]
     all_years = get_overlap_years(
         [ps for ps in person_stats if ps['has_overlap']],
         year_range=year_range
