@@ -1,14 +1,15 @@
 {
-  "version": "1.1.24",
-  "version_code": 1124,
+  "version": "1.1.25",
+  "version_code": 1125,
   "release_date": "2026-08-05",
   "mandatory": false,
   "changelog": [
-    "v1.1.24 修复其他电脑首次注册不要求邀请码的问题：",
-    "1. 注册时始终要求邀请码，不再因远程服务器不可达而跳过验证",
-    "2. 首位管理员使用预置邀请码注册（如LYA3K7M2等）",
-    "3. create_user本地回退时正确使用is_admin参数（之前硬编码为0）",
-    "4. 移除无邀请码的首次注册分支，消除安全漏洞"
+    "v1.1.25 恢复首次注册免邀请码+其他电脑必须邀请码：",
+    "1. 首次注册（全局无用户）不需要邀请码，直接注册为管理员",
+    "2. 其他任何电脑注册必须输入有效邀请码",
+    "3. 新增is_first_registration()：远程可达且count==0才算首次，远程不可达则要求邀请码",
+    "4. create_user本地回退增加首次注册分支（无邀请码+管理员+本地无用户）",
+    "5. create_user本地模式增加安全检查：无邀请码的管理员注册仅在本地无用户时允许"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.24"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.25"
 }

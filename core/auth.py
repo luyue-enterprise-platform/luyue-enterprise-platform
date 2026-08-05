@@ -255,10 +255,38 @@ def create_user(username, password, is_admin=False, invite_code=''):
                 except Exception as e:
                     conn.close()
                     return None, f'本地注册失败: {e}'
+        elif is_admin:
+            # 首次注册（无邀请码，管理员）：本地无用户时允许注册
+            local_count = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+            if local_count == 0:
+                _log_fallback('注册', status, result.get('error', ''))
+                try:
+                    conn.execute(
+                        'INSERT INTO users (username, password_hash, is_admin, created_at) '
+                        'VALUES (?, ?, ?, ?)',
+                        (username, _hash_password(password), 1,
+                         datetime.now().isoformat())
+                    )
+                    conn.commit()
+                    uid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                    conn.close()
+                    return uid, None
+                except sqlite3.IntegrityError:
+                    conn.close()
+                    return None, '用户名已存在'
+                except Exception as e:
+                    conn.close()
+                    return None, f'本地注册失败: {e}'
         conn.close()
         return None, result.get('error', '注册失败')
     # 本地模式
     conn = get_db()
+    # 安全检查：无邀请码的管理员注册仅在本地无用户时允许（防止绕过）
+    if is_admin and not invite_code:
+        local_count = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+        if local_count > 0:
+            conn.close()
+            return None, '请联系管理员获取邀请码'
     try:
         conn.execute(
             'INSERT INTO users (username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?)',
@@ -331,6 +359,35 @@ def get_user_count():
     count = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
     conn.close()
     return count
+
+
+def is_first_registration():
+    """判断是否为首次注册（全局无任何用户）。
+
+    远程模式：远程服务器必须可达且返回 count==0，才算首次注册。
+    远程不可达时无法确认全局用户数，保守判断为非首次（要求邀请码），
+    防止其他电脑因远程不可达而绕过邀请码验证。
+    本地模式：本地数据库无用户即为首次注册。
+    """
+    if _is_remote():
+        result, status = _remote_request('/api/auth/user_count', method='GET')
+        if status == 200:
+            remote_count = result.get('count', 0)
+            if remote_count > 0:
+                return False
+            # 远程返回0，检查本地是否也无用户
+            conn = get_db()
+            local_count = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+            conn.close()
+            return local_count == 0
+        # 远程不可达：无法确认是否首次注册，保守判断为非首次（要求邀请码）
+        _log_fallback('判断首次注册', status, result.get('error', ''))
+        return False
+    # 本地模式
+    conn = get_db()
+    count = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+    conn.close()
+    return count == 0
 
 
 def generate_invite_code(created_by, note=''):

@@ -17,7 +17,7 @@
 
             {% if is_first %}
             <div class="auth-info">
-                系统首次使用，请输入预置邀请码进行注册，您将注册为管理员账号。<br>
+                系统首次使用，您将注册为管理员账号。<br>
                 注册成功后，可在系统中生成邀请码邀请其他用户。
             </div>
             {% else %}
@@ -31,10 +31,12 @@
             {% endif %}
 
             <form method="POST" action="/register" class="auth-form">
+                {% if not is_first %}
                 <div class="form-group">
                     <label>邀请码</label>
                     <input type="text" name="invite_code" placeholder="请输入邀请码" required>
                 </div>
+                {% endif %}
                 <div class="form-group">
                     <label>账号</label>
                     <input type="text" name="username" placeholder="设置账号（3-20位字母/数字）" required pattern="[A-Za-z0-9_]{3,20}">

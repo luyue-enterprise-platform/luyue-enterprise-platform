@@ -95,7 +95,8 @@ from flask import request, jsonify, render_template, session, redirect, url_for
 from core.auth import (
     create_user, verify_user, get_user_count,
     validate_invite_code, consume_invite_code,
-    login_required, admin_required, get_remote_token
+    login_required, admin_required, get_remote_token,
+    is_first_registration,
 )
 
 # ============ 记住密码：后端文件存储（localStorage 的可靠备份） ============
@@ -177,6 +178,7 @@ def login():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     user_count = get_user_count()
+    is_first = is_first_registration()
 
     if request.method == 'POST':
         if request.is_json:
@@ -193,59 +195,78 @@ def register():
             if request.is_json:
                 return jsonify({'error': err}), 400
             return render_template('register.html', user_count=user_count,
-                                  is_first=(user_count == 0), error=err)
+                                  is_first=is_first, error=err)
         if len(password) < 6:
             err = '密码至少6位'
             if request.is_json:
                 return jsonify({'error': err}), 400
             return render_template('register.html', user_count=user_count,
-                                  is_first=(user_count == 0), error=err)
+                                  is_first=is_first, error=err)
         if password != confirm_password:
             err = '两次输入的密码不一致'
             if request.is_json:
                 return jsonify({'error': err}), 400
             return render_template('register.html', user_count=user_count,
-                                  is_first=(user_count == 0), error=err)
+                                  is_first=is_first, error=err)
 
-        # 始终要求邀请码（首位管理员使用预置邀请码注册）
-        invite_code = data.get('invite_code', '').strip()
-        if not invite_code:
-            err = '请输入邀请码'
-            if request.is_json:
-                return jsonify({'error': err}), 400
-            return render_template('register.html', user_count=user_count,
-                                  is_first=(user_count == 0), error=err)
-        if not validate_invite_code(invite_code):
-            err = '邀请码无效或已被使用'
-            if request.is_json:
-                return jsonify({'error': err}), 400
-            return render_template('register.html', user_count=user_count,
-                                  is_first=(user_count == 0), error=err)
+        # 判断是否首次注册（远程可达且count==0才算首次，远程不可达则要求邀请码）
 
-        is_first = (user_count == 0)
-        # 远程模式下将邀请码传给 create_user
-        uid, err2 = create_user(username, password,
-                                is_admin=is_first, invite_code=invite_code)
-        if uid is None:
-            err_msg = err2 or '用户名已存在'
+        if is_first:
+            # 首次注册：不需要邀请码，注册为管理员
+            uid, err2 = create_user(username, password, is_admin=True)
+            if uid is None:
+                err_msg = err2 or '用户名已存在'
+                if request.is_json:
+                    return jsonify({'error': err_msg}), 400
+                return render_template('register.html', user_count=user_count,
+                                      is_first=True, error=err_msg)
+            session['user_id'] = uid
+            session['username'] = username
+            session['is_admin'] = True
+            # 远程模式：存储 API token 到 session
+            remote_token = get_remote_token()
+            if remote_token:
+                session['_auth_token'] = remote_token
             if request.is_json:
-                return jsonify({'error': err_msg}), 400
-            return render_template('register.html', user_count=user_count,
-                                  is_first=is_first, error=err_msg)
-        consume_invite_code(invite_code, uid)
-        session['user_id'] = uid
-        session['username'] = username
-        session['is_admin'] = is_first
-        # 远程模式：存储 API token 到 session
-        remote_token = get_remote_token()
-        if remote_token:
-            session['_auth_token'] = remote_token
-        if request.is_json:
-            return jsonify({'ok': True})
-        return redirect('/')
+                return jsonify({'ok': True})
+            return redirect('/')
+        else:
+            # 非首次注册：必须输入邀请码
+            invite_code = data.get('invite_code', '').strip()
+            if not invite_code:
+                err = '请输入邀请码'
+                if request.is_json:
+                    return jsonify({'error': err}), 400
+                return render_template('register.html', user_count=user_count,
+                                      is_first=False, error=err)
+            if not validate_invite_code(invite_code):
+                err = '邀请码无效或已被使用'
+                if request.is_json:
+                    return jsonify({'error': err}), 400
+                return render_template('register.html', user_count=user_count,
+                                      is_first=False, error=err)
+            uid2, err3 = create_user(username, password,
+                                     is_admin=False, invite_code=invite_code)
+            if uid2 is None:
+                err_msg2 = err3 or '用户名已存在'
+                if request.is_json:
+                    return jsonify({'error': err_msg2}), 400
+                return render_template('register.html', user_count=user_count,
+                                      is_first=False, error=err_msg2)
+            consume_invite_code(invite_code, uid2)
+            session['user_id'] = uid2
+            session['username'] = username
+            session['is_admin'] = False
+            # 远程模式：存储 API token 到 session
+            remote_token2 = get_remote_token()
+            if remote_token2:
+                session['_auth_token'] = remote_token2
+            if request.is_json:
+                return jsonify({'ok': True})
+            return redirect('/')
 
     return render_template('register.html', user_count=user_count,
-                          is_first=(user_count == 0))
+                          is_first=is_first_registration())
 
 
 @app.route('/logout')
