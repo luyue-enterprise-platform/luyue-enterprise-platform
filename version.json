@@ -1,12 +1,14 @@
 {
-  "version": "1.1.30",
-  "version_code": 1130,
+  "version": "1.1.31",
+  "version_code": 1131,
   "release_date": "2026-08-05",
   "mandatory": false,
   "changelog": [
-    "v1.1.30 修复劳动合同模块添加文件bug：",
-    "先添加文件夹后再无法继续添加单个文件——去重检查直接访问sf.file.name但文件夹文件的sf.file为null导致JS异常",
-    "修复：去重检查改为兼容写法 sf.file ? sf.file.name : sf.name"
+    "v1.1.31 调整社保模块总台账Excel表格格式：",
+    "1. 行高：第1行55、第2行40、第3行起均为25",
+    "2. 字体统一为宋体，第1行和第2行加粗",
+    "3. 去除所有背景色，字体颜色均为黑色",
+    "4. 序号结束后下一行合并A:B列并添加"结束标识""
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.30"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.31"
 }

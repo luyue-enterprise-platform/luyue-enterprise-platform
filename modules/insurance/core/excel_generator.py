@@ -16,9 +16,7 @@ def _thin_border():
 
 
 def _style_header(cell):
-    cell.font = Font(bold=True, size=11, color='FFFFFF')
-    cell.fill = PatternFill(start_color='2E5C8A', end_color='2E5C8A',
-                            fill_type='solid')
+    cell.font = Font(bold=True, size=11, color='000000', name='宋体')
     cell.alignment = Alignment(horizontal='center', vertical='center',
                                wrap_text=True)
     cell.border = _thin_border()
@@ -30,28 +28,25 @@ def _style_cell(cell, center=True, bold=False):
         vertical='center', wrap_text=True
     )
     cell.border = _thin_border()
-    cell.font = Font(size=10, bold=bold)
+    cell.font = Font(size=10, bold=bold, color='000000', name='宋体')
 
 
 def _style_summary_label(cell):
-    cell.font = Font(bold=True, size=10, color='2E5C8A')
+    cell.font = Font(bold=True, size=10, color='000000', name='宋体')
     cell.alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
     cell.border = _thin_border()
-    cell.fill = PatternFill(start_color='E8F0FE', end_color='E8F0FE', fill_type='solid')
 
 
 def _style_summary_cell(cell):
-    cell.font = Font(bold=True, size=10)
+    cell.font = Font(bold=True, size=10, color='000000', name='宋体')
     cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     cell.border = _thin_border()
-    cell.fill = PatternFill(start_color='E8F0FE', end_color='E8F0FE', fill_type='solid')
 
 
 def _style_grand_total_cell(cell):
-    cell.font = Font(bold=True, size=10, color='FFFFFF')
+    cell.font = Font(bold=True, size=10, color='000000', name='宋体')
     cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     cell.border = _thin_border()
-    cell.fill = PatternFill(start_color='2E5C8A', end_color='2E5C8A', fill_type='solid')
 
 
 def _fmt_period(start, end):
@@ -446,18 +441,19 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_col_count)
     title_cell = ws.cell(row=1, column=1, value=title_text)
-    title_cell.font = Font(bold=True, size=16, color='2E5C8A', name='微软雅黑')
+    title_cell.font = Font(bold=True, size=16, color='000000', name='宋体')
     title_cell.alignment = Alignment(horizontal='center', vertical='center')
-    title_cell.fill = PatternFill(start_color='F0F5FF', end_color='F0F5FF', fill_type='solid')
-    title_bottom = Side(style='thin', color='2E5C8A')
+    title_bottom = Side(style='thin', color='999999')
     for col in range(1, total_col_count + 1):
         cell = ws.cell(row=1, column=col)
         cell.border = Border(bottom=title_bottom)
+    ws.row_dimensions[1].height = 55
 
     # ========== 表头行（第2行）==========
     ws.append(headers)
     for cell in ws[2]:
         _style_header(cell)
+    ws.row_dimensions[2].height = 40
 
     # ========== 人员身份类型下拉验证 ==========
     dv = DataValidation(
@@ -514,6 +510,7 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
         ws.append(row)
         for cell in ws[ws.max_row]:
             _style_cell(cell)
+        ws.row_dimensions[row_num].height = 25
 
         dv.add(f'D{row_num}')
 
@@ -557,7 +554,15 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
     if tuwu_stats:
         tuwu_stats['label'] = '自主就业退役士兵'
 
-    ws.append([])
+    # ========== 结束标识行：序号完结后的下一行，合并第一列和第二列 ==========
+    end_row = last_data_row + 1
+    ws.merge_cells(start_row=end_row, start_column=1, end_row=end_row, end_column=2)
+    end_cell = ws.cell(row=end_row, column=1, value='结束标识')
+    end_cell.font = Font(size=10, color='000000', name='宋体')
+    end_cell.alignment = Alignment(horizontal='center', vertical='center')
+    for col in range(1, total_col_count + 1):
+        ws.cell(row=end_row, column=col).border = _thin_border()
+    ws.row_dimensions[end_row].height = 25
 
     summary_types = []
     if tupin_stats:
@@ -675,6 +680,10 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
         ws.append(total_row)
         for cell in ws[ws.max_row]:
             _style_grand_total_cell(cell)
+
+    # ========== 行高：第三行开始全部25 ==========
+    for row_idx in range(3, ws.max_row + 1):
+        ws.row_dimensions[row_idx].height = 25
 
     # ========== 列宽 ==========
     for i, w in enumerate(widths):
