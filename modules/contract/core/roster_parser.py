@@ -150,18 +150,13 @@ def _extract_roster_from_rows(rows):
         persons.append({'name': name, 'idcard': idcard, '_raw_seq': seq})
         seen_names.add(name)
     
-    # 按原始序号排序，缺失序号的排最后
-    def sort_key(p):
-        s = p.get('_raw_seq')
-        if s is not None:
-            return (0, s)
-        return (1, 0)
-    
-    persons.sort(key=sort_key)
-    
-    # 重新编号
+    # 保持花名册原有顺序，不进行自动排序
+    # 使用花名册中的原始序号；无序号列则按出现顺序自动编号
     for i, p in enumerate(persons):
-        p['seq'] = i + 1
+        if p.get('_raw_seq') is not None:
+            p['seq'] = p['_raw_seq']
+        else:
+            p['seq'] = i + 1
         del p['_raw_seq']
     
     logger.info(f'花名册解析完成：共 {len(persons)} 人')

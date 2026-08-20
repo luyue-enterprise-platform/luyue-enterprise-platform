@@ -11,6 +11,36 @@ logger = logging.getLogger(__name__)
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.tif', '.webp'}
 
 
+def _extract_name(raw_name):
+    """从原始名称中提取姓名，支持"序号+姓名"格式
+
+    处理格式：
+      - "01张三"     -> "张三"
+      - "1-张三"     -> "张三"
+      - "01.张三"    -> "张三"
+      - "1 张三"     -> "张三"
+      - "张三"       -> "张三"
+      - "张三_劳动合同" -> "张三"
+      - "张三劳动合同.pdf_p1" -> "张三"
+      - "扫描件_张三"  -> "张三"
+    """
+    name = raw_name.strip()
+
+    # 去掉PDF转换后缀 (如 xxx.pdf_p1)
+    name = re.sub(r'_p\d+$', '', name)
+
+    # 去掉常见业务前缀
+    name = re.sub(r'^(扫描件|合同|劳动合同|合同书|协议)[_\-\s]*', '', name)
+
+    # 剥离开头的序号部分 (支持 01、1、001 等数字 + 分隔符)
+    name = re.sub(r'^\d+[\.\-_\s]*', '', name)
+
+    # 提取连续中文字符作为姓名
+    chinese_part = re.findall(r'[\u4e00-\u9fa5]{2,4}', name)
+
+    return chinese_part[0] if chinese_part else name.strip()
+
+
 def rename_contract_images(file_paths, roster, output_dir, folder_hints=None):
     """按花名册顺序对劳动合同图片重命名
 
@@ -54,21 +84,13 @@ def rename_contract_images(file_paths, roster, output_dir, folder_hints=None):
         # 优先使用文件夹名作为姓名来源
         folder_name = (folder_hints or {}).get(fp, '')
         if folder_name:
-            # 文件夹名即为姓名，直接使用
-            guessed_name = folder_name.strip()
+            # 文件夹名可能为"序号+姓名"格式（如"01张三"），剥离序号只取姓名
+            guessed_name = _extract_name(folder_name)
             file_info.append((fp, basename, guessed_name, 'folder'))
             continue
 
         # 尝试从文件名中提取姓名
-        # 常见格式: "张三.png", "张三.jpg", "张三劳动合同.pdf_p1.png"
-        # 去掉PDF转换后缀
-        clean_name = re.sub(r'_p\d+$', '', name_no_ext)
-        # 去掉可能的前缀（如扫描件_、合同_等）
-        clean_name = re.sub(r'^(扫描件|合同|劳动合同|合同书|协议)_*', '', clean_name)
-        # 提取中文字符作为姓名
-        chinese_part = re.findall(r'[\u4e00-\u9fa5]{2,4}', clean_name)
-
-        guessed_name = chinese_part[0] if chinese_part else clean_name
+        guessed_name = _extract_name(name_no_ext)
         file_info.append((fp, basename, guessed_name, 'filename'))
 
     # 按花名册分组：每个花名册人员对应哪些文件
