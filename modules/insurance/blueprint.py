@@ -297,24 +297,27 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                 pass
 
         # ===== 关键：过滤掉缴费单位不一致的图片，不计入有效统计 =====
+        # v1.1.34: 单位一致性校验对【养老保险、失业保险】生效（现缴费单位去括号后比对）；
+        # 其余险种证明只读取缴费单位名称和参保时间段，不做排除
         company_mismatch_files = []
         valid_results = []
         if final_company:
             for r in success_results:
                 cn = r.get('company_name', '').strip()
-                if cn and cn != final_company:
-                    # 缴费单位不一致 → 排除，不计入统计
+                need_check = (r.get('insurance_type') in ('养老保险', '失业保险'))
+                if need_check and cn and cn != final_company:
+                    # 养老/失业保险缴费单位不一致 → 排除，不计入统计
                     company_mismatch_files.append({
                         'filename': r.get('filename', ''),
                         'ocr_company': cn,
                         'expected_company': final_company,
                     })
                     logger.warning(
-                        f'[task:{task_id}] 排除不一致文件: {r.get("filename","")} '
+                        f'[task:{task_id}] 排除不一致文件(养老/失业): {r.get("filename","")} '
                         f'(缴费单位="{cn}", 期望="{final_company}")'
                     )
                 else:
-                    # 缴费单位一致（或无公司名信息）→ 保留
+                    # 其他险种 / 单位一致（或无公司名信息）→ 保留
                     valid_results.append(r)
         else:
             # 没有识别到任何缴费单位，全部保留（兼容性处理）
@@ -351,6 +354,30 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
         with tasks_lock:
             tasks[task_id]['message'] = '正在统计计算...'
         persons = group_by_person(valid_results)
+
+        # v1.1.34: 花名册补全 — 参保证明中没有对应人员时，花名册姓名保留、参保证明时间段留空；
+        # 身份证号统一以花名册为准（保证与花名册一致）
+        if roster:
+            persons_by_name = {p['name']: p for p in persons}
+            roster_added = 0
+            for item in roster:
+                r_name = item.get('name', '').strip()
+                if not r_name:
+                    continue
+                r_idcard = item.get('idcard', '').strip()
+                if r_name in persons_by_name:
+                    if r_idcard:
+                        persons_by_name[r_name]['idcard'] = r_idcard
+                else:
+                    persons.append({
+                        'name': r_name,
+                        'idcard': r_idcard,
+                        'insurances': {},
+                    })
+                    roster_added += 1
+            if roster_added:
+                logger.info(f'[task:{task_id}] 花名册补全: 新增 {roster_added} 名无参保证明人员（时间段留空）')
+
         person_stats, year_cols = calc_all_stats(persons, year_range)
 
         # 生成Excel
@@ -596,10 +623,8 @@ def upload_roster():
         except Exception as e:
             errors.append(f'{f.filename}: {str(e)}')
 
-    # 按序号排序并重新编号
-    all_roster.sort(key=lambda x: x.get('seq', 999))
-    for i, item in enumerate(all_roster):
-        item['seq'] = i + 1
+    # v1.1.34: 严格保持花名册原始顺序与原始序号，不排序、不重新编号
+    # （多文件合并时按上传顺序拼接，序号用花名册原始值）
 
     # 提取花名册中的公司名
     roster_company = ''
@@ -1011,15 +1036,16 @@ def retry_task(task_id):
 
     logger.info(f'[task:{task_id}] 补充识别 — 新成功: {len(retry_success)}, 仍失败: {len(retry_failed)}, 合并后总成功: {len(all_success)}')
 
-    # ===== 缴费单位过滤（与 process_task 一致） =====
+    # ===== 缴费单位过滤（与 process_task 一致：仅对养老保险、失业保险做单位一致性校验） =====
     company_name = old_result.get('company_name', '')
     company_mismatch_files = list(old_result.get('company_mismatch_files', []))
     valid_results = []
     if company_name:
         for r in all_success:
             cn = r.get('company_name', '').strip()
-            if cn and cn != company_name:
-                # 缴费单位不一致 → 排除
+            need_check = (r.get('insurance_type') in ('养老保险', '失业保险'))
+            if need_check and cn and cn != company_name:
+                # 养老/失业保险缴费单位不一致 → 排除
                 company_mismatch_files.append({
                     'filename': r.get('filename', ''),
                     'ocr_company': cn,
@@ -1043,6 +1069,25 @@ def retry_task(task_id):
     # 重新统计（仅用缴费单位验证通过的结果）
     year_range = old_result.get('_year_range', None)
     persons = group_by_person(valid_results)
+
+    # v1.1.34: 花名册补全 — 同 process_task（无参保证明人员姓名保留、时间段留空，身份证号以花名册为准）
+    if roster:
+        persons_by_name = {p['name']: p for p in persons}
+        for item in roster:
+            r_name = item.get('name', '').strip()
+            if not r_name:
+                continue
+            r_idcard = item.get('idcard', '').strip()
+            if r_name in persons_by_name:
+                if r_idcard:
+                    persons_by_name[r_name]['idcard'] = r_idcard
+            else:
+                persons.append({
+                    'name': r_name,
+                    'idcard': r_idcard,
+                    'insurances': {},
+                })
+
     person_stats, year_cols = calc_all_stats(persons, year_range)
 
     # 重新生成Excel（保留补传前识别到的缴费单位）
@@ -1093,7 +1138,7 @@ def retry_task(task_id):
                 {
                     'name': ps['name'],
                     'idcard': ps['idcard'],
-                    'identity_type': roster_map.get(ps['name'], ''),
+                    'identity_type': _get_identity_type(ps, roster_index),
                     'insurances': {
                         k: {'start': v[0], 'end': v[1]}
                         for k, v in ps['insurances'].items()

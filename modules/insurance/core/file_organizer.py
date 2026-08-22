@@ -7,7 +7,7 @@
 import os
 import shutil
 
-from .roster_parser import match_person_to_roster
+from .roster_parser import match_person_to_roster, match_record_to_roster
 
 # 险种对应的文件夹名
 INSURANCE_FOLDER_MAP = {
@@ -161,10 +161,11 @@ def organize_files(ocr_results, roster, output_dir):
             })
             continue
 
-        # 匹配花名册
+        # 匹配花名册（v1.1.34: 身份证号优先匹配，姓名匹配兜底）
+        # 身份证号一致 → 图片命名为"花名册中序号+姓名"（格式保持 序号-姓名）
         matched = None
         if roster:
-            matched = match_person_to_roster(name, roster)
+            matched = match_record_to_roster(rec, roster)
 
         if matched:
             seq_str = f'{matched["seq"]:02d}'

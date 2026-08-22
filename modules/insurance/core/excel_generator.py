@@ -273,12 +273,16 @@ def _generate_yearly_ledger(year, classified, roster_index, company_name, output
         year_months = ps['yearly_months'].get(year, 0)
         rate = RATE_TUIWU if identity_type == '自主就业退役士兵' else RATE_TUPIN
 
+        # v1.1.34: 序号用花名册原始序号（与姓名一一对应，不修改），未匹配到花名册时用行号
+        _entry = _find_in_roster(ps, roster_index)
+        seq_val = (_entry.get('seq') or idx + 1) if _entry else idx + 1
+
         # 构建行数据
         if has_tuiwu_year:
-            row = [idx + 1, ps['name'], ps['idcard'], identity_type, '', '',
+            row = [seq_val, ps['name'], ps['idcard'], identity_type, '', '',
                    year_period, year_months, f'=H{row_num}*{rate}']
         else:
-            row = [idx + 1, ps['name'], ps['idcard'], identity_type,
+            row = [seq_val, ps['name'], ps['idcard'], identity_type,
                    year_period, year_months, f'=F{row_num}*{rate}']
 
         for col_idx, value in enumerate(row, start=1):
@@ -472,8 +476,12 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
         row_num = idx + 3
         last_data_row = row_num
 
+        # v1.1.34: 序号用花名册原始序号（与姓名一一对应，不修改），未匹配到花名册时用行号
+        _entry = _find_in_roster(ps, roster_index)
+        seq_val = (_entry.get('seq') or idx + 1) if _entry else idx + 1
+
         # 基础信息
-        row = [idx + 1, ps['name'], ps['idcard'], identity_type]
+        row = [seq_val, ps['name'], ps['idcard'], identity_type]
 
         # 退役证编号和退役时间（仅在有退役士兵时显示）
         if has_tuiwu:

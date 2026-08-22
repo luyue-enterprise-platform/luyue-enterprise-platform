@@ -582,19 +582,31 @@ def get_full_period_from_items(items):
 
 
 # ============ 缴费单位提取 ============
+def _strip_parentheses(text):
+    """
+    去掉公司名称中的括号及括号内内容，只保留括号外的名称
+    例如: "鲁岳企业服务有限公司（济南分公司）" -> "鲁岳企业服务有限公司"
+    """
+    if not text:
+        return text
+    result = re.sub(r'[（(][^（）()]*[）)]', '', text)
+    return result.strip()
+
+
 def extract_company_name(text):
     """
     从OCR文本中提取缴费单位/参保单位名称
 
-    策略：查找"缴费单位"或"参保单位"关键词，提取后面的单位名称
+    策略：查找"现缴费单位"/"缴费单位"或"参保单位"关键词，提取后面的单位名称。
+    v1.1.34: "现缴费单位"关键词优先；提取结果去掉括号及括号内内容（只取括号外公司名）。
 
     Returns:
         str: 单位名称，未找到返回空字符串
     """
     lines = text.split('\n')
-    # 长关键词优先，避免"缴费单位名称"被"缴费单位"误匹配
-    keywords = ['缴费单位名称', '参保单位名称', '缴费单位', '参保单位',
-                '用人单位', '单位名称', '单位:', '单位：']
+    # 长关键词优先，避免"缴费单位名称"被"缴费单位"误匹配；"现缴费单位"最优先
+    keywords = ['现缴费单位名称', '现缴费单位', '缴费单位名称', '参保单位名称',
+                '缴费单位', '参保单位', '用人单位', '单位名称', '单位:', '单位：']
 
     for i, line in enumerate(lines):
         for kw in keywords:
@@ -606,13 +618,13 @@ def extract_company_name(text):
                 # 取非空白内容，通常单位名是中文
                 m = re.match(r'([\u4e00-\u9fa5\w\(\)（）\u00b7·]{2,40})', after)
                 if m:
-                    return m.group(1)
+                    return _strip_parentheses(m.group(1))
                 # 如果当前行后面内容不够，看下一行
                 if i + 1 < len(lines):
                     next_line = lines[i + 1].strip()
                     m = re.match(r'([\u4e00-\u9fa5\w\(\)（）\u00b7·]{2,40})', next_line)
                     if m:
-                        return m.group(1)
+                        return _strip_parentheses(m.group(1))
 
     return ''
 

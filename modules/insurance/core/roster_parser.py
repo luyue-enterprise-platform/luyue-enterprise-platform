@@ -12,7 +12,7 @@ def parse_roster_from_table(file_path):
     - Excel (.xlsx, .xls) — 使用openpyxl读取
     - CSV (.csv) — 使用csv模块读取
 
-    表格中自动识别"姓名"列，若有序号列则按序号排序，否则按行顺序编号。
+    表格中自动识别"姓名"列，严格保持原始行顺序与原始序号（不排序、不重新编号）。
 
     Returns:
         list of dict: [{'seq': 1, 'name': '张三', 'idcard': '...'}, ...]
@@ -168,10 +168,7 @@ def _extract_roster_from_rows(rows):
             })
             seen_names.add(name_val)
 
-    # 按序号排序后重新编号
-    roster.sort(key=lambda x: x['seq'])
-    for i, item in enumerate(roster):
-        item['seq'] = i + 1
+    # v1.1.34: 严格保持花名册原始顺序，序号用花名册原始值，不排序不重新编号
 
     return roster
 
@@ -249,12 +246,7 @@ def parse_roster(text):
                     roster.append({'seq': len(roster) + 1, 'name': name})
                     seen_names.add(name)
 
-    # 按序号排序
-    roster.sort(key=lambda x: x['seq'])
-
-    # 重新编号（确保连续）
-    for i, item in enumerate(roster):
-        item['seq'] = i + 1
+    # v1.1.34: 严格保持原始顺序，序号用原始值，不排序不重新编号
 
     return roster
 
@@ -269,6 +261,18 @@ def _is_header_word(word):
                     '起止', '月数', '重叠', '编号', '类型', '险种',
                     '个人', '单位', '缴费', '合计', '总计', '金额'}
     return word in header_words
+
+
+def _strip_parentheses(text):
+    """
+    去掉公司名称中的括号及括号内内容，只保留括号外的名称
+    例如: "鲁岳企业服务有限公司（济南分公司）" -> "鲁岳企业服务有限公司"
+    同时去除首尾空白
+    """
+    if not text:
+        return text
+    result = re.sub(r'[（(][^（）()]*[）)]', '', text)
+    return result.strip()
 
 
 def extract_roster_company_name(file_path):
@@ -296,7 +300,7 @@ def extract_roster_company_name(file_path):
             m = re.search(r'([\u4e00-\u9fa5\w\(\)（）·]{2,30}(?:公司|企业|集团|厂|店|中心|事务所))', sheet_name)
             if m:
                 wb.close()
-                return m.group(1)
+                return _strip_parentheses(m.group(1))
 
             # 策略2: 检查第一行（可能是标题行，如"XXXX公司人员花名册"）
             for row in ws.iter_rows(min_row=1, max_row=3, values_only=True):
@@ -306,7 +310,7 @@ def extract_roster_company_name(file_path):
                         m = re.search(r'([\u4e00-\u9fa5\w\(\)（）·]{2,30}(?:公司|企业|集团|厂|店|中心|事务所))', cell_str)
                         if m:
                             wb.close()
-                            return m.group(1)
+                            return _strip_parentheses(m.group(1))
 
             wb.close()
         except Exception:
@@ -322,7 +326,7 @@ def extract_roster_company_name(file_path):
                             if line:
                                 m = re.search(r'([\u4e00-\u9fa5\w\(\)（）·]{2,30}(?:公司|企业|集团|厂|店|中心|事务所))', line)
                                 if m:
-                                    return m.group(1)
+                                    return _strip_parentheses(m.group(1))
                     break
                 except (UnicodeDecodeError):
                     continue
@@ -334,7 +338,7 @@ def extract_roster_company_name(file_path):
 
 def match_person_to_roster(name, roster):
     """
-    将OCR识别出的姓名匹配到花名册中的序号
+    将OCR识别出的姓名匹配到花名册中的序号（仅按姓名匹配，旧接口保留兼容）
 
     Returns:
         dict or None: {'seq': 序号, 'name': 花名册中的姓名} 或 None（未匹配）
@@ -355,26 +359,44 @@ def match_person_to_roster(name, roster):
     return None
 
 
-def match_person_to_roster_by_idcard(idcard, name, roster):
+def match_record_to_roster(rec, roster):
     """
-    优先按身份证号匹配花名册，身份证号为空时回退到姓名匹配
+    将OCR识别出的参保记录匹配到花名册（v1.1.34：身份证号优先）
+
+    匹配优先级：
+    1. 身份证号精确匹配（rec['idcard'] 与花名册 item['idcard']，双方均非空）
+    2. 姓名精确匹配
+    3. 姓名模糊匹配（OCR可能有误差）
 
     Args:
-        idcard: OCR识别出的身份证号
-        name: OCR识别出的姓名
-        roster: 花名册列表
+        rec: 参保记录 dict，需含 'name'，可含 'idcard'
+        roster: 花名册列表 [{'seq', 'name', 'idcard', ...}, ...]
 
     Returns:
-        dict or None: 匹配到的花名册条目，包含 identity_type 等
+        dict or None: 匹配到的花名册条目 或 None（未匹配）
     """
     if not roster:
         return None
 
-    # 优先按身份证号精确匹配
-    if idcard:
+    rec_idcard = (rec.get('idcard') or '').strip().upper() if isinstance(rec, dict) else ''
+    rec_name = (rec.get('name') or '').strip() if isinstance(rec, dict) else ''
+
+    # 1. 身份证号精确匹配
+    if rec_idcard and len(rec_idcard) >= 15:
         for item in roster:
-            if item.get('idcard', '').strip().upper() == idcard.strip().upper():
+            item_idcard = (item.get('idcard') or '').strip().upper()
+            if item_idcard and item_idcard == rec_idcard:
                 return item
 
-    # 回退到姓名匹配
-    return match_person_to_roster(name, roster)
+    # 2. 姓名精确匹配
+    if rec_name:
+        for item in roster:
+            if item['name'] == rec_name:
+                return item
+
+        # 3. 姓名模糊匹配
+        for item in roster:
+            if rec_name in item['name'] or item['name'] in rec_name:
+                return item
+
+    return None
