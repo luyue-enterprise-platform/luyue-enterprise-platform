@@ -297,27 +297,27 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                 pass
 
         # ===== 关键：过滤掉缴费单位不一致的图片，不计入有效统计 =====
-        # v1.1.34: 单位一致性校验对【养老保险、失业保险】生效（现缴费单位去括号后比对）；
-        # 其余险种证明只读取缴费单位名称和参保时间段，不做排除
+        # v1.1.35: 单位一致性校验对【养老保险、失业保险、医疗保险、工伤保险】四险生效
+        # （现缴费单位去括号后比对 final_company）；其他险种不在此列
         company_mismatch_files = []
         valid_results = []
         if final_company:
             for r in success_results:
                 cn = r.get('company_name', '').strip()
-                need_check = (r.get('insurance_type') in ('养老保险', '失业保险'))
+                need_check = (r.get('insurance_type') in ('养老保险', '失业保险', '医疗保险', '工伤保险'))
                 if need_check and cn and cn != final_company:
-                    # 养老/失业保险缴费单位不一致 → 排除，不计入统计
+                    # 四险缴费单位不一致 → 排除，不计入统计
                     company_mismatch_files.append({
                         'filename': r.get('filename', ''),
                         'ocr_company': cn,
                         'expected_company': final_company,
                     })
                     logger.warning(
-                        f'[task:{task_id}] 排除不一致文件(养老/失业): {r.get("filename","")} '
+                        f'[task:{task_id}] 排除不一致文件(四险): {r.get("filename","")} '
                         f'(缴费单位="{cn}", 期望="{final_company}")'
                     )
                 else:
-                    # 其他险种 / 单位一致（或无公司名信息）→ 保留
+                    # 单位一致（或无公司名信息）→ 保留
                     valid_results.append(r)
         else:
             # 没有识别到任何缴费单位，全部保留（兼容性处理）
@@ -1036,16 +1036,16 @@ def retry_task(task_id):
 
     logger.info(f'[task:{task_id}] 补充识别 — 新成功: {len(retry_success)}, 仍失败: {len(retry_failed)}, 合并后总成功: {len(all_success)}')
 
-    # ===== 缴费单位过滤（与 process_task 一致：仅对养老保险、失业保险做单位一致性校验） =====
+    # ===== 缴费单位过滤（与 process_task 一致：对四险做单位一致性校验） =====
     company_name = old_result.get('company_name', '')
     company_mismatch_files = list(old_result.get('company_mismatch_files', []))
     valid_results = []
     if company_name:
         for r in all_success:
             cn = r.get('company_name', '').strip()
-            need_check = (r.get('insurance_type') in ('养老保险', '失业保险'))
+            need_check = (r.get('insurance_type') in ('养老保险', '失业保险', '医疗保险', '工伤保险'))
             if need_check and cn and cn != company_name:
-                # 养老/失业保险缴费单位不一致 → 排除
+                # 四险缴费单位不一致 → 排除
                 company_mismatch_files.append({
                     'filename': r.get('filename', ''),
                     'ocr_company': cn,

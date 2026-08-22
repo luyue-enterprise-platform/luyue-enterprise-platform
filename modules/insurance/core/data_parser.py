@@ -320,7 +320,9 @@ def extract_period_from_yearly_table(text):
     2. 在表格区域内匹配 (年份, 月份数) 对（必须有"月"字标识）
     3. 过滤月份数>0的年份（=0表示当年未参保）
     4. 合并连续年份为一段
-    5. 每年的起止为 (年份-(13-月份数), 年份-月份数)，如10月→3月起12月止
+    5. 多年段起止为 (年份-(13-月份数), 年份-月份数)，如10月→3月起12月止
+    6. v1.1.35: 若所有参保月数集中在同一年度（仅单一年度），该年段改为
+       (年份-02, 年份-(月份数+1))，如6月→2月起7月止；跨多个年度时不适用
 
     Returns:
         list of (start_ym, end_ym) 元组列表，按开始时间升序
@@ -358,6 +360,10 @@ def extract_period_from_yearly_table(text):
 
     sorted_pairs = sorted(by_year.items())  # [(year, months), ...]
 
+    # v1.1.35 新规则（单年段 02~em+1）仅当所有参保月数集中在同一年度时生效；
+    # 参保月数横跨多个年度时不触发，单年段回归旧规则 01~em
+    single_year_only = (len(sorted_pairs) == 1)
+
     # 合并连续年份为段，再根据段内位置计算起止月
     merged = []
     seg_first_y, seg_first_m = sorted_pairs[0]
@@ -371,8 +377,14 @@ def extract_period_from_yearly_table(text):
         else:
             # 结束当前段
             if seg_first_y == seg_last_y:
-                # 单年段：01 到 月数
-                merged.append((f'{seg_first_y:04d}-01', f'{seg_last_y:04d}-{seg_last_m:02d}'))
+                if single_year_only:
+                    # v1.1.35 单年段新规则：起 2 月、止 em+1 月（em=12 时归为次年 1 月）
+                    end_year = seg_last_y + (1 if seg_last_m == 12 else 0)
+                    end_month = 1 if seg_last_m == 12 else seg_last_m + 1
+                    merged.append((f'{seg_first_y:04d}-02', f'{end_year:04d}-{end_month:02d}'))
+                else:
+                    # 多年度记录中的单年段：旧规则 01~em
+                    merged.append((f'{seg_first_y:04d}-01', f'{seg_last_y:04d}-{seg_last_m:02d}'))
             else:
                 # 多年段：首年 (13-月数) 起，末年 月数 止
                 merged.append((f'{seg_first_y:04d}-{13 - seg_first_m:02d}',
@@ -382,7 +394,14 @@ def extract_period_from_yearly_table(text):
 
     # 最后一段
     if seg_first_y == seg_last_y:
-        merged.append((f'{seg_first_y:04d}-01', f'{seg_last_y:04d}-{seg_last_m:02d}'))
+        if single_year_only:
+            # v1.1.35 单年段新规则：起 2 月、止 em+1 月
+            end_year = seg_last_y + (1 if seg_last_m == 12 else 0)
+            end_month = 1 if seg_last_m == 12 else seg_last_m + 1
+            merged.append((f'{seg_first_y:04d}-02', f'{end_year:04d}-{end_month:02d}'))
+        else:
+            # 多年度记录中的单年段：旧规则 01~em
+            merged.append((f'{seg_first_y:04d}-01', f'{seg_last_y:04d}-{seg_last_m:02d}'))
     else:
         merged.append((f'{seg_first_y:04d}-{13 - seg_first_m:02d}',
                        f'{seg_last_y:04d}-{seg_last_m:02d}'))
@@ -504,12 +523,21 @@ def extract_period_from_yearly_table_items(items):
     segments.append((cur_start_y, cur_end_y, cur_end_m, cur_start_m))
 
     # Step 9: 转换为 (start_ym, end_ym)
-    # 单年段：01 到 月数
+    # v1.1.35 新规则（单年段 02~em+1）仅当所有参保月数集中在同一年度时生效；
+    # 参保月数横跨多个年度时不触发，单年段回归旧规则 01~em
     # 多年段：首年 (13-月数) 起（如10月→3月起），末年 月数 止（如6月→6月止）
+    single_year_only = (len(sorted_pairs) == 1)
     result = []
     for sy, ey, em, sm in segments:
         if sy == ey:
-            result.append((f'{sy:04d}-01', f'{ey:04d}-{em:02d}'))
+            if single_year_only:
+                # 单年且为唯一年度：起 2 月、止 em+1 月（em=12 时归为次年 1 月）
+                end_year = ey + (1 if em == 12 else 0)
+                end_month = 1 if em == 12 else em + 1
+                result.append((f'{sy:04d}-02', f'{end_year:04d}-{end_month:02d}'))
+            else:
+                # 多年度记录中的单年段：旧规则 01~em
+                result.append((f'{sy:04d}-01', f'{ey:04d}-{em:02d}'))
         else:
             result.append((f'{sy:04d}-{13 - sm:02d}', f'{ey:04d}-{em:02d}'))
 
