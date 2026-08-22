@@ -191,12 +191,19 @@ def rename_contract_images(file_paths, roster, output_dir, folder_hints=None,
 
     for fp in file_paths:
         basename = os.path.basename(fp)
+        file_base = os.path.splitext(basename)[0]
 
         # 优先使用文件夹名作为姓名来源
         folder_name = (folder_hints or {}).get(fp, '')
+        candidates_names = []
         source = 'folder' if folder_name else 'filename'
-        raw = folder_name if folder_name else os.path.splitext(basename)[0]
-        candidates_names = _extract_name_candidates(raw)
+        if folder_name:
+            candidates_names = _extract_name_candidates(folder_name)
+        # 文件夹名提取不到姓名（如文件夹名为"劳动合同"等业务词、纯数字）时，
+        # 回退到文件名提取——文件名中的姓名仍然有效
+        if not candidates_names:
+            candidates_names = _extract_name_candidates(file_base)
+            source = 'filename'
         guessed = candidates_names[0] if candidates_names else ''
 
         file_info.append((fp, basename, guessed, source))
