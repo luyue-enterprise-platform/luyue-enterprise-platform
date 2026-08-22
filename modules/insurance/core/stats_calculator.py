@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 """统计计算模块 - 合并参保时间段，计算统计时间段、总月数、每年参保月数
 
-v1.1.36 统计规则：
+v1.1.37 统计规则：
 1. 重叠合并：多个参保时间段存在重叠时合并为一段，合并后区间按最早开始时间
    与最晚结束时间（最后截止时间）确定，重叠部分不重复计算
-2. 范围限制：每年月数严格只统计用户设置起止范围内的月份，超出范围不计入
+2. **重叠时间段固定**：四险全量数据的合并重叠区间，不受用户筛选 year_range
+   影响——无论用户选任何范围，重叠区间始终是真实数据反映
+3. **年度月数跟筛选走**：每年月数严格只统计用户设置起止范围内的月份，
+   超出范围则该年度月数=0
 """
 
 # 四险标准顺序
@@ -73,24 +76,26 @@ def merge_periods(periods):
 
 def calc_overlap(insurances, year_range=None):
     """
-    计算统计时间段（重叠时间段）—— v1.1.36 合并规则
+    计算统计时间段（重叠时间段）—— v1.1.37 规则
 
     规则：
-    1. 收集该人员所有险种的参保时间段（每个险种上游已归并为最近连续一段）
-    2. 存在重叠的时间段合并为一段：合并后区间按最早开始时间与最晚结束时间
-       （最后截止时间）确定，重叠部分不重复计算
-    3. 完全不重叠的时间段不合并；统计取"存在重叠"的合并段中
-       最后截止时间最晚的一段
-    4. 统计结果与用户设置的年月范围取交集，超出范围的时间不计入
+    1. **交集语义**：四险全量数据中，所有险种同时参保的时间段
+       = max(各险种起始月) ~ min(各险种截止月)
+    2. 重叠区间不受 year_range 影响——重叠起始/截止/月数
+       始终是四险全量数据计算结果。year_range 参数保留仅为向后兼容，
+       不再影响 overlap_start/end。年度月数截断由 year_overlap_months
+       单独处理。
+    3. 需要至少 2 个险种有数据才计算重叠（1 个险种无"重叠"概念）
+    4. 若 max_start > min_end → 无重叠
 
     Args:
-        insurances: dict {险种: (start_ym, end_ym)}
-        year_range: 可选, (start_ym, end_ym) 元组，用户设置的统计起止范围
+        insurances: dict {险种: (start_ym, end_ym)}，每个险种 1 段
+        year_range: 兼容参数，不再用于裁剪重叠区间
 
     Returns:
         dict: {
-            'overlap_start': 统计起始,
-            'overlap_end': 统计截止（最后截止时间，超出用户范围时截断）,
+            'overlap_start': 重叠起始（固定为全量数据交集结果）,
+            'overlap_end': 重叠截止（固定为全量数据交集结果）,
             'overlap_months': 统计月数（重叠部分只计一次）,
             'has_overlap': 是否有统计结果
         }
@@ -103,44 +108,37 @@ def calc_overlap(insurances, year_range=None):
     if len(periods) < 2:
         return no_result
 
-    # 合并重叠/相邻时间段，只保留段内存在真实重叠（>=2 个原始时间段）的合并段
-    clusters = merge_periods(periods)
-    overlapped = [c for c in clusters if c[2] >= 2]
-    if not overlapped:
+    # v1.1.37: 交集语义——所有险种同时参保的时段
+    # = 最晚起始月 ~ 最早截止月
+    overlap_start = max(periods, key=lambda p: ym_to_int(p[0]))[0]
+    overlap_end = min(periods, key=lambda p: ym_to_int(p[1]))[1]
+
+    if ym_to_int(overlap_start) > ym_to_int(overlap_end):
         return no_result
-
-    # 取最后截止时间最晚的一段；区间 = 该段最早开始 ~ 最晚结束
-    overlap_start, overlap_end, _ = max(overlapped, key=lambda c: ym_to_int(c[1]))
-
-    # 与用户选择的年月范围取交集（超出范围的时间不计入统计）
-    if year_range:
-        try:
-            rs, re_ = year_range
-            if ym_to_int(overlap_start) < ym_to_int(rs):
-                overlap_start = rs
-            if ym_to_int(overlap_end) > ym_to_int(re_):
-                overlap_end = re_
-            if ym_to_int(overlap_start) > ym_to_int(overlap_end):
-                return no_result
-        except (ValueError, TypeError, AttributeError):
-            pass
 
     months = months_between(overlap_start, overlap_end)
     return {'overlap_start': overlap_start, 'overlap_end': overlap_end,
             'overlap_months': months, 'has_overlap': True}
 
 
-def year_overlap_months(overlap_start, overlap_end, year):
+def year_overlap_months(overlap_start, overlap_end, year, year_range=None):
     """
-    计算某一年在重叠时间段内的参保月数
+    计算某一年在重叠时间段内的参保月数 —— v1.1.37 规则
+
+    裁剪优先级：年内 overlap 起止月 → 与 year_range 取交集
+    - 年完全在 year_range 外 → 返回 0
+    - 年内起月：取 max(年内 overlap 起点, year_range 内该年起月)
+    - 年内止月：取 min(年内 overlap 终点, year_range 内该年止月)
+    - 起月 > 止月 → 返回 0
 
     Args:
         overlap_start: 'YYYY-MM'
         overlap_end: 'YYYY-MM'
         year: 年份整数
+        year_range: 可选, (start_ym, end_ym) 元组，用户设置的统计起止范围
 
     Returns:
-        int: 该年的重叠月数
+        int: 该年的重叠月数（已应用 year_range 裁剪）
     """
     if not overlap_start or not overlap_end:
         return 0
@@ -148,15 +146,38 @@ def year_overlap_months(overlap_start, overlap_end, year):
     sy, sm = parse_ym(overlap_start)
     ey, em = parse_ym(overlap_end)
 
+    # 年在 overlap 区间外
     if year < sy or year > ey:
         return 0
-    if sy == ey == year:
-        return em - sm + 1
-    if year == sy:
-        return 12 - sm + 1
-    if year == ey:
-        return em
-    return 12
+
+    # 年内 overlap 边界
+    cur_sy, cur_sm = (sy, sm) if year == sy else (year, 1)
+    cur_ey, cur_em = (ey, em) if year == ey else (year, 12)
+
+    # 与 year_range 取交集（v1.1.37：年度月数随用户筛选动态变化）
+    if year_range:
+        try:
+            rs, re_ = year_range
+            rs_y, rs_m = parse_ym(rs)
+            re_y, re_m = parse_ym(re_)
+            # year 在 year_range 外 → 0
+            if year < rs_y or year > re_y:
+                return 0
+            # 年内起点：与 year_range 起点取 max
+            if year == rs_y and rs_m > cur_sm:
+                cur_sm = rs_m
+            # 年内终点：与 year_range 终点取 min
+            if year == re_y and re_m < cur_em:
+                cur_em = re_m
+        except (ValueError, TypeError, AttributeError):
+            pass
+
+    # 起月 > 止月 → 0
+    cur_s_int = cur_sy * 12 + cur_sm
+    cur_e_int = cur_ey * 12 + cur_em
+    if cur_s_int > cur_e_int:
+        return 0
+    return cur_e_int - cur_s_int + 1
 
 
 def get_overlap_years(persons_overlaps, year_range=None):
@@ -193,29 +214,33 @@ def get_overlap_years(persons_overlaps, year_range=None):
 
 def calc_person_stats(person, year_range=None):
     """
-    计算单个人的完整统计信息
+    计算单个人的完整统计信息 —— v1.1.37 规则
+
+    重叠区间不受 year_range 影响；yearly_months 受 year_range 裁剪。
 
     Args:
         person: dict {'name', 'idcard', 'insurances': {险种: (start, end)}}
-        year_range: 可选, (start_ym, end_ym) 元组，限制重叠的时间范围
+        year_range: 可选, (start_ym, end_ym) 元组，用于年度月数裁剪
 
     Returns:
         dict: 完整统计信息
     """
-    overlap = calc_overlap(person['insurances'], year_range=year_range)
+    # v1.1.37: 不再传 year_range 给 calc_overlap，重叠区间固定为全量数据
+    overlap = calc_overlap(person['insurances'])
 
-    # 确定年度列
+    # 年度列由 overlap 全量区间决定；year_range 在 yearly_months 内逐月裁剪
     years = []
     if overlap['has_overlap']:
         sy, _ = parse_ym(overlap['overlap_start'])
         ey, _ = parse_ym(overlap['overlap_end'])
         years = list(range(sy, ey + 1))
 
-    # 每年重叠月数
+    # 每年重叠月数（带 year_range 裁剪）
     yearly_months = {}
     for y in years:
         yearly_months[y] = year_overlap_months(
-            overlap['overlap_start'], overlap['overlap_end'], y
+            overlap['overlap_start'], overlap['overlap_end'], y,
+            year_range=year_range,
         )
 
     return {
