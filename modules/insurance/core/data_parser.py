@@ -743,6 +743,9 @@ def group_by_person(records):
     """
     将多条OCR解析记录按人员分组（姓名+身份证号）
 
+    v1.1.40: 支持花名册重名场景——同一姓名下存在多个不同身份证号时，
+    按身份证号拆分为不同人员（与花名册"序号+姓名区分"规则配合）。
+
     Args:
         records: list of parse_ocr_result()返回的dict
 
@@ -752,31 +755,57 @@ def group_by_person(records):
             'idcard': 身份证号
             'insurances': {险种: (start, end)}
     """
-    persons = {}
-
+    # 第一遍：按姓名收集原始记录（不直接合并，保留身份证号信息）
+    by_name = {}  # name -> list of records
     for rec in records:
         if not rec['name'] or not rec['insurance_type']:
             continue
+        by_name.setdefault(rec['name'], []).append(rec)
 
-        # 用姓名作为分组key（身份证号可能OCR不准）
-        key = rec['name']
-        if key not in persons:
-            persons[key] = {
-                'name': rec['name'],
-                'idcard': rec['idcard'],
-                'insurances': {}  # {ins_type: [(start, end), ...]}
+    # 第二遍：同一姓名下按身份证号拆分
+    persons = {}
+    for name, recs in by_name.items():
+        # 收集该姓名下所有非空身份证号（去重，保持出现顺序）
+        distinct_ids = []
+        for rec in recs:
+            if rec['idcard'] and rec['idcard'] not in distinct_ids:
+                distinct_ids.append(rec['idcard'])
+
+        if len(distinct_ids) <= 1:
+            # 单一人员（或身份证号全为空/唯一）：按姓名合并为一人
+            persons[name] = {
+                'name': name,
+                'idcard': distinct_ids[0] if distinct_ids else '',
+                'insurances': {},
+                '_recs': recs,
             }
         else:
-            # 更新身份证号（如果当前为空）
-            if not persons[key]['idcard'] and rec['idcard']:
-                persons[key]['idcard'] = rec['idcard']
+            # 重名多人：按身份证号拆分为不同人员
+            for rec in recs:
+                if rec['idcard']:
+                    key = (name, rec['idcard'])
+                else:
+                    # 身份证号缺失的记录归入该姓名下第一个出现的身份证号
+                    # （OCR缺失时无法进一步区分，按出现顺序归档）
+                    key = (name, distinct_ids[0])
+                if key not in persons:
+                    persons[key] = {
+                        'name': name,
+                        'idcard': rec['idcard'] if rec['idcard'] else distinct_ids[0],
+                        'insurances': {},
+                        '_recs': [],
+                    }
+                persons[key]['_recs'].append(rec)
 
-        ins_type = rec['insurance_type']
-        period = rec['period']
-        if period:
-            if ins_type not in persons[key]['insurances']:
-                persons[key]['insurances'][ins_type] = []
-            persons[key]['insurances'][ins_type].append(period)
+    # 汇总每个人的险种时间段
+    for p in persons.values():
+        for rec in p.pop('_recs'):
+            ins_type = rec['insurance_type']
+            period = rec['period']
+            if period:
+                if ins_type not in p['insurances']:
+                    p['insurances'][ins_type] = []
+                p['insurances'][ins_type].append(period)
 
     # 对每个人的每个险种：合并所有记录的时间段，只保留最近连续段
     result = []

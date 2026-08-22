@@ -355,26 +355,57 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
             tasks[task_id]['message'] = '正在统计计算...'
         persons = group_by_person(valid_results)
 
-        # v1.1.34: 花名册补全 — 参保证明中没有对应人员时，花名册姓名保留、参保证明时间段留空；
+        # v1.1.34: 花名册补全 — 参保证明中没有对应人员时，花名册姓名保留、参证明时间段留空；
         # 身份证号统一以花名册为准（保证与花名册一致）
+        # v1.1.40: 支持花名册重名 — 按 (姓名, 身份证号) 匹配，重名人员以身份证号区分；
+        # 身份证号缺失时按姓名顺序占用未匹配人员
         if roster:
-            persons_by_name = {p['name']: p for p in persons}
+            persons_by_name = {}
+            for p in persons:
+                persons_by_name.setdefault(p['name'], []).append(p)
             roster_added = 0
             for item in roster:
                 r_name = item.get('name', '').strip()
                 if not r_name:
                     continue
                 r_idcard = item.get('idcard', '').strip()
-                if r_name in persons_by_name:
-                    if r_idcard:
-                        persons_by_name[r_name]['idcard'] = r_idcard
+                cands = persons_by_name.get(r_name, [])
+                matched = None
+                if r_idcard:
+                    # 优先身份证号精确匹配
+                    for p in cands:
+                        if p['idcard'] == r_idcard:
+                            matched = p
+                            break
+                    # 其次取同姓名且身份证号为空的未占用人员
+                    if matched is None:
+                        for p in cands:
+                            if not p['idcard'] and not p.get('_roster_matched'):
+                                matched = p
+                                break
                 else:
-                    persons.append({
+                    # 花名册无身份证号：按姓名取第一个未占用人员
+                    for p in cands:
+                        if not p.get('_roster_matched'):
+                            matched = p
+                            break
+                if matched is not None:
+                    if r_idcard:
+                        matched['idcard'] = r_idcard
+                    matched['_roster_matched'] = True
+                else:
+                    new_p = {
                         'name': r_name,
                         'idcard': r_idcard,
                         'insurances': {},
-                    })
+                        '_roster_matched': True,
+                    }
+                    persons.append(new_p)
+                    persons_by_name.setdefault(r_name, []).append(new_p)
                     roster_added += 1
+            # 清理内部标记
+            for p in persons:
+                p.pop('_roster_matched', None)
             if roster_added:
                 logger.info(f'[task:{task_id}] 花名册补全: 新增 {roster_added} 名无参保证明人员（时间段留空）')
 
@@ -1071,22 +1102,48 @@ def retry_task(task_id):
     persons = group_by_person(valid_results)
 
     # v1.1.34: 花名册补全 — 同 process_task（无参保证明人员姓名保留、时间段留空，身份证号以花名册为准）
+    # v1.1.40: 支持花名册重名 — 按 (姓名, 身份证号) 匹配，与 process_task 逻辑一致
     if roster:
-        persons_by_name = {p['name']: p for p in persons}
+        persons_by_name = {}
+        for p in persons:
+            persons_by_name.setdefault(p['name'], []).append(p)
         for item in roster:
             r_name = item.get('name', '').strip()
             if not r_name:
                 continue
             r_idcard = item.get('idcard', '').strip()
-            if r_name in persons_by_name:
-                if r_idcard:
-                    persons_by_name[r_name]['idcard'] = r_idcard
+            cands = persons_by_name.get(r_name, [])
+            matched = None
+            if r_idcard:
+                for p in cands:
+                    if p['idcard'] == r_idcard:
+                        matched = p
+                        break
+                if matched is None:
+                    for p in cands:
+                        if not p['idcard'] and not p.get('_roster_matched'):
+                            matched = p
+                            break
             else:
-                persons.append({
+                for p in cands:
+                    if not p.get('_roster_matched'):
+                        matched = p
+                        break
+            if matched is not None:
+                if r_idcard:
+                    matched['idcard'] = r_idcard
+                matched['_roster_matched'] = True
+            else:
+                new_p = {
                     'name': r_name,
                     'idcard': r_idcard,
                     'insurances': {},
-                })
+                    '_roster_matched': True,
+                }
+                persons.append(new_p)
+                persons_by_name.setdefault(r_name, []).append(new_p)
+        for p in persons:
+            p.pop('_roster_matched', None)
 
     person_stats, year_cols = calc_all_stats(persons, year_range)
 

@@ -113,7 +113,7 @@ def _extract_roster_from_rows(rows):
                 break
 
     roster = []
-    seen_names = set()
+    seen_keys = set()  # v1.1.40: 花名册重名以序号+姓名区分，不再按姓名去重
     data_start = header_row_idx + 1 if header_row_idx >= 0 else 0
 
     for row in rows[data_start:]:
@@ -159,14 +159,17 @@ def _extract_roster_from_rows(rows):
         if identity_type_col_idx >= 0 and identity_type_col_idx < len(row):
             identity_type = str(row[identity_type_col_idx]).strip() if row[identity_type_col_idx] else ''
 
-        if name_val not in seen_names:
+        # v1.1.40: 去重键改为 (序号, 姓名)，重名且序号不同的人员都保留
+        final_seq = seq if seq else len(roster) + 1
+        dedup_key = (final_seq, name_val)
+        if dedup_key not in seen_keys:
             roster.append({
-                'seq': seq if seq else len(roster) + 1,
+                'seq': final_seq,
                 'name': name_val,
                 'idcard': idcard,
                 'identity_type': identity_type,
             })
-            seen_names.add(name_val)
+            seen_keys.add(dedup_key)
 
     # v1.1.34: 严格保持花名册原始顺序，序号用花名册原始值，不排序不重新编号
 
@@ -182,7 +185,7 @@ def parse_roster(text):
     """
     lines = text.split('\n')
     roster = []
-    seen_names = set()
+    seen_keys = set()  # v1.1.40: 重名以序号+姓名区分
 
     for line in lines:
         line = line.strip()
@@ -201,9 +204,11 @@ def parse_roster(text):
         if m:
             seq = int(m.group(1))
             name = m.group(2)
-            if name not in seen_names and not _is_header_word(name):
-                roster.append({'seq': seq, 'name': name})
-                seen_names.add(name)
+            if not _is_header_word(name):
+                key = (seq, name)
+                if key not in seen_keys:
+                    roster.append({'seq': seq, 'name': name})
+                    seen_keys.add(key)
                 continue
 
         # 策略2：行首数字紧贴中文
@@ -211,9 +216,11 @@ def parse_roster(text):
         if m:
             seq = int(m.group(1))
             name = m.group(2)
-            if name not in seen_names and not _is_header_word(name):
-                roster.append({'seq': seq, 'name': name})
-                seen_names.add(name)
+            if not _is_header_word(name):
+                key = (seq, name)
+                if key not in seen_keys:
+                    roster.append({'seq': seq, 'name': name})
+                    seen_keys.add(key)
                 continue
 
         # 策略3：行中间有 "数字 中文" 模式
@@ -221,18 +228,22 @@ def parse_roster(text):
         if m:
             seq = int(m.group(1))
             name = m.group(2)
-            if name not in seen_names and not _is_header_word(name):
-                roster.append({'seq': seq, 'name': name})
-                seen_names.add(name)
+            if not _is_header_word(name):
+                key = (seq, name)
+                if key not in seen_keys:
+                    roster.append({'seq': seq, 'name': name})
+                    seen_keys.add(key)
                 continue
 
         # 策略4：行首就是纯中文姓名（没有序号，按出现顺序编号）
         m = re.match(r'^([\u4e00-\u9fa5]{2,4})\s+\d{17,18}', line)
         if m:
             name = m.group(1)
-            if name not in seen_names and not _is_header_word(name):
-                roster.append({'seq': len(roster) + 1, 'name': name})
-                seen_names.add(name)
+            if not _is_header_word(name):
+                key = (len(roster) + 1, name)
+                if key not in seen_keys:
+                    roster.append({'seq': len(roster) + 1, 'name': name})
+                    seen_keys.add(key)
                 continue
 
     # 如果没有提取到带序号的，尝试纯姓名行
@@ -242,9 +253,11 @@ def parse_roster(text):
             m = re.match(r'^([\u4e00-\u9fa5]{2,4})$', line)
             if m:
                 name = m.group(1)
-                if name not in seen_names and not _is_header_word(name):
-                    roster.append({'seq': len(roster) + 1, 'name': name})
-                    seen_names.add(name)
+                if not _is_header_word(name):
+                    key = (len(roster) + 1, name)
+                    if key not in seen_keys:
+                        roster.append({'seq': len(roster) + 1, 'name': name})
+                        seen_keys.add(key)
 
     # v1.1.34: 严格保持原始顺序，序号用原始值，不排序不重新编号
 

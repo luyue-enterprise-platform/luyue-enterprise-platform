@@ -1,17 +1,14 @@
 {
-  "version": "1.1.39",
-  "version_code": 1139,
+  "version": "1.1.40",
+  "version_code": 1140,
   "release_date": "2026-08-22",
   "mandatory": false,
   "changelog": [
-    "v1.1.39 社保统计规则调整：",
-    "一、总月数列规则调整：",
-    "1. 统计列表中总月数列的结果 = 选取的时间段内每年月数之和",
-    "2. 总月数随用户所选筛选时间段动态变化：筛选范围内每年月数相加得到总月数",
-    "3. 未设筛选时总月数等于重叠时间段整段月数（与此前一致）",
-    "二、与 v1.1.38 规则保持一致：",
-    "1. 重叠时间段仍为各险种交集且不受筛选影响（始终显示完整交集结果）",
-    "2. 每年月数仍按所选时间段统计（重叠固定、年度跟筛选、总月数跟筛选）"
+    "v1.1.40 社保模块花名册重名支持：",
+    "1. 花名册中存在同名人员时，不再丢弃重名条目，以序号+姓名区分保留",
+    "2. 参保证明OCR记录按姓名+身份证号分组，同名不同身份证号自动拆分为不同人员",
+    "3. 花名册补全按身份证号优先匹配，重名人员各自对应，时间段不再串档",
+    "4. 台账Excel与文件整理命名按身份证号定位各自序号（如01-张三、03-张三）"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.39"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.40"
 }
