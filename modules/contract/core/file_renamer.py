@@ -1,8 +1,10 @@
 """文件重命名模块 — 按花名册对劳动合同文件智能匹配、冲突确认与批量重命名
 
 流程:
-  1. 姓名提取: 从原始文件名/文件夹名提取候选姓名（容错空格、分隔符、序号、业务词）
-  2. 精确匹配: 候选姓名与花名册"姓名"字段完全一致才命中，不参考工号/部门等其他字段
+  1. 姓名提取: 仅从图片文件自身的文件名提取候选姓名（容错空格、分隔符、序号、业务词；
+     不使用文件夹名、工号、身份证号等其他来源或字段）
+  2. 精确匹配: 候选姓名与花名册"姓名"字段为唯一匹配依据，不参考工号/身份证号/部门等
+     其他字段；比对时忽略姓名前后空格（含全角空格）及全角/半角字符差异
   3. 冲突检测: 花名册存在同名员工、或文件名命中多个姓名 → 标记为冲突项，暂停待人工确认
   4. 重命名:   命中文件按 NAME_TEMPLATE 模板批量重命名（支持 {seq} {name} {idcard}）
   5. 待处理:   匹配失败文件移入"待处理"文件夹，并生成失败明细报告（Excel）
@@ -14,6 +16,7 @@ import re
 import json
 import shutil
 import logging
+import unicodedata
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -39,9 +42,22 @@ COMPANY_WORDS = (
 )
 
 
+def _normalize_name(name):
+    """姓名归一化（用于精确比对）：全角转半角 + 去前后空格（含全角空格）
+
+    NFKC 归一化可将全角字母/数字/空格/标点转为半角等价形式，
+    确保文件名与花名册两侧的全角/半角差异不影响比对结果。
+    """
+    if not name:
+        return ''
+    return unicodedata.normalize('NFKC', str(name)).strip()
+
+
 def _clean_raw_name(raw_name):
     """清洗原始名称：去扩展名/PDF分页后缀/业务词/单位词/序号前缀，容错空格与分隔符"""
-    name = raw_name.strip()
+    # v1.1.42: 先做全角->半角归一化（全角空格/数字/分隔符一并转为半角），
+    # 使序号剥离与姓名提取对全角字符同样生效
+    name = unicodedata.normalize('NFKC', raw_name.strip())
 
     # 去掉扩展名
     name = re.sub(r'\.[Pp][Dd][Ff]$', '', name)
@@ -100,28 +116,37 @@ def _extract_name(raw_name):
 
 
 def _build_roster_index(roster):
-    """建立花名册索引: 姓名 -> [人员, ...]（同名员工会对应多个人员）"""
+    """建立花名册索引: 归一化姓名 -> [人员, ...]（同名员工会对应多个人员）
+
+    v1.1.42: 姓名经 _normalize_name 归一化（全角转半角、去前后空格）后作为索引键，
+    与文件名提取的候选姓名（同样归一化）比对，忽略前后空格及全角/半角差异。
+    """
     index = {}
     for person in roster:
-        name = (person.get('name') or '').strip()
+        name = _normalize_name(person.get('name') or '')
         if name:
             index.setdefault(name, []).append(person)
     return index
 
 
 def _render_new_base(person):
-    """按可配置模板渲染新文件名主干（不含扩展名和序号后缀）"""
+    """按可配置模板渲染新文件名主干（不含扩展名和序号后缀）
+
+    v1.1.42: 姓名经 _normalize_name 归一化（去前后空格/全角转半角），
+    避免花名册中带前后空格的姓名直接进入输出文件名。
+    """
+    name = _normalize_name(person.get('name'))
     try:
         return NAME_TEMPLATE.format(
             seq=person.get('seq', 0),
-            name=person.get('name', ''),
+            name=name,
             idcard=person.get('idcard', '') or '',
         )
     except (KeyError, IndexError, ValueError):
         # 模板占位符异常时回退默认规则
         return '{seq:02d}-{name}'.format(
             seq=person.get('seq', 0),
-            name=person.get('name', ''),
+            name=name,
         )
 
 
@@ -157,7 +182,8 @@ def rename_contract_images(file_paths, roster, output_dir, folder_hints=None,
         file_paths: 文件路径列表
         roster: 花名册人员列表 [{'seq': 1, 'name': '张三', 'idcard': ''}, ...]
         output_dir: 输出目录
-        folder_hints: 可选，{file_path: folder_name} 映射（文件夹名优先作为姓名来源）
+        folder_hints: 兼容保留参数（v1.1.42 起姓名匹配仅依据图片文件自身的文件名，
+                      文件夹名不再参与匹配，此参数被忽略）
         resolutions: 可选，人工确认结果映射
         progress_callback: 可选，callback(current, total) 处理进度
 
@@ -193,17 +219,10 @@ def rename_contract_images(file_paths, roster, output_dir, folder_hints=None,
         basename = os.path.basename(fp)
         file_base = os.path.splitext(basename)[0]
 
-        # 优先使用文件夹名作为姓名来源
-        folder_name = (folder_hints or {}).get(fp, '')
-        candidates_names = []
-        source = 'folder' if folder_name else 'filename'
-        if folder_name:
-            candidates_names = _extract_name_candidates(folder_name)
-        # 文件夹名提取不到姓名（如文件夹名为"劳动合同"等业务词、纯数字）时，
-        # 回退到文件名提取——文件名中的姓名仍然有效
-        if not candidates_names:
-            candidates_names = _extract_name_candidates(file_base)
-            source = 'filename'
+        # v1.1.42: 姓名仅从图片文件自身的文件名读取，文件夹名不再作为姓名来源；
+        # 候选姓名与花名册"姓名"字段（两侧均归一化）为唯一匹配依据
+        candidates_names = _extract_name_candidates(file_base)
+        source = 'filename'
         guessed = candidates_names[0] if candidates_names else ''
 
         file_info.append((fp, basename, guessed, source))
@@ -264,11 +283,11 @@ def rename_contract_images(file_paths, roster, output_dir, folder_hints=None,
                 seq = persons[0].get('seq')
                 matched_files.setdefault(seq, []).append((fp, basename))
         else:
-            # 未命中
+            # 未命中 —— 给出明确的失败原因
             if candidates_names:
-                reason = f'提取姓名"{guessed}"不在花名册中'
+                reason = f'提取姓名"{guessed}"在花名册中查无此人，请核对文件名或补充花名册'
             else:
-                reason = '文件名中无法识别出姓名'
+                reason = '文件名中无法识别出姓名，无法与花名册匹配'
             unmatched.append({'original': basename, 'guessed': guessed, 'reason': reason})
             logger.warning(f'未匹配: {basename!r} 提取={guessed!r} ({reason})')
 
@@ -315,7 +334,7 @@ def rename_contract_images(file_paths, roster, output_dir, folder_hints=None,
                 'original': basename,
                 'new_name': new_name,
                 'person_seq': seq,
-                'person_name': person.get('name'),
+                'person_name': _normalize_name(person.get('name')),
             })
 
             done += 1
@@ -401,7 +420,7 @@ def write_failure_report(output_dir, failures):
         cand_str = '；'.join(f"{c.get('seq')}-{c.get('name')}" for c in candidates)
         if candidates:
             suggestion = '请在系统中人工确认归属后重新处理'
-        elif '不在花名册' in item.get('reason', ''):
+        elif '查无此人' in item.get('reason', '') or '不在花名册' in item.get('reason', ''):
             suggestion = '请核对文件名或补充花名册'
         else:
             suggestion = '请手动重命名后放入结果文件夹'

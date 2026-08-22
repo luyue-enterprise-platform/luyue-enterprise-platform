@@ -1,13 +1,15 @@
 {
-  "version": "1.1.41",
-  "version_code": 1141,
+  "version": "1.1.42",
+  "version_code": 1142,
   "release_date": "2026-08-22",
   "mandatory": false,
   "changelog": [
-    "v1.1.41 劳动合同模块文件夹遍历深度调整：",
-    "1. 文件夹选择/拖拽遍历最多穿透五级子文件夹，深层目录中的合同文件可完整读取",
-    "2. 遍历过程中文件夹一律跳过，仅读取图片和PDF格式文件的文件名",
-    "3. 其他读取规则、匹配逻辑与处理行为保持不变"
+    "v1.1.42 劳动合同模块姓名匹配逻辑调整：",
+    "1. 姓名仅从图片格式文件自身的文件名中读取，作为与花名册匹配的唯一依据",
+    "2. 不再使用文件夹名、工号、身份证号等其他来源或字段参与匹配",
+    "3. 匹配时忽略姓名前后空格（含全角空格）及全角/半角字符差异",
+    "4. 匹配失败或花名册查无此人时给出明确提示信息",
+    "5. 其他业务规则、校验逻辑与处理流程保持不变"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.41"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.42"
 }
