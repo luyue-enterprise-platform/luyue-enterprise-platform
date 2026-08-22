@@ -18,7 +18,10 @@ from flask import (
 
 from .core.roster_parser import parse_roster_from_table
 from .core.pdf_converter import pdf_to_images
-from .core.file_renamer import rename_contract_images, IMAGE_EXTENSIONS
+from .core.file_renamer import (
+    rename_contract_images, IMAGE_EXTENSIONS,
+    write_failure_report, write_process_log,
+)
 from core.auth import login_required
 
 # ===== 路径设置 =====
@@ -426,11 +429,59 @@ def _process_task(task_id, file_paths, roster, folder_hints=None):
                 tasks[task_id]['message'] = '没有找到可处理的图片文件'
             return
 
-        # Step 2: 按花名册重命名
+        # Step 2: 按花名册智能匹配并重命名（含冲突检测与待处理分流）
         output_task_dir = os.path.join(OUTPUT_DIR, task_id)
         os.makedirs(output_task_dir, exist_ok=True)
 
-        result = rename_contract_images(all_images, roster, output_task_dir, folder_hints=extended_hints)
+        def _progress(cur, tot):
+            with tasks_lock:
+                if task_id in tasks:
+                    tasks[task_id]['current'] = cur
+                    tasks[task_id]['message'] = f'正在匹配与重命名 {cur}/{tot} ...'
+
+        result = rename_contract_images(
+            all_images, roster, output_task_dir,
+            folder_hints=extended_hints,
+            progress_callback=_progress,
+        )
+
+        task_result = {
+            'renamed': result['renamed'],
+            'unmatched': result['unmatched'],
+            'total': result['total'],
+            'matched_count': result['matched_count'],
+            'unmatched_count': result['unmatched_count'],
+            'conflicts_resolved_count': 0,
+            'roster_count': len(roster),
+            'pdf_converted': pdf_converted,
+            'pending_dir_name': '待处理',
+        }
+
+        # 冲突项：暂停处理，等待人工确认
+        if result['conflicts']:
+            with tasks_lock:
+                tasks[task_id]['status'] = 'conflict'
+                tasks[task_id]['message'] = (
+                    f'发现 {len(result["conflicts"])} 个冲突文件，'
+                    f'已暂停处理，请人工确认后继续'
+                )
+                tasks[task_id]['conflicts'] = result['conflicts']
+                tasks[task_id]['roster'] = roster
+                tasks[task_id]['result'] = task_result
+
+            # 先行输出当前阶段（成功+失败）的报告与日志
+            write_failure_report(output_task_dir, task_result['unmatched'])
+            write_process_log(output_task_dir, task_id, task_result)
+
+            logger.info(
+                f'[task:{task_id}] 冲突暂停: {len(result["conflicts"])} 个冲突文件 '
+                f'({result["matched_count"]} 个已正常重命名)'
+            )
+            return
+
+        # 无冲突：直接完成
+        write_failure_report(output_task_dir, task_result['unmatched'])
+        write_process_log(output_task_dir, task_id, task_result)
 
         # 更新任务状态
         with tasks_lock:
@@ -438,17 +489,9 @@ def _process_task(task_id, file_paths, roster, folder_hints=None):
             tasks[task_id]['message'] = (
                 f'处理完成！共 {result["total"]} 张图片，'
                 f'匹配 {result["matched_count"]} 个，'
-                f'未匹配 {result["unmatched_count"]} 个'
+                f'待处理 {result["unmatched_count"]} 个'
             )
-            tasks[task_id]['result'] = {
-                'renamed': result['renamed'],
-                'unmatched': result['unmatched'],
-                'total': result['total'],
-                'matched_count': result['matched_count'],
-                'unmatched_count': result['unmatched_count'],
-                'roster_count': len(roster),
-                'pdf_converted': pdf_converted,
-            }
+            tasks[task_id]['result'] = task_result
 
         logger.info(f'[task:{task_id}] 任务完成: {tasks[task_id]["message"]}')
 
@@ -470,12 +513,156 @@ def api_progress(task_id):
     if not task:
         return jsonify({'error': '任务不存在'}), 404
 
-    return jsonify({
+    resp = {
         'status': task['status'],
         'current': task['current'],
         'total': task['total'],
         'message': task['message'],
-    })
+    }
+
+    # 冲突暂停状态：返回冲突明细供前端渲染人工确认面板（不含服务器路径）
+    if task['status'] == 'conflict':
+        resp['conflicts'] = [
+            {
+                'original': c.get('original'),
+                'guessed': c.get('guessed', ''),
+                'reason': c.get('reason', ''),
+                'candidates': c.get('candidates', []),
+            }
+            for c in (task.get('conflicts') or [])
+        ]
+
+    return jsonify(resp)
+
+
+# ---------- 冲突人工确认 ----------
+
+@contract_bp.route('/api/resolve/<task_id>', methods=['POST'])
+@login_required
+def api_resolve_conflicts(task_id):
+    """冲突人工确认后继续处理
+
+    请求体 JSON:
+    {
+        "resolutions": [
+            {"original": "xxx.jpg", "seq": 3},            // 指定花名册人员
+            {"original": "yyy.jpg", "action": "pending"}  // 移入待处理文件夹
+        ]
+    }
+    未提交确认结果的冲突文件自动移入待处理文件夹。
+    """
+    with tasks_lock:
+        task = tasks.get(task_id)
+
+    if not task:
+        return jsonify({'error': '任务不存在'}), 404
+    if task['status'] != 'conflict':
+        return jsonify({'error': '任务当前没有待确认的冲突'}), 400
+
+    data = request.get_json(silent=True) or {}
+    resolutions_list = data.get('resolutions', [])
+
+    conflicts = task.get('conflicts') or []
+    conflict_names = {c['original'] for c in conflicts}
+
+    # 构建确认映射（仅接受冲突清单内的文件）
+    resolutions = {}
+    user_confirmed = set()
+    for r in resolutions_list:
+        original = r.get('original')
+        if not original or original not in conflict_names:
+            continue
+        if r.get('action') == 'pending':
+            resolutions[original] = {'action': 'pending'}
+            user_confirmed.add(original)
+        elif r.get('seq') is not None:
+            resolutions[original] = {'seq': r.get('seq')}
+            user_confirmed.add(original)
+
+    # 未提交确认结果的冲突文件 -> 自动移入待处理
+    for c in conflicts:
+        if c['original'] not in resolutions:
+            resolutions[c['original']] = {'action': 'pending'}
+
+    roster = task.get('roster') or []
+    output_task_dir = os.path.join(OUTPUT_DIR, task_id)
+    conflict_paths = [c['path'] for c in conflicts]
+
+    if not conflict_paths or not roster:
+        return jsonify({'error': '任务数据不完整，无法继续处理'}), 400
+
+    with tasks_lock:
+        task['status'] = 'processing'
+        task['message'] = f'正在按人工确认结果处理 {len(conflict_paths)} 个冲突文件...'
+
+    thread = threading.Thread(
+        target=_resolve_task,
+        args=(task_id, conflict_paths, roster, resolutions, user_confirmed),
+        daemon=True,
+    )
+    thread.start()
+
+    logger.info(f'[task:{task_id}] 冲突人工确认已提交，继续处理 {len(conflict_paths)} 个文件')
+
+    return jsonify({'ok': True, 'task_id': task_id, 'resolving': len(conflict_paths)})
+
+
+def _resolve_task(task_id, conflict_paths, roster, resolutions, user_confirmed):
+    """冲突确认后的后台处理：按确认结果追加重命名并汇总"""
+    try:
+        output_task_dir = os.path.join(OUTPUT_DIR, task_id)
+
+        result = rename_contract_images(
+            conflict_paths, roster, output_task_dir,
+            resolutions=resolutions,
+        )
+
+        # 未人工确认而被自动移入待处理的文件，修正失败原因
+        for item in result['unmatched']:
+            if (item.get('original') in resolutions
+                    and item['original'] not in user_confirmed):
+                item['reason'] = '冲突未确认，自动移入待处理文件夹'
+
+        with tasks_lock:
+            task = tasks.get(task_id)
+            if not task:
+                return
+            tr = task.get('result') or {
+                'renamed': [], 'unmatched': [], 'total': 0,
+                'matched_count': 0, 'unmatched_count': 0,
+                'conflicts_resolved_count': 0, 'roster_count': len(roster),
+                'pdf_converted': 0, 'pending_dir_name': '待处理',
+            }
+
+            tr['renamed'].extend(result['renamed'])
+            tr['unmatched'].extend(result['unmatched'])
+            tr['matched_count'] += result['matched_count']
+            tr['unmatched_count'] += result['unmatched_count']
+            tr['conflicts_resolved_count'] += len(resolutions)
+
+            task['status'] = 'done'
+            task['conflicts'] = []
+            task['roster'] = None
+            task['result'] = tr
+            task['message'] = (
+                f'处理完成！共 {tr["total"]} 张图片，'
+                f'匹配 {tr["matched_count"]} 个，'
+                f'待处理 {tr["unmatched_count"]} 个'
+                f'（含人工确认冲突 {len(user_confirmed)} 个）'
+            )
+
+        # 重写失败明细报告与处理日志（覆盖初次的中间版本）
+        write_failure_report(output_task_dir, tr['unmatched'])
+        write_process_log(output_task_dir, task_id, tr)
+
+        logger.info(f'[task:{task_id}] 冲突确认处理完成: {task["message"]}')
+
+    except Exception as e:
+        logger.error(f'[task:{task_id}] 冲突确认处理失败: {e}\n{traceback.format_exc()}')
+        with tasks_lock:
+            if task_id in tasks:
+                tasks[task_id]['status'] = 'error'
+                tasks[task_id]['message'] = f'冲突确认处理失败: {str(e)}'
 
 
 # ---------- 结果查询 ----------

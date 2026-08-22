@@ -50,6 +50,17 @@ pythonnet_data = collect_data_files('pythonnet')
 pywin32_hidden = collect_submodules('win32com')
 pywin32_data = collect_data_files('win32com')
 
+# ---- playwright（医保参保证明批量下载模块，浏览器自动化） ----
+# node driver（约70MB）打进 EXE 数据区（运行时解压到 _MEIPASS/playwright/driver）；
+# Chromium 浏览器引擎（约510MB）不进 EXE，由安装器释放到安装目录旁的「浏览器引擎」目录，
+# 运行时通过 PLAYWRIGHT_BROWSERS_PATH 环境变量指向（见 modules/medical/core/config.py）
+playwright_hidden = collect_submodules('playwright') + [
+    'playwright._impl._driver',
+    'playwright.async_api',
+]
+_playwright_driver = os.path.join(PROJECT_DIR, 'venv', 'Lib', 'site-packages', 'playwright', 'driver')
+playwright_data = [(_playwright_driver, 'playwright/driver')] if os.path.isdir(_playwright_driver) else []
+
 # ---- 数据文件：模板 + 静态资源 ----
 all_datas = [
     # 共享模板（login.html, register.html）
@@ -67,11 +78,14 @@ all_datas = [
     # PDF转Word模块
     ('modules/pdf2word/templates', 'modules/pdf2word/templates'),
     ('modules/pdf2word/static', 'modules/pdf2word/static'),
+    # 医保参保证明下载模块（templates 含 员工名单模板.xlsx）
+    ('modules/medical/templates', 'modules/medical/templates'),
+    ('modules/medical/static', 'modules/medical/static'),
     # 版本信息（用于远程更新检查）
     ('version.json', '.'),
     # 远程认证配置（内嵌回退：外部 auth_config.json 丢失时使用）
     ('auth_config.json', '.'),
-] + rapidocr_data + webview_data + clr_loader_data + pythonnet_data + pdf2docx_data + docx_data + pywin32_data
+] + rapidocr_data + webview_data + clr_loader_data + pythonnet_data + pdf2docx_data + docx_data + pywin32_data + playwright_data
 
 a = Analysis(
     ['launcher.py'],
@@ -107,7 +121,9 @@ a = Analysis(
         'tkinter', 'tkinter.filedialog', 'tkinter.commondialog',
         # pywin32（用于Word/Excel转PDF）
         'win32com', 'win32com.client', 'pythoncom', 'pywintypes',
-    ] + rapidocr_hidden + openpyxl_hidden + webview_hidden + pdf2docx_hidden + docx_hidden + pywin32_hidden,
+        # playwright（医保参保证明下载模块）
+        'playwright.async_api', 'playwright._impl._driver', 'greenlet',
+    ] + rapidocr_hidden + openpyxl_hidden + webview_hidden + pdf2docx_hidden + docx_hidden + pywin32_hidden + playwright_hidden,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

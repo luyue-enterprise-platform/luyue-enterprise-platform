@@ -62,10 +62,12 @@ logger.info('共享数据库初始化完成')
 from modules.insurance.blueprint import insurance_bp
 from modules.contract.blueprint import contract_bp
 from modules.pdf2word.blueprint import pdf2word_bp
+from modules.medical.blueprint import medical_bp
 
 app.register_blueprint(insurance_bp)
 app.register_blueprint(contract_bp)
 app.register_blueprint(pdf2word_bp)
+app.register_blueprint(medical_bp)
 logger.info('子模块 Blueprint 注册完成')
 
 

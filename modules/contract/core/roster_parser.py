@@ -111,19 +111,17 @@ def _extract_roster_from_rows(rows):
     }
     
     persons = []
-    seen_names = set()
-    
+    # v1.1.36: 不再按姓名去重 —— 花名册中同名员工全部保留（各自序号），
+    # 由重命名阶段检测同名冲突并交人工确认
     for row in rows[data_start:]:
         if name_col >= len(row):
             continue
         name = row[name_col].strip()
-        
+
         # 跳过空行和非中文姓名
         if not name or not re.search(r'[\u4e00-\u9fa5]', name):
             continue
         if name in header_words:
-            continue
-        if name in seen_names:
             continue
         
         # 如果姓名过长（可能包含额外信息），只取前2-4个中文字符
@@ -148,7 +146,6 @@ def _extract_roster_from_rows(rows):
                 idcard = raw
         
         persons.append({'name': name, 'idcard': idcard, '_raw_seq': seq})
-        seen_names.add(name)
     
     # 保持花名册原有顺序，不进行自动排序
     # 使用花名册中的原始序号；无序号列则按出现顺序自动编号

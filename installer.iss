@@ -9,7 +9,7 @@
 
 #define MyAppName "鲁岳企业服务·综合智能平台"
 #define MyAppShortName "LY重点群体涉税申报综合智能平台"
-#define MyAppVersion "1.1.35"
+#define MyAppVersion "1.1.36"
 #define MyAppPublisher "鲁岳企业服务"
 #define MyAppURL "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform"
 #define MyAppExeName "鲁岳企业服务_综合智能平台.exe"
@@ -66,6 +66,9 @@ Source: "MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: ignoreversion
 Source: "version.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 ; 卸载程序图标（Inno Setup 自动生成）
 Source: "static\assets\logo.ico"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; Playwright 浏览器引擎（医保参保证明下载模块用，约510MB：chromium-1148 + headless_shell + ffmpeg）
+; 释放到安装目录旁的「浏览器引擎」目录，运行时由 medical 模块通过 PLAYWRIGHT_BROWSERS_PATH 指向
+Source: "浏览器引擎\*"; DestDir: "{app}\浏览器引擎"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 ; 用户级安装：使用 {userdesktop}/{userstartup} 而非系统级路径

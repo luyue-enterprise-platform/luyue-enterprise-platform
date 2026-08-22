@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>医保参保证明批量下载系统</title>
+    <link rel="stylesheet" href="{{ url_for('medical.static', filename='css/style.css') }}">
+</head>
+<body>
+    <!-- 顶部导航 -->
+    <nav class="navbar">
+        <div class="nav-brand">
+            <span class="brand-icon">🏥</span>
+            <span class="brand-text">医保参保证明批量下载系统</span>
+        </div>
+        <div class="nav-actions">
+            <a class="btn-nav" href="/" title="返回首页">🏠 返回首页</a>
+            <button class="btn-nav" onclick="location.reload()" title="刷新页面">🔄 刷新</button>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <!-- 第一步：上传员工名单 -->
+        <section class="card">
+            <div class="card-header">
+                <span class="step-badge">1</span>
+                <h2>上传员工名单</h2>
+                <span class="card-tip">支持 .xlsx / .xls / .csv，须含「姓名」和「身份证号」列</span>
+            </div>
+            <div class="card-body">
+                <div class="dropzone" id="dropzone">
+                    <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden>
+                    <div class="dropzone-content">
+                        <span class="upload-icon">📋</span>
+                        <p>拖拽 Excel 名单到此处，或 <a href="#" onclick="document.getElementById('fileInput').click();return false;">点击选择文件</a></p>
+                        <p class="upload-hint">上传后自动解析姓名与身份证号</p>
+                    </div>
+                </div>
+                <div class="loaded-row">
+                    <span id="empCount" class="badge badge-ready">未加载名单</span>
+                    <button class="btn-ghost btn-sm" onclick="downloadTemplate()">⬇ 下载名单模板</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 第二步：登录网厅并下载 -->
+        <section class="card">
+            <div class="card-header">
+                <span class="step-badge">2</span>
+                <h2>登录医保网厅并批量下载</h2>
+                <span class="card-tip">陕西省医保公共服务平台</span>
+            </div>
+            <div class="card-body">
+                <div class="action-buttons">
+                    <button class="btn-primary" id="btnLogin" onclick="startLogin()">① 打开网厅并登录</button>
+                    <button class="btn-primary" id="btnDownload" onclick="startDownload()" disabled>② 开始下载</button>
+                    <button class="btn-danger" id="btnStop" onclick="stop()" disabled>停止</button>
+                </div>
+
+                <!-- 登录确认条（自动检测失灵时的兜底，点击后自动导航到目标页面并开始下载） -->
+                <div class="confirm-bar" id="loginConfirmBar" style="display:none">
+                    <button class="btn-secondary" onclick="confirmLogin()">✅ 我已登录，开始下载</button>
+                    <span class="tip">已在浏览器中登录完成后，点击此按钮（程序将自动打开查询打印页面并开始批量下载）</span>
+                </div>
+                <!-- 下载引导条（自动下载失败时的手动兜底） -->
+                <div class="confirm-bar" id="manualPrintBar" style="display:none">
+                    <button class="btn-secondary" onclick="confirmManualPrint()">✅ 已保存PDF，继续下一位</button>
+                    <span class="tip">程序正在点击「下载」按钮并自动保存到输出目录。若等了较久仍未自动继续：请手动点击页面「下载」按钮（若只有「打印」按钮，则点打印后打印机选「另存为PDF」），保存后若程序仍未自动继续，再点此按钮</span>
+                </div>
+
+                <div class="current-task" id="currentTask"></div>
+                <p class="action-hint">
+                    操作流程：加载名单 → 打开网厅 → 在浏览器中手动登录 → 点击「我已登录，开始下载」→ 程序自动打开查询打印页面并逐人下载
+                </p>
+            </div>
+        </section>
+
+        <!-- 第三步：下载进度 -->
+        <section class="card">
+            <div class="card-header">
+                <span class="step-badge">3</span>
+                <h2>下载进度</h2>
+            </div>
+            <div class="card-body">
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar" id="progressFill"></div>
+                </div>
+                <p class="progress-text" id="progressText">就绪</p>
+                <div class="stats-row">
+                    <div class="stat-item stat-success">成功 <span id="statSuccess">0</span></div>
+                    <div class="stat-item stat-skip">跳过 <span id="statSkip">0</span></div>
+                    <div class="stat-item stat-fail">失败 <span id="statFail">0</span></div>
+                    <div class="stat-item stat-remain">剩余 <span id="statRemain">0</span></div>
+                </div>
+                <p class="action-hint" id="saveDirHint">PDF 文件将自动保存到输出目录（outputs/medical/日期/），以花名册姓名命名</p>
+            </div>
+        </section>
+
+        <!-- 运行日志 -->
+        <section class="card">
+            <div class="card-header">
+                <span class="step-badge">📝</span>
+                <h2>运行日志</h2>
+            </div>
+            <div class="card-body">
+                <div class="log-area" id="logArea"></div>
+            </div>
+        </section>
+    </main>
+
+<script>
+const logArea = document.getElementById('logArea');
+const fileDrop = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const API = '/medical/api';
+
+// 用户点了「我已登录网厅，继续下载」后，登录成功自动开始批量下载
+let autoStartAfterLogin = false;
+
+// ===== 文件上传 =====
+fileDrop.addEventListener('click', () => fileInput.click());
+fileDrop.addEventListener('dragover', e => { e.preventDefault(); fileDrop.classList.add('dragover'); });
+fileDrop.addEventListener('dragleave', () => fileDrop.classList.remove('dragover'));
+fileDrop.addEventListener('drop', e => {
+    e.preventDefault();
+    fileDrop.classList.remove('dragover');
+    if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => {
+    if (fileInput.files.length) uploadFile(fileInput.files[0]);
+});
+
+function uploadFile(file) {
+    document.querySelector('.dropzone-content p').textContent = file.name;
+    const formData = new FormData();
+    formData.append('file', file);
+    fetch(API + '/load-excel', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            if (data.ok) {
+                document.getElementById('empCount').textContent = `已加载 ${data.count} 人`;
+                document.getElementById('empCount').className = 'badge badge-success';
+                addLog('success', `成功加载 ${data.count} 名员工` + (data.errors.length ? `，跳过 ${data.errors.length} 行` : ''));
+                if (data.errors.length) data.errors.forEach(e => addLog('warn', '  ' + e));
+            } else {
+                document.getElementById('empCount').textContent = '加载失败';
+                document.getElementById('empCount').className = 'badge badge-error';
+                addLog('error', '加载失败: ' + data.error);
+            }
+        })
+        .catch(e => addLog('error', '上传失败: ' + e));
+}
+
+function downloadTemplate() { window.open(API + '/open-template'); }
+
+// ===== 操作 =====
+function startLogin() {
+    document.getElementById('btnLogin').disabled = true;
+    document.getElementById('btnStop').disabled = false;
+    document.getElementById('loginConfirmBar').style.display = 'flex';
+    fetch(API + '/login', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (!data.ok) {
+                addLog('error', data.error);
+                document.getElementById('btnLogin').disabled = false;
+                document.getElementById('btnStop').disabled = true;
+                document.getElementById('loginConfirmBar').style.display = 'none';
+            }
+        });
+}
+
+function startDownload() {
+    fetch(API + '/download', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (!data.ok) {
+                addLog('error', data.error);
+            } else {
+                document.getElementById('btnDownload').disabled = true;
+                document.getElementById('btnStop').disabled = false;
+            }
+        });
+}
+
+function stop() {
+    document.getElementById('btnStop').disabled = true;
+    addLog('warn', '正在停止...请稍候');
+    fetch(API + '/stop', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (d.ok) {
+                addLog('info', '已发送停止请求，等待程序停止');
+            } else {
+                addLog('error', '停止失败: ' + (d.error || ''));
+                document.getElementById('btnStop').disabled = false;
+            }
+        })
+        .catch(e => {
+            addLog('error', '停止请求失败: ' + e);
+            document.getElementById('btnStop').disabled = false;
+        });
+}
+
+function confirmLogin() {
+    fetch(API + '/confirm-login', { method: 'POST' });
+    addLog('info', '登录已确认，程序将自动打开查询打印页面并开始下载...');
+    document.getElementById('loginConfirmBar').style.display = 'none';
+    autoStartAfterLogin = true;
+
+    // 若自动检测已先于确认成功（下载按钮已可用），立即开始下载
+    if (!document.getElementById('btnDownload').disabled) {
+        startDownload();
+    }
+}
+
+function confirmManualPrint() {
+    fetch(API + '/confirm-manual-print', { method: 'POST' });
+    document.getElementById('manualPrintBar').style.display = 'none';
+}
+
+// ===== 日志 =====
+function addLog(level, msg) {
+    const line = document.createElement('div');
+    line.className = 'log-line log-' + level.toLowerCase();
+    const ts = new Date().toTimeString().slice(0, 8);
+    line.textContent = `${ts} [${level.toUpperCase()}] ${msg}`;
+    logArea.appendChild(line);
+    logArea.scrollTop = logArea.scrollHeight;
+}
+
+// ===== SSE 事件流 =====
+const evtSource = new EventSource(API + '/events');
+evtSource.onmessage = function(e) {
+    const event = JSON.parse(e.data);
+
+    if (event.type === 'ping') return;
+
+    if (event.type === 'log') {
+        addLog(event.data.level, event.data.message);
+    }
+
+    if (event.type === 'progress') {
+        const pct = event.data.total > 0 ? (event.data.current / event.data.total * 100) : 0;
+        document.getElementById('progressFill').style.width = pct + '%';
+        document.getElementById('progressText').textContent = `[${event.data.current}/${event.data.total}] ${event.data.name} - ${event.data.message}`;
+        document.getElementById('statSuccess').textContent = event.data.stats.success;
+        document.getElementById('statSkip').textContent = event.data.stats.skipped;
+        document.getElementById('statFail').textContent = event.data.stats.failed;
+        document.getElementById('statRemain').textContent = event.data.stats.total - event.data.current;
+        document.getElementById('currentTask').textContent = `[${event.data.current}/${event.data.total}] ${event.data.name}(${event.data.id_card}) - ${event.data.message}`;
+    }
+
+    if (event.type === 'login_done') {
+        document.getElementById('btnLogin').disabled = false;
+        document.getElementById('btnStop').disabled = true;
+        document.getElementById('loginConfirmBar').style.display = 'none';
+        if (event.data.success) {
+            document.getElementById('btnDownload').disabled = false;
+            // 若用户已点击「确认登录」，自动开始批量下载
+            if (autoStartAfterLogin) {
+                autoStartAfterLogin = false;
+                const empText = document.getElementById('empCount').textContent;
+                const empCount = parseInt(empText.replace(/\D/g, '')) || 0;
+                if (empCount > 0) {
+                    addLog('info', '登录已确认，自动开始批量下载...');
+                    startDownload();
+                } else {
+                    addLog('warn', '登录已确认，但尚未加载员工名单，请加载后再开始下载');
+                }
+            }
+        }
+    }
+
+    if (event.type === 'download_done') {
+        document.getElementById('btnDownload').disabled = false;
+        document.getElementById('btnStop').disabled = true;
+        document.getElementById('progressFill').style.width = '100%';
+        const s = event.data;
+        addLog('success', `下载完成！成功 ${s.success}，跳过 ${s.skipped}，失败 ${s.failed}`);
+    }
+
+    if (event.type === 'stopped') {
+        document.getElementById('btnDownload').disabled = false;
+        document.getElementById('btnStop').disabled = true;
+        const s = event.data || {};
+        addLog('warn', `已停止。当前进度：成功 ${s.success}，跳过 ${s.skipped}，失败 ${s.failed}`);
+    }
+
+    if (event.type === 'print_wait') {
+        addLog('warn', event.data.message || '已点击「下载」按钮，正在等待文件下载并自动保存到输出目录');
+        document.getElementById('manualPrintBar').style.display = 'flex';
+    }
+
+    if (event.type === 'need_manual_print') {
+        addLog('warn', event.data.message || '请手动点击页面「下载」按钮并保存为PDF');
+        document.getElementById('manualPrintBar').style.display = 'flex';
+    }
+};
+
+// ===== 初始化状态 =====
+fetch(API + '/status').then(r => r.json()).then(data => {
+    if (data.employee_count > 0) {
+        document.getElementById('empCount').textContent = `已加载 ${data.employee_count} 人`;
+        document.getElementById('empCount').className = 'badge badge-success';
+    }
+    if (data.logged_in) {
+        document.getElementById('btnDownload').disabled = false;
+    }
+}).catch(() => {});
+addLog('info', '程序已就绪，请先加载员工名单');
+</script>
+</body>
+</html>
