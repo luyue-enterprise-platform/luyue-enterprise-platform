@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """统计计算模块 - 合并参保时间段，计算统计时间段、总月数、每年参保月数
 
-v1.1.37 统计规则：
-1. 重叠合并：多个参保时间段存在重叠时合并为一段，合并后区间按最早开始时间
-   与最晚结束时间（最后截止时间）确定，重叠部分不重复计算
-2. **重叠时间段固定**：四险全量数据的合并重叠区间，不受用户筛选 year_range
-   影响——无论用户选任何范围，重叠区间始终是真实数据反映
-3. **年度月数跟筛选走**：每年月数严格只统计用户设置起止范围内的月份，
+v1.1.38 统计规则：
+1. **重叠时间段固定**：重叠区间 = 各险种参保时间的交集（最晚起始月~最早截止月），
+   不受用户筛选 year_range 影响——无论选任何范围，重叠区间始终是全量数据结果
+2. **年度月数跟筛选走**：每年月数严格只统计用户设置起止范围内的月份，
    超出范围则该年度月数=0
+3. **总月数跟筛选走**：总月数 = 所选时间段内每年月数之和（各年裁剪后求和），
+   与年度月数规则一致；未设筛选时等于重叠区间整段月数
 """
 
 # 四险标准顺序
@@ -214,13 +214,14 @@ def get_overlap_years(persons_overlaps, year_range=None):
 
 def calc_person_stats(person, year_range=None):
     """
-    计算单个人的完整统计信息 —— v1.1.37 规则
+    计算单个人的完整统计信息 —— v1.1.38 规则
 
-    重叠区间不受 year_range 影响；yearly_months 受 year_range 裁剪。
+    重叠区间不受 year_range 影响；yearly_months 受 year_range 裁剪；
+    总月数（overlap_months）= 所选时间段内每年月数之和，跟筛选走。
 
     Args:
         person: dict {'name', 'idcard', 'insurances': {险种: (start, end)}}
-        year_range: 可选, (start_ym, end_ym) 元组，用于年度月数裁剪
+        year_range: 可选, (start_ym, end_ym) 元组，用于年度月数/总月数裁剪
 
     Returns:
         dict: 完整统计信息
@@ -243,13 +244,17 @@ def calc_person_stats(person, year_range=None):
             year_range=year_range,
         )
 
+    # v1.1.38: 总月数 = 所选时间段内每年月数之和（跟筛选走），
+    # 不再使用重叠区间的固定整段月数
+    total_months = sum(yearly_months.values())
+
     return {
         'name': person['name'],
         'idcard': person['idcard'],
         'insurances': person['insurances'],
         'overlap_start': overlap['overlap_start'],
         'overlap_end': overlap['overlap_end'],
-        'overlap_months': overlap['overlap_months'],
+        'overlap_months': total_months,
         'has_overlap': overlap['has_overlap'],
         'years': years,
         'yearly_months': yearly_months,
