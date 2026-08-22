@@ -151,7 +151,10 @@ dropzone.addEventListener('drop', function (e) {
     }
 
     var allFiles = [];
-    function processEntry(entry) {
+    // v1.1.41: 最多穿透五级子文件夹（第0级为拖入的根文件夹，1~5级子文件夹内的文件可读取）
+    var MAX_TRAVERSE_DEPTH = 5;
+    function processEntry(entry, depth) {
+        depth = depth || 0;
         if (entry.isFile) {
             return new Promise(function (resolve) {
                 entry.file(function (file) {
@@ -160,10 +163,14 @@ dropzone.addEventListener('drop', function (e) {
                 });
             });
         } else if (entry.isDirectory) {
+            // 文件夹本身一律跳过，不读取文件夹名称；到达第五级后不再向下穿透
+            if (depth >= MAX_TRAVERSE_DEPTH) {
+                return Promise.resolve();
+            }
             return new Promise(function (resolve) {
                 var dirReader = entry.createReader();
                 dirReader.readEntries(function (entries) {
-                    var promises = entries.map(function (e) { return processEntry(e); });
+                    var promises = entries.map(function (e) { return processEntry(e, depth + 1); });
                     Promise.all(promises).then(resolve);
                 });
             });

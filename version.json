@@ -1,14 +1,13 @@
 {
-  "version": "1.1.40",
-  "version_code": 1140,
+  "version": "1.1.41",
+  "version_code": 1141,
   "release_date": "2026-08-22",
   "mandatory": false,
   "changelog": [
-    "v1.1.40 社保模块花名册重名支持：",
-    "1. 花名册中存在同名人员时，不再丢弃重名条目，以序号+姓名区分保留",
-    "2. 参保证明OCR记录按姓名+身份证号分组，同名不同身份证号自动拆分为不同人员",
-    "3. 花名册补全按身份证号优先匹配，重名人员各自对应，时间段不再串档",
-    "4. 台账Excel与文件整理命名按身份证号定位各自序号（如01-张三、03-张三）"
+    "v1.1.41 劳动合同模块文件夹遍历深度调整：",
+    "1. 文件夹选择/拖拽遍历最多穿透五级子文件夹，深层目录中的合同文件可完整读取",
+    "2. 遍历过程中文件夹一律跳过，仅读取图片和PDF格式文件的文件名",
+    "3. 其他读取规则、匹配逻辑与处理行为保持不变"
   ],
-  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.40"
+  "download_url": "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform/releases/tag/v1.1.41"
 }

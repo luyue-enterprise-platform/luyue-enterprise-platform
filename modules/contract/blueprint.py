@@ -262,6 +262,10 @@ def api_pick_folder():
         return jsonify({'cancelled': True})
 
     # 递归遍历文件夹，查找所有图片和PDF文件
+    # v1.1.41: 最多穿透五级子文件夹——所选文件夹根目录为第0级，其下1~5级子文件夹内的
+    # 图片/PDF文件均可读取；到达第5级后不再向下穿透。文件夹本身一律跳过（不作为文件读取），
+    # 仅收集图片/PDF文件的文件名
+    MAX_TRAVERSE_DEPTH = 5
     valid_exts = IMAGE_EXTENSIONS | {'.pdf'}
     file_list = []        # [{name, folder, size}]
     file_paths = []       # [(full_path, folder_name)]
@@ -271,6 +275,11 @@ def api_pick_folder():
     for dirpath, dirnames, filenames in os.walk(folder_path):
         # 计算相对路径
         rel_dir = os.path.relpath(dirpath, folder_path)
+
+        # 深度控制：当前目录已是第五级子文件夹时，不再向下穿透
+        depth = 0 if rel_dir == '.' else rel_dir.count(os.sep) + 1
+        if depth >= MAX_TRAVERSE_DEPTH:
+            dirnames[:] = []
 
         for fname in sorted(filenames):
             ext = os.path.splitext(fname)[1].lower()
