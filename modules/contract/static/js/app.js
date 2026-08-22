@@ -374,6 +374,8 @@ function startProcess() {
     document.getElementById('progressBar').style.width = '5%';
     document.getElementById('progressText').textContent = '正在上传文件...';
     document.getElementById('resultSection').style.display = 'none';
+    document.getElementById('conflictSection').style.display = 'none';
+    conflictData = [];
 
     fetch('/contract/api/upload', { method: 'POST', body: formData })
         .then(function (r) { return r.json(); })
@@ -418,7 +420,16 @@ function pollProgress() {
                 document.getElementById('progressBar').style.width = '100%';
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('startBtn').textContent = '🚀 开始整理';
+                document.getElementById('conflictSection').style.display = 'none';
                 fetchResult();
+            } else if (data.status === 'conflict') {
+                // 冲突暂停：渲染人工确认面板
+                clearInterval(pollTimer);
+                pollTimer = null;
+                document.getElementById('progressBar').style.width = '75%';
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('startBtn').textContent = '🚀 开始整理';
+                renderConflicts(data.conflicts || []);
             } else if (data.status === 'error') {
                 clearInterval(pollTimer);
                 pollTimer = null;
@@ -426,13 +437,109 @@ function pollProgress() {
                 document.getElementById('startBtn').textContent = '🚀 开始整理';
                 showToast(data.message || '处理失败', 'error');
             } else {
-                var pct = Math.min(95, 20 + Math.random() * 40);
+                // 按已处理文件数估算进度
+                var pct = 20;
+                if (data.total > 0) {
+                    pct = Math.min(95, 20 + Math.round((data.current || 0) / data.total * 75));
+                }
                 document.getElementById('progressBar').style.width = pct + '%';
             }
         })
         .catch(function () {
             // 忽略网络错误，继续轮询
         });
+}
+
+// ===== 冲突人工确认 =====
+var conflictData = [];   // [{original, guessed, reason, candidates:[{seq,name}]}]
+
+function renderConflicts(conflicts) {
+    conflictData = conflicts;
+    var section = document.getElementById('conflictSection');
+    var tbody = document.getElementById('conflictTableBody');
+    section.style.display = 'block';
+
+    tbody.innerHTML = conflicts.map(function (c, idx) {
+        var options = (c.candidates || []).map(function (p) {
+            return '<option value="' + p.seq + '">' + esc(p.seq + ' - ' + p.name) + '</option>';
+        }).join('');
+        return '<tr>' +
+            '<td class="col-orig" title="' + esc(c.original) + '">' + esc(c.original) + '</td>' +
+            '<td>' + esc(c.guessed || '(未识别)') + '</td>' +
+            '<td class="col-reason">' + esc(c.reason) + '</td>' +
+            '<td><select class="conflict-select" id="conflictSel_' + idx + '">' +
+                options +
+                '<option value="pending">📂 移入待处理</option>' +
+            '</select></td>' +
+            '</tr>';
+    }).join('');
+
+    section.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+function confirmConflicts(btn) {
+    if (!currentTaskId || conflictData.length === 0) return;
+
+    var resolutions = [];
+    for (var i = 0; i < conflictData.length; i++) {
+        var sel = document.getElementById('conflictSel_' + i);
+        if (!sel) continue;
+        var val = sel.value;
+        if (val === 'pending') {
+            resolutions.push({original: conflictData[i].original, action: 'pending'});
+        } else {
+            resolutions.push({original: conflictData[i].original, seq: parseInt(val, 10)});
+        }
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '正在处理...';
+    }
+    document.getElementById('conflictSection').style.display = 'none';
+    document.getElementById('progressSection').style.display = 'block';
+    document.getElementById('progressText').textContent = '正在按确认结果处理冲突文件...';
+    document.getElementById('progressBar').style.width = '80%';
+
+    fetch('/contract/api/resolve/' + currentTaskId, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({resolutions: resolutions})
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '✔ 确认并继续处理';
+            }
+            if (data.error) {
+                showToast(data.error, 'error');
+                document.getElementById('conflictSection').style.display = 'block';
+                document.getElementById('progressSection').style.display = 'none';
+                return;
+            }
+            conflictData = [];
+            startPolling();
+        })
+        .catch(function (err) {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '✔ 确认并继续处理';
+            }
+            showToast('提交确认结果失败: ' + err.message, 'error');
+            document.getElementById('conflictSection').style.display = 'block';
+            document.getElementById('progressSection').style.display = 'none';
+        });
+}
+
+// 全部移入待处理
+function resolveAllPending() {
+    if (!currentTaskId || conflictData.length === 0) return;
+    var selects = document.querySelectorAll('.conflict-select');
+    for (var i = 0; i < selects.length; i++) {
+        selects[i].value = 'pending';
+    }
+    confirmConflicts(null);
 }
 
 // ===== 获取结果 =====
@@ -458,6 +565,7 @@ function renderResult(result) {
     // 统计卡片
     var renamed = result.renamed || [];
     var unmatched = result.unmatched || [];
+    var resolvedCount = result.conflicts_resolved_count || 0;
 
     document.getElementById('statsGrid').innerHTML =
         '<div class="stat-card success">' +
@@ -466,8 +574,14 @@ function renderResult(result) {
         '</div>' +
         '<div class="stat-card warn">' +
             '<div class="stat-value">' + result.unmatched_count + '</div>' +
-            '<div class="stat-label">未匹配</div>' +
+            '<div class="stat-label">待处理</div>' +
         '</div>' +
+        (resolvedCount > 0
+            ? '<div class="stat-card info">' +
+                '<div class="stat-value">' + resolvedCount + '</div>' +
+                '<div class="stat-label">人工确认冲突</div>' +
+              '</div>'
+            : '') +
         '<div class="stat-card">' +
             '<div class="stat-value">' + result.total + '</div>' +
             '<div class="stat-label">总图片数</div>' +
@@ -492,13 +606,19 @@ function renderResult(result) {
         tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#999;">无匹配结果</td></tr>';
     }
 
-    // 未匹配文件
+    // 待处理文件（含失败原因）
     var unmatchedBlock = document.getElementById('unmatchedBlock');
     var unmatchedList = document.getElementById('unmatchedList');
     if (unmatched.length > 0) {
         unmatchedBlock.style.display = 'block';
         unmatchedList.innerHTML = unmatched.map(function (f) {
-            return '<span class="unmatched-tag">' + esc(f) + '</span>';
+            // 兼容旧格式（字符串）与新格式（对象）
+            var name = typeof f === 'string' ? f : f.original;
+            var reason = (typeof f === 'object' && f.reason) ? f.reason : '';
+            return '<span class="unmatched-tag" title="' + esc(reason) + '">' +
+                esc(name) +
+                (reason ? '<span class="unmatched-reason">' + esc(reason) + '</span>' : '') +
+                '</span>';
         }).join('');
     } else {
         unmatchedBlock.style.display = 'none';
@@ -554,6 +674,8 @@ function hideActionAndResult() {
     document.getElementById('actionSection').style.display = 'none';
     document.getElementById('resultSection').style.display = 'none';
     document.getElementById('progressSection').style.display = 'none';
+    document.getElementById('conflictSection').style.display = 'none';
+    conflictData = [];
     currentTaskId = null;
 }
 

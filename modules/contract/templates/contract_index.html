@@ -104,6 +104,39 @@
             </div>
         </section>
 
+        <!-- 冲突人工确认 -->
+        <section class="card" id="conflictSection" style="display:none;">
+            <div class="card-header">
+                <span class="step-badge warn">!</span>
+                <h2>冲突文件待确认</h2>
+                <span class="card-tip">同名员工或文件名含多个姓名，请人工确认归属后继续</span>
+            </div>
+            <div class="card-body">
+                <div class="table-wrapper">
+                    <table class="result-table conflict-table" id="conflictTable">
+                        <thead>
+                            <tr>
+                                <th>原文件名</th>
+                                <th>提取姓名</th>
+                                <th>冲突原因</th>
+                                <th>处理方式</th>
+                            </tr>
+                        </thead>
+                        <tbody id="conflictTableBody"></tbody>
+                    </table>
+                </div>
+                <div class="conflict-actions">
+                    <button class="btn-primary btn-lg" id="btnResolveConflicts" onclick="confirmConflicts(this)">
+                        ✔ 确认并继续处理
+                    </button>
+                    <button class="btn-ghost" onclick="resolveAllPending()">
+                        📂 全部移入待处理
+                    </button>
+                </div>
+                <p class="action-hint">未确认的冲突文件将在继续处理时自动移入"待处理"文件夹</p>
+            </div>
+        </section>
+
         <!-- 处理结果 -->
         <section class="card" id="resultSection" style="display:none;">
             <div class="card-header">
@@ -113,7 +146,7 @@
             <div class="card-body">
                 <!-- 统计卡片 -->
                 <div class="stats-grid" id="statsGrid"></div>
-                
+
                 <!-- 匹配详情 -->
                 <div class="result-detail">
                     <h3>匹配详情</h3>
@@ -131,13 +164,13 @@
                         </table>
                     </div>
                 </div>
-                
-                <!-- 未匹配文件 -->
+
+                <!-- 待处理文件 -->
                 <div class="unmatched-block" id="unmatchedBlock" style="display:none;">
-                    <h3>⚠️ 未匹配文件（已放入"未匹配"文件夹）</h3>
+                    <h3>⚠️ 待处理文件（已移入"待处理"文件夹，详见"失败明细报告.xlsx"）</h3>
                     <div class="unmatched-list" id="unmatchedList"></div>
                 </div>
-                
+
                 <!-- 下载按钮 -->
                 <div class="action-buttons">
                     <button class="btn-primary btn-lg" id="btnSaveToLocation" onclick="saveToLocation(this)">
@@ -150,6 +183,7 @@
                         🔄 重新整理
                     </button>
                 </div>
+                <p class="action-hint">输出包含：重命名文件、"待处理"文件夹（含失败明细报告.xlsx）、处理日志.json（原文件名→新文件名，可回溯）</p>
             </div>
         </section>
     </main>

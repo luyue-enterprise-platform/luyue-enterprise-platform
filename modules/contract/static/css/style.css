@@ -509,3 +509,48 @@ body {
     .navbar { padding: 0 16px; }
     .brand-text { font-size: 15px; }
 }
+
+/* ===== v1.1.36 冲突人工确认 ===== */
+.step-badge.warn {
+    background: var(--warning);
+}
+
+.conflict-table .col-reason {
+    color: var(--warning);
+    max-width: 200px;
+    font-size: 13px;
+}
+
+.conflict-select {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg, #fff);
+    color: var(--text, #333);
+    font-size: 13px;
+    min-width: 160px;
+    cursor: pointer;
+}
+
+.conflict-select:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.conflict-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-top: 18px;
+}
+
+.stat-card.info .stat-value {
+    color: var(--primary);
+}
+
+.unmatched-tag .unmatched-reason {
+    display: block;
+    font-size: 11px;
+    color: var(--warning);
+    margin-top: 2px;
+}
