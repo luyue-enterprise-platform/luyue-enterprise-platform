@@ -8,6 +8,7 @@ var selectedFiles = [];        // [{file: File|null, name: String, folder: Strin
 var pickIds = [];              // 文件夹选择ID列表（支持多个文件夹累加）
 var currentTaskId = null;
 var pollTimer = null;
+var previewData = null;       // 重命名计划预览数据 {auto, duplicates, unmatched, roster_missing, total}
 
 // ===== 页面元素引用 =====
 var rosterFileInput = document.getElementById('rosterFileInput');
@@ -381,8 +382,8 @@ function startProcess() {
     document.getElementById('progressBar').style.width = '5%';
     document.getElementById('progressText').textContent = '正在上传文件...';
     document.getElementById('resultSection').style.display = 'none';
-    document.getElementById('conflictSection').style.display = 'none';
-    conflictData = [];
+    document.getElementById('previewSection').style.display = 'none';
+    previewData = null;
 
     fetch('/contract/api/upload', { method: 'POST', body: formData })
         .then(function (r) { return r.json(); })
@@ -427,16 +428,16 @@ function pollProgress() {
                 document.getElementById('progressBar').style.width = '100%';
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('startBtn').textContent = '🚀 开始整理';
-                document.getElementById('conflictSection').style.display = 'none';
+                document.getElementById('previewSection').style.display = 'none';
                 fetchResult();
-            } else if (data.status === 'conflict') {
-                // 冲突暂停：渲染人工确认面板
+            } else if (data.status === 'preview') {
+                // 分析完成：获取重命名计划，渲染预览界面
                 clearInterval(pollTimer);
                 pollTimer = null;
                 document.getElementById('progressBar').style.width = '75%';
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('startBtn').textContent = '🚀 开始整理';
-                renderConflicts(data.conflicts || []);
+                fetchPreview();
             } else if (data.status === 'error') {
                 clearInterval(pollTimer);
                 pollTimer = null;
@@ -457,96 +458,287 @@ function pollProgress() {
         });
 }
 
-// ===== 冲突人工确认 =====
-var conflictData = [];   // [{original, guessed, reason, candidates:[{seq,name}]}]
+// ===== 重命名计划预览 =====
 
-function renderConflicts(conflicts) {
-    conflictData = conflicts;
-    var section = document.getElementById('conflictSection');
-    var tbody = document.getElementById('conflictTableBody');
+function fetchPreview() {
+    fetch('/contract/api/preview/' + currentTaskId)
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.error) {
+                showToast(data.error, 'error');
+                return;
+            }
+            renderPreview(data.plan || {});
+        })
+        .catch(function (err) {
+            showToast('获取预览数据失败: ' + err.message, 'error');
+        });
+}
+
+// 生成建议新文件名（重名项按所选归属人生成）
+function suggestName(person, originalName) {
+    var ext = originalName.indexOf('.') >= 0 ? originalName.slice(originalName.lastIndexOf('.')) : '';
+    var seqStr = ('0' + person.seq).slice(-2);
+    return seqStr + '-' + person.name + (person.idcard_tail ? '-' + person.idcard_tail : '') + ext;
+}
+
+function renderPreview(plan) {
+    previewData = plan;
+    var section = document.getElementById('previewSection');
     section.style.display = 'block';
 
-    tbody.innerHTML = conflicts.map(function (c, idx) {
-        var options = (c.candidates || []).map(function (p) {
-            return '<option value="' + p.seq + '">' + esc(p.seq + ' - ' + p.name) + '</option>';
+    var auto = plan.auto || [];
+    var duplicates = plan.duplicates || [];
+    var unmatched = plan.unmatched || [];
+    var missing = plan.roster_missing || [];
+
+    // 统计卡片
+    document.getElementById('previewStats').innerHTML =
+        '<div class="stat-card success">' +
+            '<div class="stat-value">' + auto.length + '</div>' +
+            '<div class="stat-label">自动匹配</div>' +
+        '</div>' +
+        '<div class="stat-card warn">' +
+            '<div class="stat-value">' + duplicates.length + '</div>' +
+            '<div class="stat-label">重名待确认</div>' +
+        '</div>' +
+        '<div class="stat-card danger">' +
+            '<div class="stat-value">' + unmatched.length + '</div>' +
+            '<div class="stat-label">未匹配文件</div>' +
+        '</div>' +
+        '<div class="stat-card">' +
+            '<div class="stat-value">' + missing.length + '</div>' +
+            '<div class="stat-label">花名册无合同</div>' +
+        '</div>' +
+        '<div class="stat-card">' +
+            '<div class="stat-value">' + (plan.total || 0) + '</div>' +
+            '<div class="stat-label">总文件数</div>' +
+        '</div>';
+
+    // 自动匹配表（新文件名可编辑）
+    var autoBlock = document.getElementById('previewAutoBlock');
+    var autoBody = document.getElementById('previewAutoBody');
+    if (auto.length > 0) {
+        autoBlock.style.display = 'block';
+        autoBody.innerHTML = auto.map(function (item, idx) {
+            return '<tr>' +
+                '<td class="col-seq">' + item.seq + '</td>' +
+                '<td>' + esc(item.name) + '</td>' +
+                '<td class="col-orig" title="' + esc(item.original) + '">' + esc(item.original) + '</td>' +
+                '<td><input type="text" class="preview-name-input" id="pvAuto_' + idx + '" value="' + esc(item.new_name) + '"></td>' +
+                '</tr>';
         }).join('');
-        return '<tr>' +
-            '<td class="col-orig" title="' + esc(c.original) + '">' + esc(c.original) + '</td>' +
-            '<td>' + esc(c.guessed || '(未识别)') + '</td>' +
-            '<td class="col-reason">' + esc(c.reason) + '</td>' +
-            '<td><select class="conflict-select" id="conflictSel_' + idx + '">' +
-                options +
-                '<option value="pending">📂 移入待处理</option>' +
-            '</select></td>' +
-            '</tr>';
-    }).join('');
+    } else {
+        autoBlock.style.display = 'none';
+    }
+
+    // 重名待确认表（归属人下拉 + 可编辑新文件名）
+    var dupBlock = document.getElementById('previewDupBlock');
+    var dupBody = document.getElementById('previewDupBody');
+    if (duplicates.length > 0) {
+        dupBlock.style.display = 'block';
+        dupBody.innerHTML = duplicates.map(function (d, idx) {
+            var options = (d.candidates || []).map(function (p) {
+                var label = p.seq + ' - ' + p.name + (p.idcard_tail ? '（***' + p.idcard_tail + '）' : '');
+                return '<option value="' + p.seq + '">' + esc(label) + '</option>';
+            }).join('');
+            return '<tr>' +
+                '<td class="col-orig" title="' + esc(d.original) + '">' + esc(d.original) + '</td>' +
+                '<td>' + esc(d.guessed || '(未识别)') + '</td>' +
+                '<td class="col-reason">' + esc(d.reason) + '</td>' +
+                '<td><select class="conflict-select" id="pvSel_' + idx + '" onchange="onDupSelect(' + idx + ')">' +
+                    options +
+                    '<option value="pending">📂 移入待处理</option>' +
+                '</select></td>' +
+                '<td><input type="text" class="preview-name-input" id="pvDupName_' + idx + '" value="" placeholder="选择归属人后自动生成，可修改"></td>' +
+                '</tr>';
+        }).join('');
+        // 初始化各重名项的建议文件名
+        for (var i = 0; i < duplicates.length; i++) {
+            onDupSelect(i);
+        }
+    } else {
+        dupBlock.style.display = 'none';
+    }
+
+    // 未匹配文件
+    var unmatchedBlock = document.getElementById('previewUnmatchedBlock');
+    var unmatchedList = document.getElementById('previewUnmatchedList');
+    if (unmatched.length > 0) {
+        unmatchedBlock.style.display = 'block';
+        unmatchedList.innerHTML = unmatched.map(function (f) {
+            return '<span class="unmatched-tag" title="' + esc(f.reason || '') + '">' +
+                esc(f.original) +
+                (f.guessed ? '<span class="unmatched-reason">' + esc(f.guessed) + '</span>' : '') +
+                '</span>';
+        }).join('');
+    } else {
+        unmatchedBlock.style.display = 'none';
+    }
+
+    // 花名册无对应合同的人员
+    var missingBlock = document.getElementById('previewMissingBlock');
+    var missingList = document.getElementById('previewMissingList');
+    if (missing.length > 0) {
+        missingBlock.style.display = 'block';
+        missingList.innerHTML = missing.map(function (p) {
+            return '<span class="roster-tag"><span class="tag-seq">' + p.seq + '</span>' + esc(p.name) + '</span>';
+        }).join('');
+    } else {
+        missingBlock.style.display = 'none';
+    }
 
     section.scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 
-function confirmConflicts(btn) {
-    if (!currentTaskId || conflictData.length === 0) return;
+// 重名项归属人切换：自动填充建议文件名
+function onDupSelect(idx) {
+    var sel = document.getElementById('pvSel_' + idx);
+    var input = document.getElementById('pvDupName_' + idx);
+    if (!sel || !input || !previewData) return;
+    var duplicates = previewData.duplicates || [];
+    if (idx >= duplicates.length) return;
 
-    var resolutions = [];
-    for (var i = 0; i < conflictData.length; i++) {
-        var sel = document.getElementById('conflictSel_' + i);
-        if (!sel) continue;
-        var val = sel.value;
-        if (val === 'pending') {
-            resolutions.push({original: conflictData[i].original, action: 'pending'});
-        } else {
-            resolutions.push({original: conflictData[i].original, seq: parseInt(val, 10)});
+    if (sel.value === 'pending') {
+        input.value = '';
+        input.disabled = true;
+        input.placeholder = '将移入待处理文件夹';
+        return;
+    }
+    input.disabled = false;
+    input.placeholder = '选择归属人后自动生成，可修改';
+
+    var dup = duplicates[idx];
+    var person = null;
+    for (var i = 0; i < (dup.candidates || []).length; i++) {
+        if (String(dup.candidates[i].seq) === String(sel.value)) {
+            person = dup.candidates[i];
+            break;
         }
+    }
+    if (person) {
+        input.value = suggestName(person, dup.original);
+    }
+}
+
+// 确认预览并执行重命名
+function confirmPreview(btn) {
+    if (!currentTaskId || !previewData) return;
+
+    var renames = [];
+    var pending = [];
+
+    // 自动匹配项（新文件名可编辑）
+    var auto = previewData.auto || [];
+    for (var i = 0; i < auto.length; i++) {
+        var input = document.getElementById('pvAuto_' + i);
+        var newName = input ? input.value.trim() : auto[i].new_name;
+        if (newName) {
+            renames.push({original: auto[i].original, new_name: newName});
+        } else {
+            pending.push(auto[i].original);
+        }
+    }
+
+    // 重名待确认项
+    var duplicates = previewData.duplicates || [];
+    for (var j = 0; j < duplicates.length; j++) {
+        var sel = document.getElementById('pvSel_' + j);
+        var dupInput = document.getElementById('pvDupName_' + j);
+        if (sel && sel.value === 'pending') {
+            pending.push(duplicates[j].original);
+            continue;
+        }
+        var dupName = dupInput ? dupInput.value.trim() : '';
+        if (dupName) {
+            renames.push({
+                original: duplicates[j].original,
+                new_name: dupName,
+                seq: sel ? parseInt(sel.value, 10) : null,
+            });
+        } else {
+            pending.push(duplicates[j].original);
+        }
+    }
+
+    if (renames.length === 0 && pending.length === 0) {
+        showToast('没有可执行的重命名项', 'error');
+        return;
     }
 
     if (btn) {
         btn.disabled = true;
-        btn.textContent = '正在处理...';
+        btn.textContent = '正在执行...';
     }
-    document.getElementById('conflictSection').style.display = 'none';
+    document.getElementById('previewSection').style.display = 'none';
     document.getElementById('progressSection').style.display = 'block';
-    document.getElementById('progressText').textContent = '正在按确认结果处理冲突文件...';
+    document.getElementById('progressText').textContent = '正在执行重命名...';
     document.getElementById('progressBar').style.width = '80%';
 
-    fetch('/contract/api/resolve/' + currentTaskId, {
+    fetch('/contract/api/execute/' + currentTaskId, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({resolutions: resolutions})
+        body: JSON.stringify({renames: renames, pending: pending})
     })
         .then(function (r) { return r.json(); })
         .then(function (data) {
-            if (btn) {
-                btn.disabled = false;
-                btn.textContent = '✔ 确认并继续处理';
-            }
             if (data.error) {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = '✔ 确认并执行重命名';
+                }
                 showToast(data.error, 'error');
-                document.getElementById('conflictSection').style.display = 'block';
+                document.getElementById('previewSection').style.display = 'block';
                 document.getElementById('progressSection').style.display = 'none';
                 return;
             }
-            conflictData = [];
             startPolling();
         })
         .catch(function (err) {
             if (btn) {
                 btn.disabled = false;
-                btn.textContent = '✔ 确认并继续处理';
+                btn.textContent = '✔ 确认并执行重命名';
             }
-            showToast('提交确认结果失败: ' + err.message, 'error');
-            document.getElementById('conflictSection').style.display = 'block';
+            showToast('提交执行请求失败: ' + err.message, 'error');
+            document.getElementById('previewSection').style.display = 'block';
             document.getElementById('progressSection').style.display = 'none';
         });
 }
 
-// 全部移入待处理
-function resolveAllPending() {
-    if (!currentTaskId || conflictData.length === 0) return;
-    var selects = document.querySelectorAll('.conflict-select');
-    for (var i = 0; i < selects.length; i++) {
-        selects[i].value = 'pending';
+// 回滚重命名（依据重命名日志恢复原文件名）
+function rollbackRenames(btn) {
+    if (!currentTaskId) return;
+    if (!confirm('确定要回滚本次重命名吗？输出目录中的文件将恢复为原文件名。')) {
+        return;
     }
-    confirmConflicts(null);
+    var originalText = btn ? btn.textContent : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '正在回滚...';
+    }
+
+    fetch('/contract/api/rollback/' + currentTaskId, { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+            if (data.error) {
+                showToast(data.error, 'error');
+                return;
+            }
+            showToast('已回滚 ' + data.reverted + ' 个文件' +
+                (data.failed > 0 ? '（' + data.failed + ' 个失败）' : ''), 'success');
+            fetchResult();
+        })
+        .catch(function (err) {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+            showToast('回滚失败: ' + err.message, 'error');
+        });
 }
 
 // ===== 获取结果 =====
@@ -573,6 +765,7 @@ function renderResult(result) {
     var renamed = result.renamed || [];
     var unmatched = result.unmatched || [];
     var resolvedCount = result.conflicts_resolved_count || 0;
+    var rolledBackCount = result.rolled_back_count || 0;
 
     document.getElementById('statsGrid').innerHTML =
         '<div class="stat-card success">' +
@@ -587,6 +780,12 @@ function renderResult(result) {
             ? '<div class="stat-card info">' +
                 '<div class="stat-value">' + resolvedCount + '</div>' +
                 '<div class="stat-label">人工确认冲突</div>' +
+              '</div>'
+            : '') +
+        (rolledBackCount > 0
+            ? '<div class="stat-card info">' +
+                '<div class="stat-value">' + rolledBackCount + '</div>' +
+                '<div class="stat-label">已回滚</div>' +
               '</div>'
             : '') +
         '<div class="stat-card">' +
@@ -681,8 +880,8 @@ function hideActionAndResult() {
     document.getElementById('actionSection').style.display = 'none';
     document.getElementById('resultSection').style.display = 'none';
     document.getElementById('progressSection').style.display = 'none';
-    document.getElementById('conflictSection').style.display = 'none';
-    conflictData = [];
+    document.getElementById('previewSection').style.display = 'none';
+    previewData = null;
     currentTaskId = null;
 }
 

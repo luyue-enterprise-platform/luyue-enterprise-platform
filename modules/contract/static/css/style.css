@@ -554,3 +554,31 @@ body {
     color: var(--warning);
     margin-top: 2px;
 }
+
+/* v1.1.44: 预览界面新文件名编辑输入框 */
+.preview-name-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 10px;
+    border: 1px solid #d9dee6;
+    border-radius: 4px;
+    font-size: 13px;
+    color: var(--primary-dark, #1a3d5c);
+    background: #fff;
+}
+
+.preview-name-input:focus {
+    border-color: var(--primary-light, #4A90D9);
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.15);
+}
+
+.preview-name-input:disabled {
+    background: #f5f6f8;
+    color: #999;
+}
+
+/* v1.1.44: 预览统计卡片 danger 状态 */
+.stat-card.danger .stat-value {
+    color: #d9534f;
+}

@@ -87,7 +87,7 @@
                 <button class="btn-primary btn-lg" id="startBtn" onclick="startProcess()">
                     🚀 开始整理
                 </button>
-                <p class="action-hint">将按花名册顺序对图片重命名，格式：序号-姓名</p>
+                <p class="action-hint">将按花名册对文件重命名，格式：序号-姓名-身份证号后四位（无身份证号时为序号-姓名）；执行前可预览调整</p>
             </div>
         </section>
 
@@ -104,36 +104,75 @@
             </div>
         </section>
 
-        <!-- 冲突人工确认 -->
-        <section class="card" id="conflictSection" style="display:none;">
+        <!-- 重命名计划预览 -->
+        <section class="card" id="previewSection" style="display:none;">
             <div class="card-header">
                 <span class="step-badge warn">!</span>
-                <h2>冲突文件待确认</h2>
-                <span class="card-tip">同名员工或文件名含多个姓名，请人工确认归属后继续</span>
+                <h2>重命名计划预览</h2>
+                <span class="card-tip">请核对以下变更明细，新文件名可直接修改，确认后才会执行重命名</span>
             </div>
             <div class="card-body">
-                <div class="table-wrapper">
-                    <table class="result-table conflict-table" id="conflictTable">
-                        <thead>
-                            <tr>
-                                <th>原文件名</th>
-                                <th>提取姓名</th>
-                                <th>冲突原因</th>
-                                <th>处理方式</th>
-                            </tr>
-                        </thead>
-                        <tbody id="conflictTableBody"></tbody>
-                    </table>
+                <!-- 统计卡片 -->
+                <div class="stats-grid" id="previewStats"></div>
+
+                <!-- 自动匹配（可编辑新文件名） -->
+                <div class="result-detail" id="previewAutoBlock" style="display:none;">
+                    <h3>✅ 自动匹配（新文件名可直接修改）</h3>
+                    <div class="table-wrapper">
+                        <table class="result-table" id="previewAutoTable">
+                            <thead>
+                                <tr>
+                                    <th>序号</th>
+                                    <th>姓名</th>
+                                    <th>原文件名</th>
+                                    <th>新文件名（可修改）</th>
+                                </tr>
+                            </thead>
+                            <tbody id="previewAutoBody"></tbody>
+                        </table>
+                    </div>
                 </div>
+
+                <!-- 重名待确认 -->
+                <div class="result-detail" id="previewDupBlock" style="display:none;">
+                    <h3>⚠️ 重名待确认（请选择归属人）</h3>
+                    <div class="table-wrapper">
+                        <table class="result-table" id="previewDupTable">
+                            <thead>
+                                <tr>
+                                    <th>原文件名</th>
+                                    <th>提取姓名</th>
+                                    <th>原因</th>
+                                    <th>归属人</th>
+                                    <th>新文件名（可修改）</th>
+                                </tr>
+                            </thead>
+                            <tbody id="previewDupBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 未匹配文件 -->
+                <div class="unmatched-block" id="previewUnmatchedBlock" style="display:none;">
+                    <h3>❌ 未匹配文件（将移入"待处理"文件夹）</h3>
+                    <div class="unmatched-list" id="previewUnmatchedList"></div>
+                </div>
+
+                <!-- 花名册无合同人员 -->
+                <div class="unmatched-block" id="previewMissingBlock" style="display:none;">
+                    <h3>📋 花名册中无对应合同的人员</h3>
+                    <div class="roster-tags" id="previewMissingList"></div>
+                </div>
+
                 <div class="conflict-actions">
-                    <button class="btn-primary btn-lg" id="btnResolveConflicts" onclick="confirmConflicts(this)">
-                        ✔ 确认并继续处理
+                    <button class="btn-primary btn-lg" id="btnConfirmPreview" onclick="confirmPreview(this)">
+                        ✔ 确认并执行重命名
                     </button>
-                    <button class="btn-ghost" onclick="resolveAllPending()">
-                        📂 全部移入待处理
+                    <button class="btn-ghost" onclick="resetAll()">
+                        🔄 取消并重新整理
                     </button>
                 </div>
-                <p class="action-hint">未确认的冲突文件将在继续处理时自动移入"待处理"文件夹</p>
+                <p class="action-hint">未匹配文件与花名册无合同人员不会执行重命名，可核对后补充材料重新处理</p>
             </div>
         </section>
 
@@ -179,11 +218,14 @@
                     <button class="btn-ghost" onclick="downloadResult(this)">
                         📥 下载ZIP
                     </button>
+                    <button class="btn-ghost" onclick="rollbackRenames(this)">
+                        ↩ 回滚重命名
+                    </button>
                     <button class="btn-ghost" onclick="resetAll()">
                         🔄 重新整理
                     </button>
                 </div>
-                <p class="action-hint">输出包含：重命名文件、"待处理"文件夹（含失败明细报告.xlsx）、处理日志.json（原文件名→新文件名，可回溯）</p>
+                <p class="action-hint">输出包含：重命名文件、"待处理"文件夹（含失败明细报告.xlsx）、重命名日志.json（原文件名→新文件名对照，可追溯、可回滚）</p>
             </div>
         </section>
     </main>
