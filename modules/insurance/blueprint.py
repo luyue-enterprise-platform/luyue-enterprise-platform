@@ -94,7 +94,7 @@ from modules.insurance.core.stats_calculator import calc_all_stats
 from modules.insurance.core.excel_generator import generate_excel
 from modules.insurance.core.roster_parser import (parse_roster, parse_roster_from_table,
                                                    match_person_to_roster, extract_roster_company_name)
-from modules.insurance.core.file_organizer import organize_files, INSURANCE_FOLDER_MAP
+from modules.insurance.core.file_organizer import organize_files, INSURANCE_FOLDER_MAP, _validate_idcard
 
 # ============ 导入共享认证模块（由父应用提供） ============
 from core.auth import (init_db, create_user, verify_user, get_user_count,
@@ -122,6 +122,301 @@ tasks_lock = threading.Lock()
 
 # ============ 文件夹选择临时存储 ============
 picked_folders = {}  # {pick_id: {'file_paths': [path, ...], 'files': [...]}}
+
+# 四险类型（单位一致性校验/手动补录/时间段修改的合法险种范围）
+INSURANCE_TYPES = ('养老保险', '失业保险', '医疗保险', '工伤保险')
+
+
+def _valid_ym(s):
+    """校验 YYYY-MM 格式年月字符串，合法返回规范化的字符串，否则 None"""
+    if not isinstance(s, str):
+        return None
+    s = s.strip()
+    if len(s) == 7 and s[4] == '-' and s[:4].isdigit() and s[5:].isdigit():
+        y, m = int(s[:4]), int(s[5:7])
+        if 1 <= m <= 12:
+            return f'{y:04d}-{m:02d}'
+    return None
+
+
+def _fmt_period(period):
+    """时间段 (start, end) 转为可读字符串"""
+    if isinstance(period, (tuple, list)) and len(period) == 2:
+        return f'{period[0]} ~ {period[1]}'
+    return str(period) if period else ''
+
+
+def _reset_dir(path):
+    """清空并重建目录（防旧整理文件残留），失败容忍不中断"""
+    try:
+        if os.path.exists(path):
+            shutil.rmtree(path)
+    except Exception as e:
+        logger.warning(f'清空目录失败(忽略): {path}: {e}')
+    try:
+        os.makedirs(path, exist_ok=True)
+    except Exception as e:
+        logger.error(f'创建目录失败: {path}: {e}')
+
+
+def _build_roster_index(roster):
+    """构建花名册索引：身份证号优先，姓名兜底"""
+    roster_index = {
+        'idcard_to_entry': {},
+        'name_to_entries': {},
+        'order_idcard': {},
+        'order_name': {},
+    }
+    if roster:
+        for idx, item in enumerate(roster):
+            nm = item.get('name', '').strip()
+            idc = item.get('idcard', '').strip()
+            if idc:
+                if idc not in roster_index['idcard_to_entry']:
+                    roster_index['idcard_to_entry'][idc] = item
+                    roster_index['order_idcard'][idc] = idx
+            if nm:
+                roster_index['name_to_entries'].setdefault(nm, []).append(item)
+                if nm not in roster_index['order_name']:
+                    roster_index['order_name'][nm] = idx
+    return roster_index
+
+
+def _roster_complete(persons, roster):
+    """花名册补全：无参保证明人员姓名保留、时间段留空（v1.1.40 重名支持）
+
+    身份证号统一以花名册为准；同名多身份证号按号区分，缺号按姓名顺序占用。
+    返回新增人数。
+    """
+    if not roster:
+        return 0
+    persons_by_name = {}
+    for p in persons:
+        persons_by_name.setdefault(p['name'], []).append(p)
+    roster_added = 0
+    for item in roster:
+        r_name = item.get('name', '').strip()
+        if not r_name:
+            continue
+        r_idcard = item.get('idcard', '').strip()
+        cands = persons_by_name.get(r_name, [])
+        matched = None
+        if r_idcard:
+            # 优先身份证号精确匹配
+            for p in cands:
+                if p['idcard'] == r_idcard:
+                    matched = p
+                    break
+            # 其次取同姓名且身份证号为空的未占用人员
+            if matched is None:
+                for p in cands:
+                    if not p['idcard'] and not p.get('_roster_matched'):
+                        matched = p
+                        break
+        else:
+            # 花名册无身份证号：按姓名取第一个未占用人员
+            for p in cands:
+                if not p.get('_roster_matched'):
+                    matched = p
+                    break
+        if matched is not None:
+            if r_idcard:
+                matched['idcard'] = r_idcard
+            matched['_roster_matched'] = True
+        else:
+            new_p = {
+                'name': r_name,
+                'idcard': r_idcard,
+                'insurances': {},
+                '_roster_matched': True,
+            }
+            persons.append(new_p)
+            persons_by_name.setdefault(r_name, []).append(new_p)
+            roster_added += 1
+    # 清理内部标记
+    for p in persons:
+        p.pop('_roster_matched', None)
+    return roster_added
+
+
+def _apply_period_overrides(persons, overrides):
+    """应用时间段覆盖层（v1.1.43 手动修改/新增的值优先于OCR识别值）
+
+    overrides: {(name, idcard): {险种: (start, end)}}
+    """
+    for (p_name, p_idcard), ins_map in overrides.items():
+        for p in persons:
+            if p['name'] == p_name and (not p_idcard or not p['idcard'] or p['idcard'] == p_idcard):
+                for ins_type, (start, end) in ins_map.items():
+                    p['insurances'][ins_type] = (start, end)
+                if p_idcard and not p['idcard']:
+                    p['idcard'] = p_idcard
+                break
+
+
+def _rebuild_result(task_id):
+    """统一重建：分组 → 花名册补全 → 应用覆盖层 → 统计 → Excel → 文件整理 → 组装result
+
+    v1.1.43 核心函数。任务的内部状态全部存于 tasks[task_id]['result'] 的下划线字段：
+      _success_results   有效记录（OCR成功且单位一致，含手动补录记录 _manual=True）
+      _excluded_results  缴费单位不一致被排除的记录（带 _excluded 标记）
+      _failed_results    识别失败记录（含 _source_path，供手动补录定位原文件）
+      _period_overrides  {(name, idcard): {险种: (start, end)}} 手动覆盖层
+      _manual_log        操作记录（手动补录/修改时间段/恢复识别值）
+    重建完成后返回过滤内部字段后的公开 result dict；任务不存在返回 None。
+    """
+    with tasks_lock:
+        task = tasks.get(task_id)
+        if not task or not task.get('result'):
+            return None
+        inner = task['result']
+
+    # 读取内部状态（浅拷贝列表，重记录引用即可，本函数不修改单条记录）
+    success_results = list(inner.get('_success_results', []))
+    excluded_results = list(inner.get('_excluded_results', []))
+    failed_results = list(inner.get('_failed_results', []))
+    roster = inner.get('_roster', [])
+    year_range = inner.get('_year_range')
+    company_name = inner.get('_company_name', '')
+    ocr_companies = inner.get('_ocr_companies', {})
+    company_mismatch_files = inner.get('_company_mismatch_files', [])
+    all_files = inner.get('_all_files', [])
+    task_dir = inner.get('_task_dir', os.path.join(UPLOAD_DIR, task_id))
+    roster_company = inner.get('_roster_company', '')
+    roster_source_path = inner.get('_roster_source_path', '')
+    overrides = inner.get('_period_overrides', {})
+    manual_log = inner.get('_manual_log', [])
+
+    # 1) 按人员分组 + 花名册补全
+    persons = group_by_person(success_results)
+    roster_added = _roster_complete(persons, roster)
+    if roster_added:
+        logger.info(f'[task:{task_id}] 花名册补全: 新增 {roster_added} 名无参保证明人员（时间段留空）')
+
+    # 2) 应用手动时间段覆盖层（优先于OCR识别值）
+    if overrides:
+        _apply_period_overrides(persons, overrides)
+
+    # 3) 统计 + 生成Excel
+    person_stats, year_cols = calc_all_stats(persons, year_range)
+    excel_filename = f'申报重点群体税收优惠政策总台账_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+    excel_path = os.path.join(OUTPUT_DIR, excel_filename)
+    gen_result = generate_excel(persons, excel_path, roster=roster,
+                                company_name=company_name, year_range=year_range)
+    yearly_ledger_files = gen_result.get('yearly_ledger_files', [])
+    logger.info(f'[task:{task_id}] Excel重建完成: {excel_path}')
+
+    # 4) 文件整理（目录清空重建，防止旧文件残留；手动补录记录同时参与重命名归类）
+    roster_index = _build_roster_index(roster)
+    organize_dir = os.path.join(OUTPUT_DIR, task_id, '参保证明')
+    _reset_dir(organize_dir)
+    all_for_organize = (list(success_results) + list(excluded_results) +
+                        [r for r in failed_results if r.get('_source_path')])
+    try:
+        organize_result = organize_files(all_for_organize, roster, organize_dir)
+        logger.info(f'[task:{task_id}] 文件整理重建: 正常 {organize_result["organized_count"]} 个, '
+                    f'异常 {organize_result.get("abnormal_count", 0)} 个')
+    except Exception as e:
+        logger.error(f'[task:{task_id}] 文件整理失败: {e}\n{traceback.format_exc()}')
+        organize_result = {'organized_count': 0, 'folder_structure': {}, 'unmatched': [],
+                           'no_roster': not roster, 'abnormal_count': 0}
+
+    # 5) 操作记录持久化（outputs/<task_id>/操作记录.json）
+    if manual_log:
+        try:
+            log_path = os.path.join(OUTPUT_DIR, task_id, '操作记录.json')
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            with open(log_path, 'w', encoding='utf-8') as f:
+                json.dump(manual_log, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f'[task:{task_id}] 操作记录写入失败: {e}')
+
+    # 6) 组装完整 result（公开字段 + 内部状态）
+    def _det(rec, error_text=''):
+        return {
+            'filename': rec.get('filename', ''),
+            'name': rec.get('name', ''),
+            'idcard': rec.get('idcard', ''),
+            'insurance_type': rec.get('insurance_type') or '',
+            'company_name': rec.get('company_name', ''),
+            'period': rec.get('period', ''),
+            'error': error_text,
+            'is_manual': bool(rec.get('_manual')),
+        }
+
+    new_result = {
+        'person_stats': [
+            {
+                'name': ps['name'],
+                'idcard': ps['idcard'],
+                'identity_type': _get_identity_type(ps, roster_index),
+                'insurances': {
+                    k: {'start': v[0], 'end': v[1]}
+                    for k, v in ps['insurances'].items()
+                },
+                'overlap_start': ps['overlap_start'],
+                'overlap_end': ps['overlap_end'],
+                'overlap_months': ps['overlap_months'],
+                'has_overlap': ps['has_overlap'],
+                'yearly_months': ps['yearly_months'],
+            }
+            for ps in person_stats
+        ],
+        'year_cols': year_cols,
+        'excel_path': excel_path,
+        'excel_filename': excel_filename,
+        'yearly_ledger_files': yearly_ledger_files,
+        'ocr_count': len(success_results) + len(excluded_results) + len(failed_results),
+        'person_count': len(persons),
+        'success_count': len(success_results),
+        'excluded_count': len(excluded_results),
+        'failed_count': len(failed_results),
+        'failed_files': [
+            {'filename': r.get('filename', ''), 'error': r.get('error', '识别失败')}
+            for r in failed_results
+        ],
+        'all_files': all_files,
+        # 每张图片的识别详情（有效 + 单位不一致排除 + 识别失败）
+        'image_details': (
+            [_det(r) for r in success_results] +
+            [_det(r, '缴费单位不一致（已排除）') for r in excluded_results] +
+            [_det(r, r.get('error', '识别失败')) for r in failed_results]
+        ),
+        'organize_result': {
+            'organized_count': organize_result['organized_count'],
+            'folder_structure': organize_result['folder_structure'],
+            'unmatched': organize_result['unmatched'],
+            'no_roster': organize_result['no_roster'],
+            'abnormal_count': organize_result.get('abnormal_count', 0),
+        },
+        'organize_dir': organize_dir,
+        'company_name': company_name,
+        'roster_company': roster_company,
+        'ocr_companies': ocr_companies,
+        'company_mismatch_files': company_mismatch_files,
+        # 操作记录（手动补录/修改时间段/恢复识别值）
+        'operation_log': manual_log,
+        # ===== 内部状态（不返回前端） =====
+        '_success_results': success_results,
+        '_excluded_results': excluded_results,
+        '_failed_results': failed_results,
+        '_all_files': all_files,
+        '_task_dir': task_dir,
+        '_year_range': year_range,
+        '_roster': roster,
+        '_roster_company': roster_company,
+        '_roster_source_path': roster_source_path,
+        '_company_name': company_name,
+        '_ocr_companies': ocr_companies,
+        '_company_mismatch_files': company_mismatch_files,
+        '_period_overrides': overrides,
+        '_manual_log': manual_log,
+    }
+
+    with tasks_lock:
+        tasks[task_id]['result'] = new_result
+
+    return {k: v for k, v in new_result.items() if not k.startswith('_')}
 
 
 def process_task(task_id, file_paths, roster, roster_company='', roster_source_path='', year_range=None):
@@ -245,16 +540,14 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
             tasks[task_id]['message'] = '正在分析识别结果...'
 
         # 区分成功和失败的OCR结果
+        # v1.1.43: 失败记录保留完整信息（含 _source_path），供手动补录定位原文件
         success_results = []
         failed_results = []
         all_files = []
         for r in ocr_results:
             fn = r.get('filename', '')
             if r.get('error') or (not r.get('name') and not r.get('idcard')):
-                failed_results.append({
-                    'filename': fn,
-                    'error': r.get('error', '未能识别出有效信息'),
-                })
+                failed_results.append(r)
             else:
                 success_results.append(r)
             all_files.append(fn)
@@ -327,207 +620,41 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
         logger.info(f'[task:{task_id}] 缴费单位验证: 保留 {len(valid_results)} 条, '
                     f'排除 {excluded_count} 条, 花名册公司="{roster_company}"')
 
-        # ===== 标记被排除的记录（缴费单位不一致），供 organize_files 归入异常图片文件夹 =====
+        # ===== 标记被排除的记录（缴费单位不一致），单独存放供文件整理归入异常图片 =====
         valid_filenames = {r.get('filename', '') for r in valid_results}
-        for r in ocr_results:
-            fn = r.get('filename', '')
-            if fn and fn not in valid_filenames and not r.get('error'):
-                # 该记录是成功识别但被排除的（缴费单位不一致）
+        excluded_results = []
+        for r in success_results:
+            if r.get('filename', '') not in valid_filenames:
                 r['_excluded'] = True
-                logger.info(f'[task:{task_id}] 标记排除到异常图片: {fn}')
+                excluded_results.append(r)
+                logger.info(f'[task:{task_id}] 标记排除到异常图片: {r.get("filename", "")}')
 
-        # ===== 按花名册重命名 + 按险种分文件夹（含异常图片归类） =====
+        # ===== v1.1.43: 写入内部状态，统一重建（统计/Excel/文件整理全链路） =====
+        # _rebuild_result 会读取这些内部字段并重建完整 result（含手动补录/时间段覆盖支持）
         with tasks_lock:
-            tasks[task_id]['message'] = '正在整理文件...'
+            tasks[task_id]['message'] = '正在统计计算与整理文件...'
+            tasks[task_id]['result'] = {
+                '_success_results': valid_results,
+                '_excluded_results': excluded_results,
+                '_failed_results': failed_results,
+                '_all_files': all_files,
+                '_task_dir': task_dir,
+                '_year_range': year_range,
+                '_roster': roster,
+                '_roster_company': roster_company,
+                '_roster_source_path': roster_source_path or '',
+                '_company_name': final_company,
+                '_ocr_companies': ocr_companies,
+                '_company_mismatch_files': company_mismatch_files,
+                '_period_overrides': {},
+                '_manual_log': [],
+            }
 
-        organize_dir = os.path.join(OUTPUT_DIR, task_id, '参保证明')
-        os.makedirs(organize_dir, exist_ok=True)
-        try:
-            organize_result = organize_files(ocr_results, roster, organize_dir)
-            org_count = organize_result['organized_count']
-            abnormal_count = organize_result.get('abnormal_count', 0)
-            logger.info(f'[task:{task_id}] 文件整理完成: 正常 {org_count} 个, 异常 {abnormal_count} 个')
-        except Exception as e:
-            logger.error(f'[task:{task_id}] 文件整理失败: {e}\n{traceback.format_exc()}')
-            organize_result = {'organized_count': 0, 'folder_structure': {}, 'unmatched': [], 'no_roster': not roster, 'abnormal_count': 0}
-
-        with tasks_lock:
-            tasks[task_id]['message'] = '正在统计计算...'
-        persons = group_by_person(valid_results)
-
-        # v1.1.34: 花名册补全 — 参保证明中没有对应人员时，花名册姓名保留、参证明时间段留空；
-        # 身份证号统一以花名册为准（保证与花名册一致）
-        # v1.1.40: 支持花名册重名 — 按 (姓名, 身份证号) 匹配，重名人员以身份证号区分；
-        # 身份证号缺失时按姓名顺序占用未匹配人员
-        if roster:
-            persons_by_name = {}
-            for p in persons:
-                persons_by_name.setdefault(p['name'], []).append(p)
-            roster_added = 0
-            for item in roster:
-                r_name = item.get('name', '').strip()
-                if not r_name:
-                    continue
-                r_idcard = item.get('idcard', '').strip()
-                cands = persons_by_name.get(r_name, [])
-                matched = None
-                if r_idcard:
-                    # 优先身份证号精确匹配
-                    for p in cands:
-                        if p['idcard'] == r_idcard:
-                            matched = p
-                            break
-                    # 其次取同姓名且身份证号为空的未占用人员
-                    if matched is None:
-                        for p in cands:
-                            if not p['idcard'] and not p.get('_roster_matched'):
-                                matched = p
-                                break
-                else:
-                    # 花名册无身份证号：按姓名取第一个未占用人员
-                    for p in cands:
-                        if not p.get('_roster_matched'):
-                            matched = p
-                            break
-                if matched is not None:
-                    if r_idcard:
-                        matched['idcard'] = r_idcard
-                    matched['_roster_matched'] = True
-                else:
-                    new_p = {
-                        'name': r_name,
-                        'idcard': r_idcard,
-                        'insurances': {},
-                        '_roster_matched': True,
-                    }
-                    persons.append(new_p)
-                    persons_by_name.setdefault(r_name, []).append(new_p)
-                    roster_added += 1
-            # 清理内部标记
-            for p in persons:
-                p.pop('_roster_matched', None)
-            if roster_added:
-                logger.info(f'[task:{task_id}] 花名册补全: 新增 {roster_added} 名无参保证明人员（时间段留空）')
-
-        person_stats, year_cols = calc_all_stats(persons, year_range)
-
-        # 生成Excel
-        excel_filename = f'申报重点群体税收优惠政策总台账_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
-        excel_path = os.path.join(OUTPUT_DIR, excel_filename)
-        gen_result = generate_excel(persons, excel_path, roster=roster, company_name=final_company, year_range=year_range)
-        logger.info(f'[task:{task_id}] Excel生成完成: {excel_path}')
-
-        # 年度台账独立文件路径
-        yearly_ledger_files = gen_result.get('yearly_ledger_files', [])
-        for yf in yearly_ledger_files:
-            logger.info(f'[task:{task_id}] 年度台账: {yf["filepath"]}')
-
-        # 构建花名册索引：优先按身份证号匹配，其次姓名
-        roster_index = {
-            'idcard_to_entry': {},
-            'name_to_entries': {},
-            'order_idcard': {},
-            'order_name': {},
-        }
-        if roster:
-            for idx, item in enumerate(roster):
-                nm = item.get('name', '').strip()
-                idc = item.get('idcard', '').strip()
-                if idc:
-                    if idc not in roster_index['idcard_to_entry']:
-                        roster_index['idcard_to_entry'][idc] = item
-                        roster_index['order_idcard'][idc] = idx
-                if nm:
-                    roster_index['name_to_entries'].setdefault(nm, []).append(item)
-                    if nm not in roster_index['order_name']:
-                        roster_index['order_name'][nm] = idx
+        _rebuild_result(task_id)
 
         with tasks_lock:
             tasks[task_id]['status'] = 'done'
             tasks[task_id]['message'] = '处理完成'
-            tasks[task_id]['result'] = {
-                'person_stats': [
-                    {
-                        'name': ps['name'],
-                        'idcard': ps['idcard'],
-                        'identity_type': _get_identity_type(ps, roster_index),
-                        'insurances': {
-                            k: {'start': v[0], 'end': v[1]}
-                            for k, v in ps['insurances'].items()
-                        },
-                        'overlap_start': ps['overlap_start'],
-                        'overlap_end': ps['overlap_end'],
-                        'overlap_months': ps['overlap_months'],
-                        'has_overlap': ps['has_overlap'],
-                        'yearly_months': ps['yearly_months'],
-                    }
-                    for ps in person_stats
-                ],
-                'year_cols': year_cols,
-                'excel_path': excel_path,
-                'excel_filename': excel_filename,
-                'yearly_ledger_files': yearly_ledger_files,
-                'ocr_count': len(ocr_results),
-                'person_count': len(persons),
-                'success_count': len(valid_results),
-                'excluded_count': excluded_count,
-                'failed_count': len(failed_results),
-                'failed_files': failed_results,
-                'all_files': all_files,
-                # 每张图片的识别详情（含险种/姓名/身份证/时间段/单位等）
-                # 用于前端展示，方便定位"险种未识别"等问题
-                'image_details': [
-                    {
-                        'filename': r.get('filename', ''),
-                        'name': r.get('name', ''),
-                        'idcard': r.get('idcard', ''),
-                        'insurance_type': r.get('insurance_type') or '',
-                        'company_name': r.get('company_name', ''),
-                        'period': r.get('period', ''),
-                        'error': '',
-                    }
-                    for r in valid_results
-                ] + [
-                    {
-                        'filename': r.get('filename', ''),
-                        'name': r.get('name', ''),
-                        'idcard': r.get('idcard', ''),
-                        'insurance_type': r.get('insurance_type') or '',
-                        'company_name': r.get('company_name', ''),
-                        'period': r.get('period', ''),
-                        'error': '缴费单位不一致（已排除）',
-                    }
-                    for r in success_results if r.get('_excluded')
-                ] + [
-                    {
-                        'filename': r.get('filename', ''),
-                        'name': '',
-                        'idcard': '',
-                        'insurance_type': '',
-                        'company_name': '',
-                        'period': '',
-                        'error': r.get('error', '识别失败'),
-                    }
-                    for r in failed_results
-                ],
-                'organize_result': {
-                    'organized_count': organize_result['organized_count'],
-                    'folder_structure': organize_result['folder_structure'],
-                    'unmatched': organize_result['unmatched'],
-                    'no_roster': organize_result['no_roster'],
-                    'abnormal_count': organize_result.get('abnormal_count', 0),
-                },
-                'organize_dir': organize_dir,
-                # 缴费单位信息
-                'company_name': final_company,
-                'roster_company': roster_company,
-                'ocr_companies': ocr_companies,
-                'company_mismatch_files': company_mismatch_files,
-                # 保存内部数据供重传合并使用
-                '_success_results': valid_results,
-                '_task_dir': task_dir,
-                '_year_range': year_range,
-            }
         logger.info(f'[task:{task_id}] 处理完成')
 
     except Exception as e:
@@ -964,6 +1091,228 @@ def result(task_id):
     return jsonify(res)
 
 
+# ============ v1.1.43: 识别失败图片手动补录 ============
+@insurance_bp.route('/api/manual_fill/<task_id>', methods=['POST'])
+@login_required
+def api_manual_fill(task_id):
+    """手动补录识别失败图片的参保证明信息
+
+    入参 JSON: {filename, name, idcard, insurance_type, start, end}
+    - filename: 失败记录的文件名（image_details 中 error 非空行的 filename）
+    - name: 姓名（必填，需与花名册一致才能自动重命名归类）
+    - idcard: 身份证号（选填，填写则做格式校验）
+    - insurance_type: 四险之一
+    - start/end: YYYY-MM 起止年月（必填，start <= end）
+
+    补录记录并入有效列表（与自动识别同等效力），原图片文件按花名册重命名归类，
+    从异常图片文件夹移出；统计/Excel/文件整理即时重建。
+    """
+    with tasks_lock:
+        task = tasks.get(task_id)
+    if not task:
+        return jsonify({'error': '任务不存在'}), 404
+    if task['status'] != 'done':
+        return jsonify({'error': '任务尚未完成'}), 400
+
+    data = request.get_json(silent=True) or {}
+    filename = (data.get('filename') or '').strip()
+    name = (data.get('name') or '').strip()
+    idcard = (data.get('idcard') or '').strip()
+    insurance_type = (data.get('insurance_type') or '').strip()
+    start = (data.get('start') or '').strip()
+    end = (data.get('end') or '').strip()
+
+    # ===== 参数校验 =====
+    if not filename:
+        return jsonify({'error': '缺少文件名参数'}), 400
+    if not name:
+        return jsonify({'error': '请输入姓名'}), 400
+    if insurance_type not in INSURANCE_TYPES:
+        return jsonify({'error': '险种必须为养老/医疗/工伤/失业保险之一'}), 400
+    if idcard and not _validate_idcard(idcard):
+        return jsonify({'error': '身份证号格式不正确，请核对（15位或18位）'}), 400
+    start_ym = _valid_ym(start)
+    end_ym = _valid_ym(end)
+    if not start_ym or not end_ym:
+        return jsonify({'error': '起始/截止年月格式应为 YYYY-MM，如 2023-01'}), 400
+    if start_ym > end_ym:
+        return jsonify({'error': '起始年月不能晚于截止年月'}), 400
+
+    with tasks_lock:
+        result = tasks[task_id]['result']
+        failed_results = result.get('_failed_results', [])
+        # 按文件名找到待补录的失败记录（取第一条匹配）
+        src_rec = None
+        for r in failed_results:
+            if r.get('filename') == filename:
+                src_rec = r
+                break
+        if src_rec is None:
+            return jsonify({'error': '未找到该失败记录（可能已被补录或重传覆盖）'}), 404
+
+        # 从失败列表移除，生成手动记录并入有效列表（同等效力参与统计）
+        failed_results.remove(src_rec)
+        new_rec = dict(src_rec)
+        new_rec.update({
+            'name': name,
+            'idcard': idcard,
+            'insurance_type': insurance_type,
+            'period': (start_ym, end_ym),
+            'company_name': '',
+            'error': None,
+            'raw_text': '手动补录',
+            '_manual': True,
+        })
+        new_rec.pop('_excluded', None)
+        result['_success_results'].append(new_rec)
+
+        # 操作记录（可追溯）
+        result.setdefault('_manual_log', []).append({
+            'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'action': '手动补录',
+            'name': name,
+            'idcard': idcard,
+            'insurance_type': insurance_type,
+            'old': '识别失败',
+            'new': f'{start_ym} ~ {end_ym}',
+            'operator': session.get('username', ''),
+        })
+
+    logger.info(f'[task:{task_id}] 手动补录: {filename} → {name}/{insurance_type} '
+                f'{start_ym}~{end_ym} (操作人: {session.get("username", "")})')
+
+    # 统一重建（统计/Excel/文件整理全链路同步，补录图片按花名册重命名归类）
+    res = _rebuild_result(task_id)
+    if res is None:
+        return jsonify({'error': '重建结果失败'}), 500
+    if 'yearly_ledger_files' in res:
+        res['yearly_ledger_files'] = [f['filename'] for f in res['yearly_ledger_files']]
+    return jsonify(res)
+
+
+# ============ v1.1.43: 时间段手动修改/新增/恢复 ============
+@insurance_bp.route('/api/update_period/<task_id>', methods=['POST'])
+@login_required
+def api_update_period(task_id):
+    """手动修改/新增某人的参保证明时间段（即时保存并同步更新统计）
+
+    入参 JSON: {name, idcard, periods: [{insurance_type, start, end}, ...]}
+    - start/end 均非空 → 设置该险种的覆盖值（优先于OCR识别值，统计/Excel同步生效）
+    - start/end 均为空 → 清除覆盖值，恢复OCR识别结果
+    所有操作写入操作记录（operation_log），持久化到 outputs/<task_id>/操作记录.json
+    """
+    with tasks_lock:
+        task = tasks.get(task_id)
+    if not task:
+        return jsonify({'error': '任务不存在'}), 404
+    if task['status'] != 'done':
+        return jsonify({'error': '任务尚未完成'}), 400
+
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    idcard = (data.get('idcard') or '').strip()
+    periods = data.get('periods') or []
+
+    if not name:
+        return jsonify({'error': '缺少姓名参数'}), 400
+    if not isinstance(periods, list) or not periods:
+        return jsonify({'error': '请至少提交一条时间段'}), 400
+
+    # ===== 先整体校验所有条目（全部通过才应用，避免部分生效） =====
+    parsed = []
+    for p in periods:
+        if not isinstance(p, dict):
+            return jsonify({'error': '时间段条目格式错误'}), 400
+        ins = (p.get('insurance_type') or '').strip()
+        if ins not in INSURANCE_TYPES:
+            return jsonify({'error': f'险种必须为养老/医疗/工伤/失业保险之一: {ins or "(空)"}'}), 400
+        s = (p.get('start') or '').strip()
+        e = (p.get('end') or '').strip()
+        if not s and not e:
+            # 双空 → 清除覆盖，恢复识别值
+            parsed.append((ins, None))
+        elif s and e:
+            s2, e2 = _valid_ym(s), _valid_ym(e)
+            if not s2 or not e2:
+                return jsonify({'error': f'{ins}: 起止年月格式应为 YYYY-MM，如 2023-01'}), 400
+            if s2 > e2:
+                return jsonify({'error': f'{ins}: 起始年月不能晚于截止年月'}), 400
+            parsed.append((ins, (s2, e2)))
+        else:
+            return jsonify({'error': f'{ins}: 起止年月需同时填写（修改）或同时留空（恢复识别值）'}), 400
+
+    with tasks_lock:
+        result = tasks[task_id]['result']
+        overrides = result.setdefault('_period_overrides', {})
+        key = f'{name}|{idcard}'
+        ins_map = overrides.setdefault(key, {})
+        success_results = result.get('_success_results', [])
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        operator = session.get('username', '')
+        log_entries = []
+
+        for ins, val in parsed:
+            # 旧值：优先取覆盖层，其次OCR识别值
+            old_ov = ins_map.get(ins)
+            old_ocr = None
+            for r in success_results:
+                if r.get('name') == name and r.get('insurance_type') == ins:
+                    if not idcard or not r.get('idcard') or r['idcard'] == idcard:
+                        if r.get('period'):
+                            old_ocr = r['period']
+                        break
+            old_disp = old_ov or old_ocr
+
+            if val is None:
+                # 清除覆盖 → 恢复OCR识别值
+                if ins in ins_map:
+                    del ins_map[ins]
+                    log_entries.append({
+                        'time': now_str,
+                        'action': '恢复识别结果',
+                        'name': name,
+                        'idcard': idcard,
+                        'insurance_type': ins,
+                        'old': _fmt_period(old_disp) or '无',
+                        'new': _fmt_period(old_ocr) or '无',
+                        'operator': operator,
+                    })
+                # 无覆盖时清空 = 无变化，不记录
+            else:
+                if old_disp != val:
+                    ins_map[ins] = val
+                    log_entries.append({
+                        'time': now_str,
+                        'action': '新增时间段' if not old_disp else '修改时间段',
+                        'name': name,
+                        'idcard': idcard,
+                        'insurance_type': ins,
+                        'old': _fmt_period(old_disp) or '无',
+                        'new': _fmt_period(val),
+                        'operator': operator,
+                    })
+                else:
+                    # 值未变化，仅确保覆盖层存在
+                    ins_map[ins] = val
+
+        if not ins_map:
+            overrides.pop(key, None)
+
+        if log_entries:
+            result.setdefault('_manual_log', []).extend(log_entries)
+            for le in log_entries:
+                logger.info(f'[task:{task_id}] {le["action"]}: {name}/{le["insurance_type"]} '
+                            f'{le["old"]} → {le["new"]} (操作人: {operator})')
+
+    # 统一重建（统计/Excel同步更新覆盖后的时间段）
+    res = _rebuild_result(task_id)
+    if res is None:
+        return jsonify({'error': '重建结果失败'}), 500
+    if 'yearly_ledger_files' in res:
+        res['yearly_ledger_files'] = [f['filename'] for f in res['yearly_ledger_files']]
+    return jsonify(res)
+
+
 @insurance_bp.route('/api/retry/<task_id>', methods=['POST'])
 @login_required
 def retry_task(task_id):
@@ -979,23 +1328,28 @@ def retry_task(task_id):
     if not files or all(f.filename == '' for f in files):
         return jsonify({'error': '未选择文件'}), 400
 
-    # 获取当前的成功结果
+    # 获取当前内部状态（v1.1.43: 三桶结构 有效/排除/失败）
     old_result = task.get('result', {})
-    success_results = old_result.get('_success_results', [])
+    success_results = list(old_result.get('_success_results', []))
+    excluded_results = list(old_result.get('_excluded_results', []))
+    failed_results = list(old_result.get('_failed_results', []))
     task_dir = old_result.get('_task_dir', os.path.join(UPLOAD_DIR, task_id))
+    company_name = old_result.get('_company_name', '') or old_result.get('company_name', '')
+    company_mismatch_files = list(old_result.get('_company_mismatch_files',
+                                                 old_result.get('company_mismatch_files', [])))
 
-    # 获取花名册（从原任务参数中）
+    # 获取花名册（表单优先，缺省回退原任务内部花名册）
     roster_json = request.form.get('roster', '[]')
     try:
         roster = json.loads(roster_json)
     except (json.JSONDecodeError, TypeError):
         roster = []
-
     if not roster:
-        roster = []
+        roster = old_result.get('_roster', [])
 
-    # 保存并OCR新文件
+    # 保存并OCR新文件（记录上传原名，用于移除被覆盖的旧失败记录）
     new_paths = []
+    retried_upload_names = set()
     for f in files:
         ext = os.path.splitext(f.filename)[1].lower()
         if ext not in ('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.pdf'):
@@ -1006,6 +1360,7 @@ def retry_task(task_id):
             os.makedirs(save_dir, exist_ok=True)
         f.save(save_path)
         new_paths.append(save_path)
+        retried_upload_names.add(f.filename)
 
     if not new_paths:
         return jsonify({'error': '未找到支持的图片文件'}), 400
@@ -1030,6 +1385,7 @@ def retry_task(task_id):
                     'filename': os.path.basename(fp),
                     'error': f'PDF转换失败: {e}',
                     '_source_path': fp,
+                    '_source_origin': os.path.basename(fp),
                 })
         else:
             img_basename = os.path.basename(fp)
@@ -1047,233 +1403,75 @@ def retry_task(task_id):
                 'filename': display_name,
                 'error': str(e),
                 '_source_path': fp,
+                '_source_origin': source_origin,
             })
 
     # 分类新结果
     retry_success = []
-    retry_failed = []
     for r in new_results:
         if r.get('error') or (not r.get('name') and not r.get('idcard')):
-            retry_failed.append({
-                'filename': r.get('filename', ''),
-                'error': r.get('error', '未能识别出有效信息'),
-            })
+            new_failed.append(r)
         else:
             retry_success.append(r)
 
-    # 合并：原有成功 + 新成功
-    all_success = success_results + retry_success
-    all_failed = retry_failed  # 新的失败文件（替换旧的失败列表）
-
-    logger.info(f'[task:{task_id}] 补充识别 — 新成功: {len(retry_success)}, 仍失败: {len(retry_failed)}, 合并后总成功: {len(all_success)}')
-
     # ===== 缴费单位过滤（与 process_task 一致：对四险做单位一致性校验） =====
-    company_name = old_result.get('company_name', '')
-    company_mismatch_files = list(old_result.get('company_mismatch_files', []))
-    valid_results = []
-    if company_name:
-        for r in all_success:
-            cn = r.get('company_name', '').strip()
-            need_check = (r.get('insurance_type') in ('养老保险', '失业保险', '医疗保险', '工伤保险'))
-            if need_check and cn and cn != company_name:
-                # 四险缴费单位不一致 → 排除
-                company_mismatch_files.append({
-                    'filename': r.get('filename', ''),
-                    'ocr_company': cn,
-                    'expected_company': company_name,
-                })
-            else:
-                valid_results.append(r)
-    else:
-        valid_results = list(all_success)
-
-    excluded_count = len(all_success) - len(valid_results)
-    logger.info(f'[task:{task_id}] 重传缴费单位验证: 保留 {len(valid_results)} 条, 排除 {excluded_count} 条')
-
-    # 标记被排除的记录，供 organize_files 归入异常图片文件夹
-    valid_filenames = {r.get('filename', '') for r in valid_results}
-    for r in all_success:
-        fn = r.get('filename', '')
-        if fn and fn not in valid_filenames:
+    retry_valid = []
+    for r in retry_success:
+        cn = r.get('company_name', '').strip()
+        need_check = (r.get('insurance_type') in INSURANCE_TYPES)
+        if company_name and need_check and cn and cn != company_name:
+            # 四险缴费单位不一致 → 排除
             r['_excluded'] = True
+            excluded_results.append(r)
+            company_mismatch_files.append({
+                'filename': r.get('filename', ''),
+                'ocr_company': cn,
+                'expected_company': company_name,
+            })
+        else:
+            retry_valid.append(r)
 
-    # 重新统计（仅用缴费单位验证通过的结果）
-    year_range = old_result.get('_year_range', None)
-    persons = group_by_person(valid_results)
+    # 移除被本次重传覆盖的旧失败记录（按上传文件名匹配）
+    if retried_upload_names:
+        failed_results = [r for r in failed_results
+                          if r.get('filename', '') not in retried_upload_names]
 
-    # v1.1.34: 花名册补全 — 同 process_task（无参保证明人员姓名保留、时间段留空，身份证号以花名册为准）
-    # v1.1.40: 支持花名册重名 — 按 (姓名, 身份证号) 匹配，与 process_task 逻辑一致
-    if roster:
-        persons_by_name = {}
-        for p in persons:
-            persons_by_name.setdefault(p['name'], []).append(p)
-        for item in roster:
-            r_name = item.get('name', '').strip()
-            if not r_name:
-                continue
-            r_idcard = item.get('idcard', '').strip()
-            cands = persons_by_name.get(r_name, [])
-            matched = None
-            if r_idcard:
-                for p in cands:
-                    if p['idcard'] == r_idcard:
-                        matched = p
-                        break
-                if matched is None:
-                    for p in cands:
-                        if not p['idcard'] and not p.get('_roster_matched'):
-                            matched = p
-                            break
-            else:
-                for p in cands:
-                    if not p.get('_roster_matched'):
-                        matched = p
-                        break
-            if matched is not None:
-                if r_idcard:
-                    matched['idcard'] = r_idcard
-                matched['_roster_matched'] = True
-            else:
-                new_p = {
-                    'name': r_name,
-                    'idcard': r_idcard,
-                    'insurances': {},
-                    '_roster_matched': True,
-                }
-                persons.append(new_p)
-                persons_by_name.setdefault(r_name, []).append(new_p)
-        for p in persons:
-            p.pop('_roster_matched', None)
+    # 合并：原有有效 + 新有效；原有失败(未被覆盖) + 新失败
+    success_results.extend(retry_valid)
+    failed_results.extend(new_failed)
 
-    person_stats, year_cols = calc_all_stats(persons, year_range)
+    logger.info(f'[task:{task_id}] 补充识别 — 新有效: {len(retry_valid)}, '
+                f'排除: {len(retry_success) - len(retry_valid)}, 仍失败: {len(new_failed)}, '
+                f'合并后总有效: {len(success_results)}')
 
-    # 重新生成Excel（保留补传前识别到的缴费单位）
-    excel_filename = f'申报重点群体税收优惠政策总台账_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
-    excel_path = os.path.join(OUTPUT_DIR, excel_filename)
-    gen_result = generate_excel(persons, excel_path, roster=roster, company_name=company_name, year_range=year_range)
-    yearly_ledger_files = gen_result.get('yearly_ledger_files', [])
+    all_files = list(old_result.get('_all_files', old_result.get('all_files', []))) + \
+                [os.path.basename(fp) for fp in new_paths]
 
-    roster_index = {
-        'idcard_to_entry': {},
-        'name_to_entries': {},
-        'order_idcard': {},
-        'order_name': {},
-    }
-    if roster:
-        for idx, item in enumerate(roster):
-            nm = item.get('name', '').strip()
-            idc = item.get('idcard', '').strip()
-            if idc:
-                if idc not in roster_index['idcard_to_entry']:
-                    roster_index['idcard_to_entry'][idc] = item
-                    roster_index['order_idcard'][idc] = idx
-            if nm:
-                roster_index['name_to_entries'].setdefault(nm, []).append(item)
-                if nm not in roster_index['order_name']:
-                    roster_index['order_name'][nm] = idx
-
-    # 重新整理文件（包含成功+排除+失败，全部传给 organize_files）
-    organize_dir = os.path.join(OUTPUT_DIR, task_id, '参保证明')
-    os.makedirs(organize_dir, exist_ok=True)
-    # 构建完整的 organize 列表：所有成功记录（含标记排除的）+ 有路径的失败记录
-    all_for_organize = list(all_success)  # 包含 _excluded 标记
-    for f in all_failed:
-        if f.get('_source_path'):
-            all_for_organize.append(f)
-    try:
-        organize_result = organize_files(all_for_organize, roster, organize_dir)
-    except Exception:
-        organize_result = {'organized_count': 0, 'folder_structure': {}, 'unmatched': [], 'no_roster': not roster, 'abnormal_count': 0}
-
-    total_ocr = len(success_results) + len(new_results)
-    all_files = (old_result.get('all_files', []) +
-                 [os.path.basename(fp) for fp in new_paths])
-
+    # ===== v1.1.43: 合并后写入内部状态，统一重建（统计/Excel/文件整理） =====
     with tasks_lock:
         tasks[task_id]['result'] = {
-            'person_stats': [
-                {
-                    'name': ps['name'],
-                    'idcard': ps['idcard'],
-                    'identity_type': _get_identity_type(ps, roster_index),
-                    'insurances': {
-                        k: {'start': v[0], 'end': v[1]}
-                        for k, v in ps['insurances'].items()
-                    },
-                    'overlap_start': ps['overlap_start'],
-                    'overlap_end': ps['overlap_end'],
-                    'overlap_months': ps['overlap_months'],
-                    'has_overlap': ps['has_overlap'],
-                    'yearly_months': ps['yearly_months'],
-                }
-                for ps in person_stats
-            ],
-            'year_cols': year_cols,
-            'excel_path': excel_path,
-            'excel_filename': excel_filename,
-            'yearly_ledger_files': yearly_ledger_files,
-            'ocr_count': total_ocr,
-            'person_count': len(persons),
-            'success_count': len(valid_results),
-            'excluded_count': excluded_count,
-            'failed_count': len(all_failed),
-            'failed_files': all_failed,
-            'all_files': all_files,
-            'organize_result': {
-                'organized_count': organize_result['organized_count'],
-                'folder_structure': organize_result['folder_structure'],
-                'unmatched': organize_result['unmatched'],
-                'no_roster': organize_result['no_roster'],
-                'abnormal_count': organize_result.get('abnormal_count', 0),
-            },
-            'organize_dir': organize_dir,
-            'company_name': company_name,
-            'roster_company': old_result.get('roster_company', ''),
-            'ocr_companies': old_result.get('ocr_companies', {}),
-            'company_mismatch_files': company_mismatch_files,
-            # 每张图片的识别详情（含排除和失败信息）
-            'image_details': [
-                {
-                    'filename': r.get('filename', ''),
-                    'name': r.get('name', ''),
-                    'idcard': r.get('idcard', ''),
-                    'insurance_type': r.get('insurance_type') or '',
-                    'company_name': r.get('company_name', ''),
-                    'period': r.get('period', ''),
-                    'error': '',
-                }
-                for r in valid_results
-            ] + [
-                {
-                    'filename': r.get('filename', ''),
-                    'name': r.get('name', ''),
-                    'idcard': r.get('idcard', ''),
-                    'insurance_type': r.get('insurance_type') or '',
-                    'company_name': r.get('company_name', ''),
-                    'period': r.get('period', ''),
-                    'error': '缴费单位不一致（已排除）',
-                }
-                for r in all_success if r.get('_excluded')
-            ] + [
-                {
-                    'filename': r.get('filename', ''),
-                    'name': '',
-                    'idcard': '',
-                    'insurance_type': '',
-                    'company_name': '',
-                    'period': '',
-                    'error': r.get('error', '识别失败'),
-                }
-                for r in all_failed
-            ],
-            '_success_results': valid_results,
+            '_success_results': success_results,
+            '_excluded_results': excluded_results,
+            '_failed_results': failed_results,
+            '_all_files': all_files,
             '_task_dir': task_dir,
-            '_year_range': year_range,
+            '_year_range': old_result.get('_year_range'),
+            '_roster': roster,
+            '_roster_company': old_result.get('_roster_company', old_result.get('roster_company', '')),
+            '_roster_source_path': old_result.get('_roster_source_path', ''),
+            '_company_name': company_name,
+            '_ocr_companies': old_result.get('_ocr_companies', old_result.get('ocr_companies', {})),
+            '_company_mismatch_files': company_mismatch_files,
+            '_period_overrides': old_result.get('_period_overrides', {}),
+            '_manual_log': old_result.get('_manual_log', []),
         }
+
+    res = _rebuild_result(task_id)
+    if res is None:
+        return jsonify({'error': '重建结果失败'}), 500
     logger.info(f'[task:{task_id}] 补充识别完成')
 
     # 过滤内部字段返回
-    res = {k: v for k, v in tasks[task_id]['result'].items() if not k.startswith('_')}
     if 'yearly_ledger_files' in res:
         res['yearly_ledger_files'] = [f['filename'] for f in res['yearly_ledger_files']]
     return jsonify(res)

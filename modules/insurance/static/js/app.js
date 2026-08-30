@@ -13,6 +13,9 @@ var rosterData = [];
 // 花名册公司名和源文件路径（用于缴费单位验证）
 var rosterCompany = '';
 var rosterSourcePath = '';
+// 当前结果的图片详情与人员统计（供手动补录/时间段编辑弹窗使用）
+var currentImageDetails = [];
+var currentPersonStats = [];
 
 // ===== DOM元素 =====
 var dropzone = document.getElementById('dropzone');
@@ -742,6 +745,8 @@ function renderResult(data) {
     progressSection.style.display = 'none';
     progressActions.style.display = 'none';
     resultSection.style.display = 'block';
+    currentImageDetails = [];
+    currentPersonStats = data.person_stats || [];
 
     // 汇总信息
     summaryBar.innerHTML = '';
@@ -807,7 +812,7 @@ function renderResult(data) {
             orgHtml += '<details class="image-details-block" open>';
             orgHtml += '<summary>📋 每张图片的识别详情（' + data.image_details.length + ' 张）</summary>';
             orgHtml += '<table class="image-details-table">';
-            orgHtml += '<thead><tr><th>文件名</th><th>姓名</th><th>身份证</th><th>险种</th><th>时间段</th><th>缴费单位</th><th>状态</th></tr></thead><tbody>';
+            orgHtml += '<thead><tr><th>文件名</th><th>姓名</th><th>身份证</th><th>险种</th><th>时间段</th><th>缴费单位</th><th>状态</th><th>操作</th></tr></thead><tbody>';
             for (var di = 0; di < data.image_details.length; di++) {
                 var det = data.image_details[di];
                 var ins = det.insurance_type || '';
@@ -816,17 +821,21 @@ function renderResult(data) {
                     ? '<span class="tag-ok">' + esc(ins) + '</span>'
                     : '<span class="tag-bad">⚠ 未识别</span>';
                 var periodCell = period
-                    ? '<span class="tag-ok">' + esc(period) + '</span>'
+                    ? '<span class="tag-ok">' + esc(period) + (det.is_manual ? '（补录）' : '') + '</span>'
                     : '<span class="tag-bad">⚠ 未识别</span>';
                 var statusCell = '';
+                var isFailed = false;
                 if (det.error && det.error.indexOf('缴费单位不一致') >= 0) {
                     statusCell = '<span class="tag-warn">⚠ ' + esc(det.error) + '</span>';
                 } else if (det.error) {
                     statusCell = '<span class="tag-bad">识别失败: ' + esc(det.error) + '</span>';
+                    isFailed = true;
                 } else if (!ins) {
                     statusCell = '<span class="tag-bad">险种缺失（未归类）</span>';
                 } else if (!period) {
                     statusCell = '<span class="tag-warn">时间段缺失</span>';
+                } else if (det.is_manual) {
+                    statusCell = '<span class="tag-ok">✓ 正常（手动补录）</span>';
                 } else {
                     statusCell = '<span class="tag-ok">✓ 正常</span>';
                 }
@@ -838,10 +847,14 @@ function renderResult(data) {
                 orgHtml += '<td>' + periodCell + '</td>';
                 orgHtml += '<td>' + esc(det.company_name || '—') + '</td>';
                 orgHtml += '<td>' + statusCell + '</td>';
+                orgHtml += '<td>' + (isFailed
+                    ? '<button class="btn btn-ghost btn-sm mf-btn" data-idx="' + di + '">手动补录</button>'
+                    : '—') + '</td>';
                 orgHtml += '</tr>';
             }
             orgHtml += '</tbody></table>';
             orgHtml += '</details>';
+            currentImageDetails = data.image_details;
         }
 
         orgHtml += '<div class="folder-grid">';
@@ -906,6 +919,7 @@ function renderResult(data) {
         headers.push(data.year_cols[j] + '年申请退税月数');
     }
     headers.push('合计申请退税总额');
+    headers.push('操作');
     for (var h = 0; h < headers.length; h++) {
         html += '<th>' + headers[h] + '</th>';
     }
@@ -944,6 +958,8 @@ function renderResult(data) {
 
         html += '<td></td>';
 
+        html += '<td><button class="btn btn-ghost btn-sm pe-btn" data-idx="' + p + '">修改时间段</button></td>';
+
         html += '</tr>';
     }
     html += '</tbody>';
@@ -959,6 +975,73 @@ function renderResult(data) {
     btnDownloadOrganized.onclick = function() {
         saveToLocation('organized', btnDownloadOrganized);
     };
+
+    // 绑定"手动补录"按钮（每张图片识别详情中的失败行）
+    var mfBtns = document.querySelectorAll('.mf-btn');
+    for (var mb = 0; mb < mfBtns.length; mb++) {
+        (function(btn) {
+            btn.onclick = function() {
+                var idx = parseInt(btn.getAttribute('data-idx'), 10);
+                if (currentImageDetails[idx]) {
+                    openManualFill(currentImageDetails[idx]);
+                }
+            };
+        })(mfBtns[mb]);
+    }
+
+    // 绑定"修改时间段"按钮（结果表每行）
+    var peBtns = document.querySelectorAll('.pe-btn');
+    for (var pb = 0; pb < peBtns.length; pb++) {
+        (function(btn) {
+            btn.onclick = function() {
+                var idx = parseInt(btn.getAttribute('data-idx'), 10);
+                if (currentPersonStats[idx]) {
+                    openPeriodEdit(currentPersonStats[idx]);
+                }
+            };
+        })(peBtns[pb]);
+    }
+
+    // 渲染手动操作记录
+    renderOperationLog(data.operation_log);
+}
+
+// ===== 渲染操作记录（手动补录/时间段修改的追溯日志） =====
+function renderOperationLog(opLog) {
+    var box = document.getElementById('operationLogInfo');
+    if (!box) return;
+    if (!opLog || opLog.length === 0) {
+        box.style.display = 'none';
+        box.innerHTML = '';
+        return;
+    }
+    var html = '<details class="operation-log-block">';
+    html += '<summary>🕐 手动操作记录（' + opLog.length + ' 条，点击展开/收起）</summary>';
+    html += '<table class="image-details-table op-log-table">';
+    html += '<thead><tr><th>时间</th><th>操作</th><th>姓名</th><th>身份证</th><th>险种</th><th>变更内容</th></tr></thead><tbody>';
+    for (var i = 0; i < opLog.length; i++) {
+        var lg = opLog[i];
+        var changeText = '';
+        if (lg.old && lg.new) {
+            changeText = esc(lg.old) + ' → ' + esc(lg.new);
+        } else if (lg.new) {
+            changeText = '→ ' + esc(lg.new);
+        } else if (lg.old) {
+            changeText = esc(lg.old) + '（清除）';
+        }
+        html += '<tr>';
+        html += '<td>' + esc(lg.time || '') + '</td>';
+        html += '<td>' + esc(lg.action || '') + '</td>';
+        html += '<td>' + esc(lg.name || '') + '</td>';
+        html += '<td>' + esc(lg.idcard || '—') + '</td>';
+        html += '<td>' + esc(lg.insurance_type || '—') + '</td>';
+        html += '<td>' + changeText + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '</details>';
+    box.innerHTML = html;
+    box.style.display = 'block';
 }
 
 // ===== 选择保存位置（弹出系统原生文件夹选择对话框） =====
@@ -1026,6 +1109,173 @@ btnRestart.addEventListener('click', function() {
     progressBar.style.background = '';
     window.scrollTo(0, 0);
 });
+
+// ===== v1.1.43: 手动补录弹窗（识别失败的图片） =====
+var currentManualFillFilename = '';
+
+function openManualFill(det) {
+    currentManualFillFilename = det.filename;
+    document.getElementById('manualFillFileTip').textContent = '文件：' + det.filename +
+        (det.error ? '（失败原因: ' + det.error + '）' : '');
+    document.getElementById('mfName').value = det.name || '';
+    document.getElementById('mfIdcard').value = det.idcard || '';
+    var sel = document.getElementById('mfInsurance');
+    sel.value = INSURANCE_ORDER.indexOf(det.insurance_type) >= 0 ? det.insurance_type : '养老保险';
+    document.getElementById('mfStart').value = '';
+    document.getElementById('mfEnd').value = '';
+    document.getElementById('btnMfSubmit').disabled = false;
+    document.getElementById('manualFillModal').style.display = 'flex';
+}
+
+function closeManualFill() {
+    document.getElementById('manualFillModal').style.display = 'none';
+    currentManualFillFilename = '';
+}
+
+function submitManualFill() {
+    if (!currentTaskId || !currentManualFillFilename) return;
+    var name = document.getElementById('mfName').value.trim();
+    var idcard = document.getElementById('mfIdcard').value.trim();
+    var insuranceType = document.getElementById('mfInsurance').value;
+    var start = document.getElementById('mfStart').value.trim();
+    var end = document.getElementById('mfEnd').value.trim();
+
+    if (!name) { showToast('请输入姓名'); return; }
+    if (idcard && !/^\d{15}$|^\d{17}[\dXx]$/.test(idcard)) {
+        showToast('身份证号格式不正确（15位或18位）');
+        return;
+    }
+    var ymRe = /^\d{4}-(0[1-9]|1[0-2])$/;
+    if (!ymRe.test(start) || !ymRe.test(end)) {
+        showToast('起始/截止年月格式应为 YYYY-MM，如 2023-01');
+        return;
+    }
+    if (start > end) {
+        showToast('起始年月不能晚于截止年月');
+        return;
+    }
+
+    var btn = document.getElementById('btnMfSubmit');
+    btn.disabled = true;
+    btn.textContent = '提交中...';
+    fetch('/insurance/api/manual_fill/' + currentTaskId, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            filename: currentManualFillFilename,
+            name: name,
+            idcard: idcard,
+            insurance_type: insuranceType,
+            start: start,
+            end: end
+        })
+    })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            btn.disabled = false;
+            btn.textContent = '确认补录';
+            if (data.error) {
+                showToast(data.error);
+                return;
+            }
+            closeManualFill();
+            showToast('补录成功，统计结果已更新');
+            renderResult(data);
+        })
+        .catch(function(err) {
+            btn.disabled = false;
+            btn.textContent = '确认补录';
+            showToast('补录失败: ' + err.message);
+        });
+}
+
+// ===== v1.1.43: 时间段编辑弹窗（修改/新增/清除） =====
+var currentPeriodEditPerson = null;
+
+function openPeriodEdit(ps) {
+    currentPeriodEditPerson = { name: ps.name, idcard: ps.idcard || '' };
+    document.getElementById('pePersonTip').textContent = '人员：' + ps.name +
+        (ps.idcard ? '（' + ps.idcard + '）' : '');
+
+    // 四险各一行，预填当前生效值
+    var rowsHtml = '';
+    for (var t = 0; t < INSURANCE_ORDER.length; t++) {
+        var insName = INSURANCE_ORDER[t];
+        var cur = ps.insurances && ps.insurances[insName];
+        var sVal = cur ? cur.start : '';
+        var eVal = cur ? cur.end : '';
+        rowsHtml += '<div class="form-row form-row-period">';
+        rowsHtml += '<label class="form-label form-label-fixed">' + insName + '</label>';
+        rowsHtml += '<input type="text" class="form-input form-input-ym" id="peStart_' + t + '" value="' + esc(sVal) + '" placeholder="起始 YYYY-MM" maxlength="7">';
+        rowsHtml += '<span class="form-sep">至</span>';
+        rowsHtml += '<input type="text" class="form-input form-input-ym" id="peEnd_' + t + '" value="' + esc(eVal) + '" placeholder="截止 YYYY-MM" maxlength="7">';
+        rowsHtml += '</div>';
+    }
+    document.getElementById('periodEditRows').innerHTML = rowsHtml;
+    document.getElementById('btnPeSubmit').disabled = false;
+    document.getElementById('periodEditModal').style.display = 'flex';
+}
+
+function closePeriodEdit() {
+    document.getElementById('periodEditModal').style.display = 'none';
+    currentPeriodEditPerson = null;
+}
+
+function submitPeriodEdit() {
+    if (!currentTaskId || !currentPeriodEditPerson) return;
+    var ymRe = /^\d{4}-(0[1-9]|1[0-2])$/;
+    var periods = [];
+    for (var t = 0; t < INSURANCE_ORDER.length; t++) {
+        var insName = INSURANCE_ORDER[t];
+        var s = document.getElementById('peStart_' + t).value.trim();
+        var e = document.getElementById('peEnd_' + t).value.trim();
+        if (s || e) {
+            // 有填写：必须同时合法
+            if (!ymRe.test(s) || !ymRe.test(e)) {
+                showToast(insName + ': 起止年月格式应为 YYYY-MM，如 2023-01');
+                return;
+            }
+            if (s > e) {
+                showToast(insName + ': 起始年月不能晚于截止年月');
+                return;
+            }
+            periods.push({ insurance_type: insName, start: s, end: e });
+        } else {
+            // 双空：清除覆盖，恢复OCR识别值（无覆盖时为无变化）
+            periods.push({ insurance_type: insName, start: null, end: null });
+        }
+    }
+
+    var btn = document.getElementById('btnPeSubmit');
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+    fetch('/insurance/api/update_period/' + currentTaskId, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            name: currentPeriodEditPerson.name,
+            idcard: currentPeriodEditPerson.idcard,
+            periods: periods
+        })
+    })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            btn.disabled = false;
+            btn.textContent = '保存修改';
+            if (data.error) {
+                showToast(data.error);
+                return;
+            }
+            closePeriodEdit();
+            showToast('时间段已保存，统计结果已更新');
+            renderResult(data);
+        })
+        .catch(function(err) {
+            btn.disabled = false;
+            btn.textContent = '保存修改';
+            showToast('保存失败: ' + err.message);
+        });
+}
 
 // ===== Toast提示 =====
 function showToast(msg) {

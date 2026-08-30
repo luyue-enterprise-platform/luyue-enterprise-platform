@@ -5,9 +5,45 @@
 方便用户检查并重新提交识别。
 """
 import os
+import re
 import shutil
 
 from .roster_parser import match_person_to_roster, match_record_to_roster
+
+
+# 18位身份证号校验码权重表与校验码字符集（GB 11643-1999）
+_IDCARD_WEIGHTS = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2]
+_IDCARD_CODES = '10X98765432'
+
+
+def _validate_idcard(idcard):
+    """校验并规范化身份证号，返回规范化的号码字符串；不合法返回 ''
+
+    支持：
+    - 18位新版：前17位数字 + 末位校验码（数字或X），校验码按 GB 11643-1999 加权模11算法验证
+    - 15位旧版：纯数字（出生年份缺世纪位，无校验码，仅做格式校验）
+
+    入参先做清理：去首尾空格、去内部所有空白字符、字母转大写。
+    """
+    if not idcard:
+        return ''
+    # 清理：strip + 去掉所有空白字符 + 转大写（x → X）
+    cleaned = re.sub(r'\s+', '', str(idcard)).upper()
+    if not cleaned:
+        return ''
+    # 15位旧版身份证：纯数字即可
+    if re.fullmatch(r'\d{15}', cleaned):
+        return cleaned
+    # 18位：前17位数字 + 末位数字或X，且校验码必须正确
+    m = re.fullmatch(r'(\d{17})([0-9X])', cleaned)
+    if not m:
+        return ''
+    digits, check = m.group(1), m.group(2)
+    total = sum(int(d) * w for d, w in zip(digits, _IDCARD_WEIGHTS))
+    expected = _IDCARD_CODES[total % 11]
+    if check != expected:
+        return ''
+    return cleaned
 
 # 险种对应的文件夹名
 INSURANCE_FOLDER_MAP = {
@@ -169,7 +205,16 @@ def organize_files(ocr_results, roster, output_dir):
 
         if matched:
             seq_str = f'{matched["seq"]:02d}'
-            new_basename = f'{seq_str}-{matched["name"]}'
+            # v1.1.43: 重命名为"序号-姓名-身份证号"组合格式
+            # 身份证号取花名册优先，校验合法才拼接，避免拼进错误号码；
+            # 花名册号缺失/不合法时回退用OCR识别的号码，仍不合法则回退"序号-姓名"
+            valid_id = _validate_idcard(matched.get('idcard', ''))
+            if not valid_id:
+                valid_id = _validate_idcard(rec.get('idcard', ''))
+            if valid_id:
+                new_basename = f'{seq_str}-{matched["name"]}-{valid_id}'
+            else:
+                new_basename = f'{seq_str}-{matched["name"]}'
         elif name:
             new_basename = name
         else:

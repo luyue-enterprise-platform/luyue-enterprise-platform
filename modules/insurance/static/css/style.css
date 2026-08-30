@@ -1159,3 +1159,95 @@ body {
 .file-list-item .btn-remove:hover {
     background: #FDEDEC;
 }
+
+/* ===== v1.1.43: 手动补录/时间段编辑弹窗表单 ===== */
+.form-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.form-label {
+    flex: 0 0 90px;
+    font-size: 14px;
+    color: #1a3d5c;
+    font-weight: 500;
+    text-align: right;
+}
+
+.form-label-fixed {
+    flex: 0 0 80px;
+}
+
+.form-required {
+    color: #E74C3C;
+}
+
+.form-input {
+    flex: 1;
+    padding: 8px 10px;
+    border: 1px solid #D5DBE1;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #333;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.form-input:focus {
+    border-color: #4A90D9;
+}
+
+.form-row-period {
+    gap: 8px;
+}
+
+.form-input-ym {
+    flex: 1;
+    max-width: 140px;
+}
+
+.form-sep {
+    font-size: 13px;
+    color: #666;
+}
+
+.form-hint {
+    font-size: 13px;
+    color: #666;
+    margin: 0 0 14px 0;
+    line-height: 1.6;
+}
+
+.form-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 18px;
+}
+
+/* ===== v1.1.43: 手动操作记录 ===== */
+.operation-log-info {
+    margin-top: 16px;
+}
+
+.operation-log-block {
+    border: 1px solid #E8ECF0;
+    border-radius: 8px;
+    padding: 10px 16px;
+    background: #FAFBFC;
+}
+
+.operation-log-block summary {
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    color: #1a3d5c;
+    user-select: none;
+}
+
+.op-log-table td,
+.op-log-table th {
+    font-size: 12px;
+}

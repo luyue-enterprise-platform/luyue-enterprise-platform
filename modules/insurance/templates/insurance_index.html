@@ -41,7 +41,7 @@
                 </svg>
                 人员信息花名册（选填）
             </h2>
-            <p class="card-desc">上传花名册Excel/CSV表格文件，系统将自动识别人员名单。识别后图片将按"序号+姓名"重命名，并按险种分文件夹归类</p>
+            <p class="card-desc">上传花名册Excel/CSV表格文件，系统将自动识别人员名单。识别后图片将按"序号+姓名+身份证号"重命名，并按险种分文件夹归类</p>
 
             <div class="roster-upload-area">
                 <button class="btn btn-ghost btn-sm" id="btnUploadRoster">上传花名册表格</button>
@@ -176,6 +176,9 @@
                 <table class="result-table" id="resultTable"></table>
             </div>
 
+            <!-- 手动操作记录 -->
+            <div class="operation-log-info" id="operationLogInfo" style="display:none;"></div>
+
             <!-- 重新开始 -->
             <div class="result-actions">
                 <button class="btn btn-ghost" id="btnRestart">重新上传</button>
@@ -184,6 +187,68 @@
 
         <!-- 错误提示 -->
         <div class="toast" id="toast" style="display:none;"></div>
+
+        <!-- 手动补录弹窗（识别失败的图片） -->
+        <div class="modal-overlay" id="manualFillModal" style="display:none;">
+            <div class="modal-box">
+                <div class="modal-header">
+                    <h3>手动补录参保证明信息</h3>
+                    <button class="modal-close" onclick="closeManualFill()" title="关闭">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="form-hint" id="manualFillFileTip">文件：</p>
+                    <div class="form-row">
+                        <label class="form-label">姓名 <span class="form-required">*</span></label>
+                        <input type="text" class="form-input" id="mfName" placeholder="与花名册一致的姓名">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">身份证号</label>
+                        <input type="text" class="form-input" id="mfIdcard" placeholder="选填，18位身份证号" maxlength="18">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">险种 <span class="form-required">*</span></label>
+                        <select class="form-input" id="mfInsurance">
+                            <option value="养老保险">养老保险</option>
+                            <option value="医疗保险">医疗保险</option>
+                            <option value="工伤保险">工伤保险</option>
+                            <option value="失业保险">失业保险</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">起始年月 <span class="form-required">*</span></label>
+                        <input type="text" class="form-input" id="mfStart" placeholder="如 2023-01" maxlength="7">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">截止年月 <span class="form-required">*</span></label>
+                        <input type="text" class="form-input" id="mfEnd" placeholder="如 2024-06" maxlength="7">
+                    </div>
+                    <p class="form-hint">补录后该图片将按花名册信息重命名并归类，统计结果即时更新；补录数据与自动识别数据具有同等效力。</p>
+                    <div class="form-actions">
+                        <button class="btn btn-primary" id="btnMfSubmit" onclick="submitManualFill()">确认补录</button>
+                        <button class="btn btn-ghost" onclick="closeManualFill()">取消</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 时间段编辑弹窗（修改/新增/清除时间段） -->
+        <div class="modal-overlay" id="periodEditModal" style="display:none;">
+            <div class="modal-box">
+                <div class="modal-header">
+                    <h3>修改参保证明时间段</h3>
+                    <button class="modal-close" onclick="closePeriodEdit()" title="关闭">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="form-hint" id="pePersonTip">人员：</p>
+                    <p class="form-hint">每行一个险种：填写起始/截止年月即为修改或新增；两项均留空并提交即为清除该险种（恢复OCR识别值）。</p>
+                    <div id="periodEditRows"></div>
+                    <div class="form-actions">
+                        <button class="btn btn-primary" id="btnPeSubmit" onclick="submitPeriodEdit()">保存修改</button>
+                        <button class="btn btn-ghost" onclick="closePeriodEdit()">取消</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </main>
 
     <footer class="footer">
