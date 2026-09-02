@@ -342,6 +342,8 @@ def _rebuild_result(task_id):
             'period': rec.get('period', ''),
             'error': error_text,
             'is_manual': bool(rec.get('_manual')),
+            'remark': rec.get('_remark', ''),
+            'manual_name': rec.get('_manual_name', ''),
         }
 
     new_result = {
@@ -1305,6 +1307,196 @@ def api_update_period(task_id):
                             f'{le["old"]} → {le["new"]} (操作人: {operator})')
 
     # 统一重建（统计/Excel同步更新覆盖后的时间段）
+    res = _rebuild_result(task_id)
+    if res is None:
+        return jsonify({'error': '重建结果失败'}), 500
+    if 'yearly_ledger_files' in res:
+        res['yearly_ledger_files'] = [f['filename'] for f in res['yearly_ledger_files']]
+    return jsonify(res)
+
+
+# ============ v1.1.45: 异常图片预览 ============
+@insurance_bp.route('/api/image_preview/<task_id>')
+@login_required
+def api_image_preview(task_id):
+    """返回指定文件的原图（供前端双击预览异常图片）
+
+    查询参数 filename: image_details 中的文件名；
+    依次在 失败/排除/有效 三桶记录中按文件名定位 _source_path 并返回文件内容。
+    """
+    with tasks_lock:
+        task = tasks.get(task_id)
+    if not task:
+        return jsonify({'error': '任务不存在'}), 404
+    if task['status'] != 'done':
+        return jsonify({'error': '任务尚未完成'}), 400
+
+    filename = (request.args.get('filename') or '').strip()
+    if not filename:
+        return jsonify({'error': '缺少文件名参数'}), 400
+
+    inner = task.get('result') or {}
+    for bucket_key in ('_failed_results', '_excluded_results', '_success_results'):
+        for r in inner.get(bucket_key, []):
+            if r.get('filename') != filename:
+                continue
+            src_path = r.get('_source_path', '')
+            if src_path and os.path.exists(src_path):
+                try:
+                    return send_file(src_path)
+                except Exception as e:
+                    logger.error(f'[task:{task_id}] 图片预览失败: {filename}: {e}')
+                    return jsonify({'error': f'图片读取失败: {e}'}), 500
+
+    return jsonify({'error': '未找到该图片的源文件（可能已被重新上传覆盖）'}), 404
+
+
+# ============ v1.1.45: 异常图片手动处理（命名/编辑信息/归入正常） ============
+@insurance_bp.route('/api/update_excluded_image/<task_id>', methods=['POST'])
+@login_required
+def api_update_excluded_image(task_id):
+    """异常图片手动处理：手动命名 + 编辑/补充异常信息，保存后归入正常列表
+
+    入参 JSON: {filename, name, idcard?, insurance_type, start?, end?, new_name?, remark?}
+    - filename: 定位异常记录（识别失败/缴费单位不一致/险种缺失/时间段缺失）
+    - name: 姓名（必填）
+    - idcard: 身份证号（选填，填写则做格式校验）
+    - insurance_type: 四险之一（必填，决定归入哪个险种文件夹）
+    - start/end: 起止年月 YYYY-MM（记录已有时间段时可留空沿用；均空且记录无时间段时报错）
+    - new_name: 手动命名的新文件名主干（选填，自动保留原扩展名，替代"序号-姓名"规则命名）
+    - remark: 异常信息备注（选填，编辑现有内容或新增补充说明）
+
+    保存后记录并入有效列表（与自动识别同等效力参与统计），图片从"异常图片"
+    文件夹移入对应险种文件夹；统计/Excel/文件整理全链路即时重建。
+    """
+    with tasks_lock:
+        task = tasks.get(task_id)
+    if not task:
+        return jsonify({'error': '任务不存在'}), 404
+    if task['status'] != 'done':
+        return jsonify({'error': '任务尚未完成'}), 400
+
+    data = request.get_json(silent=True) or {}
+    filename = (data.get('filename') or '').strip()
+    name = (data.get('name') or '').strip()
+    idcard = (data.get('idcard') or '').strip()
+    insurance_type = (data.get('insurance_type') or '').strip()
+    start = (data.get('start') or '').strip()
+    end = (data.get('end') or '').strip()
+    new_name = (data.get('new_name') or '').strip()
+    remark = (data.get('remark') or '').strip()
+
+    # ===== 参数校验 =====
+    if not filename:
+        return jsonify({'error': '缺少文件名参数'}), 400
+    if not name:
+        return jsonify({'error': '请输入姓名'}), 400
+    if insurance_type not in INSURANCE_TYPES:
+        return jsonify({'error': '险种必须为养老/医疗/工伤/失业保险之一'}), 400
+    if idcard and not _validate_idcard(idcard):
+        return jsonify({'error': '身份证号格式不正确，请核对（15位或18位）'}), 400
+    # 手动命名：清洗 Windows 非法字符与首尾空格/点
+    if new_name:
+        for ch in '\\/:*?"<>|':
+            new_name = new_name.replace(ch, '')
+        new_name = new_name.strip().strip('.').strip()
+        if not new_name:
+            return jsonify({'error': '手动命名不能为空（仅含非法字符）'}), 400
+        if len(new_name) > 80:
+            return jsonify({'error': '手动命名过长（最多80个字符）'}), 400
+
+    # 时间段：填写则校验并覆盖；均空则沿用记录现有值；记录也没有则必须填写
+    period = None
+    if start or end:
+        start_ym = _valid_ym(start)
+        end_ym = _valid_ym(end)
+        if not start_ym or not end_ym:
+            return jsonify({'error': '起始/截止年月格式应为 YYYY-MM，如 2023-01'}), 400
+        if start_ym > end_ym:
+            return jsonify({'error': '起始年月不能晚于截止年月'}), 400
+        period = (start_ym, end_ym)
+
+    with tasks_lock:
+        result = tasks[task_id]['result']
+
+        # ===== 三桶中按文件名定位记录 =====
+        src_rec = None
+        src_bucket_key = None
+        for bucket_key in ('_failed_results', '_excluded_results', '_success_results'):
+            for r in result.get(bucket_key, []):
+                if r.get('filename') == filename:
+                    src_rec = r
+                    src_bucket_key = bucket_key
+                    break
+            if src_rec is not None:
+                break
+        if src_rec is None:
+            return jsonify({'error': '未找到该图片记录（可能已被处理或重新上传覆盖）'}), 404
+
+        # 判断是否异常记录（正常记录无需处理）
+        is_abnormal = (src_rec.get('error') or src_rec.get('_excluded')
+                       or (not src_rec.get('name') and not src_rec.get('idcard'))
+                       or not src_rec.get('period'))
+        if not is_abnormal and src_bucket_key == '_success_results':
+            return jsonify({'error': '该图片已是正常状态，无需处理'}), 400
+
+        if period is None:
+            period = src_rec.get('period')
+            if not period:
+                return jsonify({'error': '该图片无识别时间段，请填写起止年月'}), 400
+
+        # ===== 搬桶：失败/排除记录 → 有效列表（与自动识别同等效力） =====
+        if src_bucket_key != '_success_results':
+            result[src_bucket_key].remove(src_rec)
+            result['_success_results'].append(src_rec)
+            # 原属"缴费单位不一致"被排除的，同步从不一致文件列表移除
+            result['_company_mismatch_files'] = [
+                mf for mf in result.get('_company_mismatch_files', [])
+                if mf.get('filename') != filename
+            ]
+
+        old_reason = '异常记录'
+        if src_rec.get('_excluded'):
+            old_reason = '缴费单位不一致（已排除）'
+        elif src_rec.get('error'):
+            old_reason = src_rec.get('error')
+        elif not src_rec.get('period'):
+            old_reason = '时间段缺失'
+        src_rec.update({
+            'name': name,
+            'insurance_type': insurance_type,
+            'period': period,
+            'error': None,
+            '_manual': True,
+            '_resolved': True,
+        })
+        if idcard:
+            src_rec['idcard'] = idcard
+        src_rec.pop('_excluded', None)
+        if new_name:
+            src_rec['_manual_name'] = new_name
+        if remark:
+            src_rec['_remark'] = remark
+
+        # 操作记录（可追溯）
+        result.setdefault('_manual_log', []).append({
+            'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'action': '异常图片处理',
+            'name': name,
+            'idcard': idcard,
+            'insurance_type': insurance_type,
+            'old': old_reason,
+            'new': f'{period[0]} ~ {period[1]}' + (f'，命名为 {new_name}' if new_name else ''),
+            'operator': session.get('username', ''),
+        })
+
+    logger.info(f'[task:{task_id}] 异常图片处理: {filename} → {name}/{insurance_type} '
+                f'{period[0]}~{period[1]}'
+                + (f' 命名={new_name}' if new_name else '')
+                + (f' 备注={remark}' if remark else '')
+                + f' (操作人: {session.get("username", "")})')
+
+    # 统一重建（统计/Excel/文件整理全链路同步：图片移入险种文件夹、移出异常文件夹）
     res = _rebuild_result(task_id)
     if res is None:
         return jsonify({'error': '重建结果失败'}), 500

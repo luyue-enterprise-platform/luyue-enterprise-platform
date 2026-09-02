@@ -49,10 +49,15 @@
                 <span class="roster-status" id="rosterStatus">未上传花名册</span>
             </div>
 
-            <div class="roster-preview" id="rosterPreview" style="display:none;">
-                <h3>已识别 <span id="rosterCount">0</span> 人</h3>
-                <div class="roster-list" id="rosterList"></div>
-                <button class="btn btn-ghost btn-sm" id="btnClearRoster">清除花名册</button>
+            <div class="roster-preview collapsible-panel collapsed" id="rosterPreview" style="display:none;">
+                <div class="panel-header" id="rosterPreviewHeader" title="点击展开或收起">
+                    <h3>已识别 <span id="rosterCount">0</span> 人</h3>
+                    <span class="panel-toggle">展开 ▸</span>
+                </div>
+                <div class="panel-body">
+                    <div class="roster-list" id="rosterList"></div>
+                    <button class="btn btn-ghost btn-sm" id="btnClearRoster">清除花名册</button>
+                </div>
             </div>
         </section>
 
@@ -171,6 +176,12 @@
             <!-- 年度台账文件列表 -->
             <div class="yearly-ledger-info" id="yearlyLedgerInfo" style="display:none;"></div>
 
+            <!-- 结果表格搜索栏 -->
+            <div class="table-search-bar" id="tableSearchBar" style="display:none;">
+                <input type="text" id="resultSearch" class="table-search-input" placeholder="🔍 按姓名搜索，输入关键字实时过滤">
+                <span class="table-search-count" id="resultSearchCount"></span>
+            </div>
+
             <!-- 结果表格 -->
             <div class="table-wrap">
                 <table class="result-table" id="resultTable"></table>
@@ -245,6 +256,73 @@
                     <div class="form-actions">
                         <button class="btn btn-primary" id="btnPeSubmit" onclick="submitPeriodEdit()">保存修改</button>
                         <button class="btn btn-ghost" onclick="closePeriodEdit()">取消</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- 图片预览弹窗（双击识别详情行打开） -->
+        <div class="modal-overlay lightbox-overlay" id="imagePreviewModal" style="display:none;">
+            <div class="lightbox-box">
+                <div class="lightbox-header">
+                    <span class="lightbox-title" id="imagePreviewTitle"></span>
+                    <button class="modal-close" onclick="closeImagePreview()" title="关闭">&times;</button>
+                </div>
+                <div class="lightbox-body">
+                    <img id="imagePreviewImg" alt="图片预览" style="display:none;">
+                    <iframe id="imagePreviewFrame" style="display:none;" title="文档预览"></iframe>
+                    <p class="lightbox-tip" id="imagePreviewTip" style="display:none;"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 异常图片处理弹窗（手动命名 + 编辑异常信息） -->
+        <div class="modal-overlay" id="excludedHandleModal" style="display:none;">
+            <div class="modal-box">
+                <div class="modal-header">
+                    <h3>处理异常图片</h3>
+                    <button class="modal-close" onclick="closeExcludedHandle()" title="关闭">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="form-hint" id="ehFileTip">文件：</p>
+                    <div class="eh-preview" id="ehPreviewBox">
+                        <img id="ehPreviewImg" title="点击放大查看" alt="异常图片预览">
+                        <p class="eh-preview-hint" id="ehPreviewHint">（预览加载中…）</p>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">新文件名</label>
+                        <input type="text" class="form-input" id="ehNewName" placeholder="选填：手动命名，如 01-张三；留空按规则命名">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">异常信息备注</label>
+                        <textarea class="form-input eh-remark" id="ehRemark" rows="2" placeholder="编辑现有异常信息，或补充说明（选填）"></textarea>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">姓名 <span class="form-required">*</span></label>
+                        <input type="text" class="form-input" id="ehName" placeholder="与花名册一致的姓名">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">身份证号</label>
+                        <input type="text" class="form-input" id="ehIdcard" placeholder="选填，15位或18位身份证号" maxlength="18">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">险种 <span class="form-required">*</span></label>
+                        <select class="form-input" id="ehInsurance">
+                            <option value="养老保险">养老保险</option>
+                            <option value="医疗保险">医疗保险</option>
+                            <option value="工伤保险">工伤保险</option>
+                            <option value="失业保险">失业保险</option>
+                        </select>
+                    </div>
+                    <div class="form-row form-row-period">
+                        <label class="form-label form-label-fixed">起止年月</label>
+                        <input type="text" class="form-input form-input-ym" id="ehStart" placeholder="起始 YYYY-MM" maxlength="7">
+                        <span class="form-sep">至</span>
+                        <input type="text" class="form-input form-input-ym" id="ehEnd" placeholder="截止 YYYY-MM" maxlength="7">
+                    </div>
+                    <p class="form-hint">保存后该图片将按上述信息重命名归类，从异常列表移入正常列表，统计结果即时更新。</p>
+                    <div class="form-actions">
+                        <button class="btn btn-primary" id="btnEhSubmit" onclick="submitExcludedHandle()">保存并归入正常列表</button>
+                        <button class="btn btn-ghost" onclick="closeExcludedHandle()">取消</button>
                     </div>
                 </div>
             </div>

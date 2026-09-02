@@ -203,7 +203,11 @@ def organize_files(ocr_results, roster, output_dir):
         if roster:
             matched = match_record_to_roster(rec, roster)
 
-        if matched:
+        # v1.1.45: 手动命名优先（异常图片手动处理后，用用户指定的文件名）
+        manual_name = rec.get('_manual_name')
+        if manual_name:
+            new_basename = manual_name
+        elif matched:
             seq_str = f'{matched["seq"]:02d}'
             # v1.1.43: 重命名为"序号-姓名-身份证号"组合格式
             # 身份证号取花名册优先，校验合法才拼接，避免拼进错误号码；

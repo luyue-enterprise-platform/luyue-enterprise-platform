@@ -608,14 +608,29 @@ def get_user_by_id(user_id):
 
 
 # ============ Flask 装饰器 ============
+def _is_api_request():
+    """判断是否为API请求（蓝图路径形如 /insurance/api/...，不能用 startswith('/api/')）"""
+    if '/api/' in request.path:
+        return True
+    if request.is_json:
+        return True
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return True
+    # 显式要求JSON响应（fetch场景）
+    accept = request.headers.get('Accept', '')
+    if 'application/json' in accept and 'text/html' not in accept:
+        return True
+    return False
+
+
 def login_required(f):
     """要求登录才能访问"""
     @wraps(f)
     def decorated(*args, **kwargs):
         if 'user_id' not in session:
             # 如果是API请求返回JSON，否则重定向
-            if request.path.startswith('/api/'):
-                return jsonify({'error': '请先登录', 'need_login': True}), 401
+            if _is_api_request():
+                return jsonify({'error': '登录已失效，请重新登录', 'need_login': True}), 401
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated
@@ -626,8 +641,8 @@ def admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if 'user_id' not in session:
-            if request.path.startswith('/api/'):
-                return jsonify({'error': '请先登录', 'need_login': True}), 401
+            if _is_api_request():
+                return jsonify({'error': '登录已失效，请重新登录', 'need_login': True}), 401
             return redirect(url_for('login'))
         if not session.get('is_admin'):
             return jsonify({'error': '需要管理员权限'}), 403
