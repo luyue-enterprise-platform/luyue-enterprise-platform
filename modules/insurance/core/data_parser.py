@@ -110,29 +110,77 @@ def extract_idcard(text):
 
 
 # ============ 姓名提取 ============
+# 字段标签词黑名单——OCR漏识别姓名值时，"姓名："后面紧跟的往往是下一个字段标签，
+# 绝不能把标签当成姓名（v1.1.47 修复：姓名被误识别成"身份证号"）
+_NAME_LABEL_WORDS = {
+    '身份证号', '身份证', '证件号码', '证件号', '号码', '个人编号', '编号',
+    '参保状态', '状态', '性别', '民族', '出生日期', '出生', '住址', '地址',
+    '单位名称', '公司名称', '单位', '公司', '缴费年度', '年度', '缴费月份', '月份',
+    '缴费月数', '总缴费月数', '月数', '日期', '时间', '经办机构', '机构',
+    '参保证明', '证明', '姓名', '居民',
+}
+_NAME_LABEL_KEYWORDS = ('证号', '证件', '编号', '缴费', '参保', '单位',
+                        '公司', '年度', '月份', '机构', '状态', '证明', '险种')
+
+
+def _is_label_word(s):
+    """判断提取到的"姓名"是否其实是字段标签词（防标签误当姓名）"""
+    if not s:
+        return True
+    if s in _NAME_LABEL_WORDS:
+        return True
+    for kw in _NAME_LABEL_KEYWORDS:
+        if kw in s:
+            return True
+    return False
+
+
 def extract_name(text):
     """
     从OCR文本中提取姓名
 
-    策略：找"姓名："或"姓名"后面的2-4个中文字符
+    策略：
+    1. 主策略：找"姓名："或"姓名"后面的2-4个中文字符（拒绝字段标签词；
+       若贪婪匹配吞进"身份证"等标签前缀如"张三身份"，回退标签后缀）
+    2. 兜底1：OCR合并行——姓名值紧贴在"身份证"标签之前（如"姓名：张三身份证号610..."）
+    3. 兜底2："姓名"下一行的前导中文姓名（须后随空白或行尾，
+       防止误取"现缴费单位名称：..."这类长标签的前4个字）
     """
     lines = text.split('\n')
 
     for i, line in enumerate(lines):
-        if '姓名' in line:
-            # 提取"姓名"后面的内容
-            idx = line.find('姓名')
-            after = line[idx + 2:]
-            after = after.lstrip(':： \t')
-            # 匹配2-4个中文字符
-            m = re.match(r'([\u4e00-\u9fa5]{2,4})', after)
-            if m:
+        # OCR常把"姓 名"拆成带空格的形式，去空格后再找标签
+        norm = line.replace(' ', '').replace('\u3000', '')
+        if '姓名' not in norm:
+            continue
+        # 主策略：提取"姓名"后面的内容
+        idx = norm.find('姓名')
+        after = norm[idx + 2:]
+        after = after.lstrip(':： \t')
+        # 匹配2-4个中文字符（且不是字段标签词）
+        m = re.match(r'([\u4e00-\u9fa5]{2,4})', after)
+        if m:
+            word = m.group(1)
+            # 贪婪匹配可能吞进标签前缀（如"张三身份"），回退标签后缀
+            changed = True
+            while changed and word:
+                changed = False
+                for suffix in ('身份证', '证件', '身份', '编号', '号码', '证', '身'):
+                    if word.endswith(suffix) and len(word) - len(suffix) >= 2:
+                        word = word[:-len(suffix)]
+                        changed = True
+                        break
+            if word and not _is_label_word(word):
+                return word
+        # 兜底1：姓名值与"身份证"标签连在一起的合并行
+        m = re.search(r'([\u4e00-\u9fa5]{2,4})(?=身份证)', norm)
+        if m and not _is_label_word(m.group(1)):
+            return m.group(1)
+        # 兜底2：看下一行（须为独立/前导姓名词）
+        if i + 1 < len(lines):
+            m = re.match(r'([\u4e00-\u9fa5]{2,4})(?=\s|$)', lines[i + 1].strip())
+            if m and not _is_label_word(m.group(1)):
                 return m.group(1)
-            # 如果当前行没有，看下一行
-            if i + 1 < len(lines):
-                m = re.match(r'([\u4e00-\u9fa5]{2,4})', lines[i + 1].strip())
-                if m:
-                    return m.group(1)
 
     return ''
 

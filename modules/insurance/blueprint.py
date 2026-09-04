@@ -421,6 +421,37 @@ def _rebuild_result(task_id):
     return {k: v for k, v in new_result.items() if not k.startswith('_')}
 
 
+def _split_ocr_results(task_id, ocr_results, roster):
+    """区分成功和失败的OCR结果，并做姓名缺失回填（v1.1.47）
+
+    v1.1.43: 失败记录保留完整信息（含 _source_path），供手动补录定位原文件
+    v1.1.47: 姓名缺失但身份证号有效 → 先按身份证号从花名册回填姓名；
+             仍无姓名的归入失败桶（原先进成功桶但分组时被静默丢弃，用户看不到）
+    """
+    roster_index = _build_roster_index(roster or [])
+    success_results = []
+    failed_results = []
+    all_files = []
+    for r in ocr_results:
+        fn = r.get('filename', '')
+        # 姓名缺失但身份证号有效：按花名册回填姓名
+        if not r.get('error') and not r.get('name') and r.get('idcard'):
+            entry = roster_index['idcard_to_entry'].get(r['idcard'])
+            if entry and entry.get('name'):
+                r['name'] = entry['name']
+                logger.info(f'[task:{task_id}] 姓名缺失，按花名册回填: '
+                            f'{r["idcard"]} → {entry["name"]} ({fn})')
+        if r.get('error'):
+            failed_results.append(r)
+        elif not r.get('name'):
+            r['error'] = '姓名未识别（可手动补录）'
+            failed_results.append(r)
+        else:
+            success_results.append(r)
+        all_files.append(fn)
+    return success_results, failed_results, all_files
+
+
 def process_task(task_id, file_paths, roster, roster_company='', roster_source_path='', year_range=None):
     """后台线程：PDF转图片 -> 逐张OCR识别 -> 解析 -> 分组 -> 统计 -> 文件整理 -> 生成Excel"""
     try:
@@ -541,18 +572,9 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
             tasks[task_id]['current'] = len(all_items)
             tasks[task_id]['message'] = '正在分析识别结果...'
 
-        # 区分成功和失败的OCR结果
-        # v1.1.43: 失败记录保留完整信息（含 _source_path），供手动补录定位原文件
-        success_results = []
-        failed_results = []
-        all_files = []
-        for r in ocr_results:
-            fn = r.get('filename', '')
-            if r.get('error') or (not r.get('name') and not r.get('idcard')):
-                failed_results.append(r)
-            else:
-                success_results.append(r)
-            all_files.append(fn)
+        # 区分成功和失败的OCR结果（v1.1.47: 含姓名缺失花名册回填 + 失败桶兜底）
+        success_results, failed_results, all_files = _split_ocr_results(
+            task_id, ocr_results, roster)
 
         logger.info(f'[task:{task_id}] OCR完成 — 成功: {len(success_results)}, 失败: {len(failed_results)}')
 
