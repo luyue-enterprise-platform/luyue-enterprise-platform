@@ -243,8 +243,15 @@ def _apply_period_overrides(persons, overrides):
     """应用时间段覆盖层（v1.1.43 手动修改/新增的值优先于OCR识别值）
 
     overrides: {(name, idcard): {险种: (start, end)}}
+    v1.1.48 兼容：api_update_period 实际写入的是 'name|idcard' 字符串键
+    （v1.1.43~47 键型不一致导致重建 500，"修改时间段"一直不可用——
+    测试当时绕过端点直写元组键，漏网），此处两种键型都支持。
     """
-    for (p_name, p_idcard), ins_map in overrides.items():
+    for key, ins_map in overrides.items():
+        if isinstance(key, str):
+            p_name, _, p_idcard = key.partition('|')
+        else:
+            p_name, p_idcard = key
         for p in persons:
             if p['name'] == p_name and (not p_idcard or not p['idcard'] or p['idcard'] == p_idcard):
                 for ins_type, (start, end) in ins_map.items():
