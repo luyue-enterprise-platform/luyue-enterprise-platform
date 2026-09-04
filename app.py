@@ -6,6 +6,10 @@
 import os
 import sys
 import base64
+import threading
+import subprocess
+import tempfile
+import time
 
 # ============ 路径设置 ============
 from core.paths import data_dir, resource_dir
@@ -361,6 +365,108 @@ def api_check_update():
         'error': f'检查更新失败: {last_err or "网络异常"}',
         'has_update': False,
     }), 200
+
+
+# ============ 自动升级（下载完成后静默安装） ============
+_update_lock = threading.Lock()
+_update_state = {
+    'status': 'idle',   # idle / downloading / installing / error
+    'percent': 0,
+    'downloaded': 0,
+    'total': 0,
+    'version': '',
+    'error': '',
+}
+
+# 允许自动下载的安装包地址白名单（防止接口被滥用去下载任意文件）
+_UPDATE_ALLOWED_PREFIXES = (
+    'https://luyue-1466112667.cos.ap-shanghai.myqcloud.com/',
+    'https://github.com/luyue-enterprise-platform/',
+)
+# 安装包最小体积（防错误页/截断文件被当成安装包执行）
+_UPDATE_MIN_SIZE = 5 * 1024 * 1024
+
+
+def _do_update(download_url, version):
+    """后台线程：下载安装包 → 校验 → 静默安装 → 退出当前进程释放 EXE 锁"""
+    import urllib.request as _ur
+    tmp_path = None
+    try:
+        req = _ur.Request(download_url, headers={'User-Agent': 'LuyueApp/1.1.5'})
+        with _ur.urlopen(req, timeout=30) as resp:
+            total = int(resp.headers.get('Content-Length') or 0)
+            fd, tmp_path = tempfile.mkstemp(prefix='ly_update_', suffix='.exe')
+            with os.fdopen(fd, 'wb') as f:
+                downloaded = 0
+                while True:
+                    chunk = resp.read(256 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    with _update_lock:
+                        _update_state['downloaded'] = downloaded
+                        _update_state['total'] = total
+                        if total > 0:
+                            _update_state['percent'] = min(99, int(downloaded * 100 / total))
+        # 校验：体积合理 + PE 头 + 与 Content-Length 一致（防错误页/截断）
+        fsize = os.path.getsize(tmp_path)
+        with open(tmp_path, 'rb') as f:
+            head = f.read(2)
+        if fsize < _UPDATE_MIN_SIZE or head != b'MZ' or (total and fsize != total):
+            raise RuntimeError('安装包校验失败（文件不完整），请重试或改用浏览器下载')
+        with _update_lock:
+            _update_state['status'] = 'installing'
+            _update_state['percent'] = 100
+        logger.info(f'升级包下载完成({fsize}字节)，开始静默安装: {tmp_path}')
+        subprocess.Popen([
+            tmp_path, '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS'
+        ], close_fds=True)
+        # 给安装器启动留出时间后退出当前进程，释放 EXE 文件锁（安装器负责重启程序）
+        time.sleep(5)
+        os._exit(0)
+    except Exception as e:
+        logger.error(f'自动升级失败: {e}')
+        with _update_lock:
+            _update_state['status'] = 'error'
+            _update_state['error'] = str(e)
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
+@app.route('/api/app/start_update', methods=['POST'])
+def api_start_update():
+    """启动自动升级：后台下载安装包，完成后静默安装并自动重启
+
+    免登录（登录页救火场景也要能用）；仅允许白名单内的下载地址，防滥用。
+    """
+    data = request.get_json(silent=True) or {}
+    url = (data.get('download_url') or '').strip()
+    version = (data.get('version') or '').strip()
+    if not url or not url.startswith(_UPDATE_ALLOWED_PREFIXES) or not url.lower().endswith('.exe'):
+        return jsonify({'ok': False, 'error': '下载地址不合法或未在白名单内'}), 400
+    with _update_lock:
+        if _update_state['status'] in ('downloading', 'installing'):
+            return jsonify({'ok': False, 'error': '已有升级任务进行中',
+                            'status': _update_state['status']}), 409
+        _update_state.update({
+            'status': 'downloading', 'percent': 0,
+            'downloaded': 0, 'total': 0,
+            'version': version, 'error': '',
+        })
+    t = threading.Thread(target=_do_update, args=(url, version), daemon=True)
+    t.start()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/app/update_progress', methods=['GET'])
+def api_update_progress():
+    """查询自动升级进度（免登录）"""
+    with _update_lock:
+        return jsonify({'ok': True, **_update_state})
 
 
 # ============ 修改密码 API（门户 + 子模块共用） ============

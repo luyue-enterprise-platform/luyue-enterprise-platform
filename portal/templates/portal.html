@@ -193,13 +193,19 @@
                     <strong style="display:block;margin-bottom:6px;color:#555;">更新内容：</strong>
                     <div id="updateChangelog" style="font-size:13px;color:#666;line-height:1.7;white-space:pre-wrap;"></div>
                 </div>
-                <p style="margin-top:10px;font-size:12px;color:#999;">
-                    点击"立即下载"将打开浏览器下载新版本，下载完成后关闭当前程序运行新版本即可。
+                <div id="updateProgressWrap" style="display:none;margin-top:12px;">
+                    <div style="background:#E8ECF0;border-radius:6px;height:14px;overflow:hidden;">
+                        <div id="updateProgressBar" style="height:100%;width:0%;background:#2E5C8A;transition:width .3s;"></div>
+                    </div>
+                    <p id="updateProgressText" style="margin-top:8px;font-size:13px;color:#555;">准备下载...</p>
+                </div>
+                <p id="updateHintText" style="margin-top:10px;font-size:12px;color:#999;">
+                    点击"立即升级"将自动下载并安装新版本，全程无需手动操作，安装完成后程序会自动重启。
                 </p>
             </div>
             <div class="modal-actions">
                 <button class="btn-ghost" onclick="closeUpdateModal()">稍后再说</button>
-                <button class="btn-primary" id="btnDownloadUpdate">立即下载</button>
+                <button class="btn-primary" id="btnDownloadUpdate">立即升级</button>
             </div>
         </div>
     </div>
@@ -412,8 +418,10 @@
         });
     }
 
-    // ======== 远程更新 ========
+    // ======== 远程更新（自动下载 + 静默安装） ========
     var _pendingDownloadUrl = '';
+    var _pendingVersion = '';
+    var _updatePollTimer = null;
 
     function checkAppUpdate(manual) {
         var btn = document.getElementById('btnCheckUpdate');
@@ -441,9 +449,11 @@
         document.getElementById('updateRemoteVer').textContent = 'v' + data.remote_version;
         document.getElementById('updateChangelog').textContent = data.changelog || '无更新说明';
         _pendingDownloadUrl = data.download_url || '';
+        _pendingVersion = data.remote_version || '';
         var btn = document.getElementById('btnDownloadUpdate');
         btn.disabled = !_pendingDownloadUrl;
-        btn.textContent = _pendingDownloadUrl ? '立即下载' : '暂未提供下载链接';
+        btn.textContent = _pendingDownloadUrl ? '立即升级' : '暂未提供下载链接';
+        document.getElementById('updateProgressWrap').style.display = 'none';
         var title = document.getElementById('updateTitle');
         title.textContent = data.mandatory ? '强制更新' : '发现新版本';
         document.getElementById('updateModal').style.display = 'flex';
@@ -453,17 +463,71 @@
         document.getElementById('updateModal').style.display = 'none';
     }
 
+    function setUpdateProgress(percent, text) {
+        document.getElementById('updateProgressBar').style.width = percent + '%';
+        document.getElementById('updateProgressText').textContent = text;
+    }
+
+    function startAutoUpdate() {
+        var btn = document.getElementById('btnDownloadUpdate');
+        btn.disabled = true;
+        btn.textContent = '升级中...';
+        document.getElementById('updateProgressWrap').style.display = 'block';
+        setUpdateProgress(0, '正在连接服务器...');
+        fetch('/api/app/start_update', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({download_url: _pendingDownloadUrl, version: _pendingVersion})
+        }).then(function(res) { return res.json(); }).then(function(data) {
+            if (!data.ok) {
+                // 已有升级任务进行中 → 直接接入轮询
+                if (data.status === 'downloading' || data.status === 'installing') {
+                    pollUpdateProgress();
+                    return;
+                }
+                fallbackBrowserDownload(data.error || '启动升级失败');
+                return;
+            }
+            pollUpdateProgress();
+        }).catch(function(err) {
+            fallbackBrowserDownload('网络异常: ' + err.message);
+        });
+    }
+
+    function pollUpdateProgress() {
+        if (_updatePollTimer) clearInterval(_updatePollTimer);
+        _updatePollTimer = setInterval(function() {
+            fetch('/api/app/update_progress').then(function(res) { return res.json(); }).then(function(st) {
+                if (st.status === 'downloading') {
+                    var mb = (st.downloaded / 1048576).toFixed(1);
+                    var totalMb = st.total ? (st.total / 1048576).toFixed(1) : '?';
+                    setUpdateProgress(st.percent || 0,
+                        '正在下载升级包 ' + mb + 'MB / ' + totalMb + 'MB（' + (st.percent || 0) + '%）...');
+                } else if (st.status === 'installing') {
+                    setUpdateProgress(100, '下载完成，正在自动安装，程序即将自动重启...');
+                } else if (st.status === 'error') {
+                    clearInterval(_updatePollTimer);
+                    _updatePollTimer = null;
+                    fallbackBrowserDownload(st.error || '自动升级失败');
+                }
+            }).catch(function() {});
+        }, 1000);
+    }
+
+    function fallbackBrowserDownload(errMsg) {
+        setUpdateProgress(0, '自动升级失败：' + errMsg + '。已为你打开浏览器下载，请手动安装。');
+        var btn = document.getElementById('btnDownloadUpdate');
+        btn.disabled = false;
+        btn.textContent = '重试自动升级';
+        window.open(_pendingDownloadUrl, '_blank');
+    }
+
     document.getElementById('btnDownloadUpdate').addEventListener('click', function() {
         if (!_pendingDownloadUrl) {
             showToast('暂未提供下载链接，请联系管理员');
             return;
         }
-        showToast('正在打开浏览器下载新版本...', 'success');
-        window.open(_pendingDownloadUrl, '_blank');
-        setTimeout(function() {
-            closeUpdateModal();
-            showToast('下载已开始，请关闭当前程序后运行新版本', 'success');
-        }, 500);
+        startAutoUpdate();
     });
 
     // 更新检查改为手动触发（点击顶部"检查更新"按钮），不再自动静默检查

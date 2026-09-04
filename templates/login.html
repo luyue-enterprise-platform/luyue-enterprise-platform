@@ -36,10 +36,10 @@
                 </div>
                 <div id="loginError" class="auth-error" style="display:none;"></div>
 
-                <!-- 登录页升级提示：认证服务异常/版本过旧导致无法登录时，仍可在此下载新版修复 -->
+                <!-- 登录页升级提示：认证服务异常/版本过旧导致无法登录时，仍可在此自动升级修复 -->
                 <div id="updateBanner" style="display:none;margin-bottom:14px;padding:10px 12px;border-radius:8px;background:#fff7e0;border:1px solid #f0c36d;align-items:center;justify-content:space-between;gap:10px;">
-                    <span style="font-size:13px;color:#7a5b00;line-height:1.5;">发现新版本 v<span id="updRemoteVer" style="font-weight:700;"></span><br><span style="font-size:12px;color:#a07c1a;">升级后即可正常登录</span></span>
-                    <a id="updDownloadBtn" class="btn btn-primary" href="#" target="_blank" style="flex-shrink:0;padding:7px 14px;font-size:13px;text-decoration:none;">立即下载升级</a>
+                    <span style="font-size:13px;color:#7a5b00;line-height:1.5;">发现新版本 v<span id="updRemoteVer" style="font-weight:700;"></span><br><span id="updStatusText" style="font-size:12px;color:#a07c1a;">升级后即可正常登录</span></span>
+                    <button type="button" id="updDownloadBtn" class="btn btn-primary" style="flex-shrink:0;padding:7px 14px;font-size:13px;">立即升级</button>
                 </div>
 
                 <button type="submit" class="btn btn-primary btn-block" id="loginBtn">登 录</button>
@@ -125,18 +125,66 @@
 
         // 登录页自动检测新版本（免登录接口）：发现新版则显示升级横幅，
         // 覆盖"认证服务器异常导致无法登录"的救火场景
+        var _updUrl = '';
+        var _updVer = '';
         function checkLoginUpdate() {
             fetch('/api/app/check_update').then(function(resp) {
                 return resp.json();
             }).then(function(data) {
                 if (data && data.has_update && data.download_url) {
-                    document.getElementById('updRemoteVer').textContent = data.remote_version || '';
-                    document.getElementById('updDownloadBtn').setAttribute('href', data.download_url);
+                    _updUrl = data.download_url;
+                    _updVer = data.remote_version || '';
+                    document.getElementById('updRemoteVer').textContent = _updVer;
                     document.getElementById('updateBanner').style.display = 'flex';
                 }
             }).catch(function(){});
         }
         checkLoginUpdate();
+
+        // 自动升级：后台下载 → 静默安装 → 自动重启；失败回退浏览器下载
+        document.getElementById('updDownloadBtn').addEventListener('click', function() {
+            if (!_updUrl) return;
+            var btn = this;
+            var statusEl = document.getElementById('updStatusText');
+            btn.disabled = true;
+            btn.textContent = '正在准备...';
+            function failFallback(msg) {
+                btn.disabled = false;
+                btn.textContent = '重试自动升级';
+                statusEl.textContent = (msg || '自动升级失败') + '，已打开浏览器下载，请手动安装';
+                window.open(_updUrl, '_blank');
+            }
+            fetch('/api/app/start_update', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({download_url: _updUrl, version: _updVer})
+            }).then(function(resp) {
+                return resp.json();
+            }).then(function(data) {
+                if (!data.ok && data.status !== 'downloading' && data.status !== 'installing') {
+                    failFallback(data.error);
+                    return;
+                }
+                var timer = setInterval(function() {
+                    fetch('/api/app/update_progress').then(function(resp) {
+                        return resp.json();
+                    }).then(function(st) {
+                        if (st.status === 'downloading') {
+                            btn.textContent = '下载中 ' + (st.percent || 0) + '%';
+                        } else if (st.status === 'installing') {
+                            clearInterval(timer);
+                            btn.textContent = '正在自动安装';
+                            statusEl.textContent = '安装完成后程序将自动重启';
+                        } else if (st.status === 'error') {
+                            clearInterval(timer);
+                            failFallback(st.error);
+                        }
+                    }).catch(function(){});
+                }, 1000);
+            }).catch(function(err) {
+                failFallback('网络异常: ' + err.message);
+            });
+        });
 
         // 表单提交：AJAX 登录 + 保存凭据
         var submitting = false;

@@ -113,7 +113,7 @@ def extract_idcard(text):
 # 字段标签词黑名单——OCR漏识别姓名值时，"姓名："后面紧跟的往往是下一个字段标签，
 # 绝不能把标签当成姓名（v1.1.47 修复：姓名被误识别成"身份证号"）
 _NAME_LABEL_WORDS = {
-    '身份证号', '身份证', '证件号码', '证件号', '号码', '个人编号', '编号',
+    '身份证号', '身份证', '身份', '证件号码', '证件号', '号码', '个人编号', '编号',
     '参保状态', '状态', '性别', '民族', '出生日期', '出生', '住址', '地址',
     '单位名称', '公司名称', '单位', '公司', '缴费年度', '年度', '缴费月份', '月份',
     '缴费月数', '总缴费月数', '月数', '日期', '时间', '经办机构', '机构',
@@ -121,6 +121,10 @@ _NAME_LABEL_WORDS = {
 }
 _NAME_LABEL_KEYWORDS = ('证号', '证件', '编号', '缴费', '参保', '单位',
                         '公司', '年度', '月份', '机构', '状态', '证明', '险种')
+# 姓名值后面可能出现的下一字段标签开头（用于惰性匹配截停，防"薛宇行个人编号"→"薛宇行个"）
+_NAME_FOLLOWERS = ('个人', '证件', '身份', '证号', '编号', '号码', '性别', '民族',
+                   '出生', '住址', '地址', '参保', '缴费', '单位', '公司',
+                   '年度', '月份', '机构', '状态', '证明', '险种', '居民', '经办')
 
 
 def _is_label_word(s):
@@ -157,8 +161,16 @@ def extract_name(text):
         idx = norm.find('姓名')
         after = norm[idx + 2:]
         after = after.lstrip(':： \t')
-        # 匹配2-4个中文字符（且不是字段标签词）
-        m = re.match(r'([\u4e00-\u9fa5]{2,4})', after)
+        m = None
+        # after 以字段标签开头 → 姓名值缺失（如"姓名：身份证号：…"），跳过主策略走兜底，
+        # 否则惰性匹配会切出"身份"这种标签碎片
+        if after and not any(after.startswith(f) for f in _NAME_FOLLOWERS):
+            # 惰性匹配2-4个中文，遇到下一字段标签开头/数字/行尾即截停
+            # （防去空格后"薛宇行个人编号"被贪婪匹配成"薛宇行个"）
+            m = re.match(r'([\u4e00-\u9fa5]{2,4}?)(?:' + '|'.join(_NAME_FOLLOWERS) + r'|(?=\d)|$)', after)
+            if not m:
+                # 回退原贪婪匹配（姓名后随非典型字符的场景）
+                m = re.match(r'([\u4e00-\u9fa5]{2,4})', after)
         if m:
             word = m.group(1)
             # 贪婪匹配可能吞进标签前缀（如"张三身份"），回退标签后缀
@@ -669,12 +681,90 @@ def _strip_parentheses(text):
     return result.strip()
 
 
+# 单位名候选中不得出现的表头/标签碎片（出现即判误匹配，v1.1.50 防"序号/经办机构"被当成单位名）
+_COMPANY_REJECT_KEYWORDS = (
+    '序号', '经办', '机构', '缴费', '年度', '月份', '月数', '打印', '说明',
+    '验证', '权益', '记录', '姓名', '证件', '编号', '小数', '保留', '名称',
+    '状态', '证明', '险种', '金额', '基数', '比例', '实缴',
+)
+# 强后缀（公司类）与弱后缀（厂矿院所店等）——投票时强后缀池优先
+_COMPANY_STRONG_SUFFIXES = ('公司', '集团', '合作社', '事务所', '医院', '学校', '中心')
+_COMPANY_WEAK_SUFFIXES = ('厂', '矿', '院', '所', '店', '场', '馆', '站', '队', '局', '部')
+# 公司名前面可能粘连的标签词（OCR 丢冒号时标签与公司名相连，需切除）
+_COMPANY_LABEL_GLUES = (
+    '现缴费单位名称', '对应缴费单位名称', '缴费单位名称', '参保单位名称',
+    '现缴费单位', '缴费单位', '参保单位', '用人单位', '单位名称', '对应', '名称',
+)
+
+
+def _is_valid_company(name):
+    """校验单位名候选：太短或含表头/标签碎片的都是误匹配"""
+    if not name or len(name) < 3:
+        return False
+    for kw in _COMPANY_REJECT_KEYWORDS:
+        if kw in name:
+            return False
+    return True
+
+
+def _clean_company_candidate(cand):
+    """去掉粘连在公司名前面的标签词（OCR 丢冒号导致标签与公司名相连）"""
+    for _ in range(3):
+        before = cand
+        for kw in _COMPANY_LABEL_GLUES:
+            idx = cand.find(kw)
+            if idx >= 0:
+                cand = cand[idx + len(kw):]
+        if cand == before:
+            break
+    return cand
+
+
+_COMPANY_ALL_SUFFIXES = _COMPANY_STRONG_SUFFIXES + _COMPANY_WEAK_SUFFIXES
+
+
+def _extend_wrapped_company(cand, lines, next_idx):
+    """公司名在行尾被换行截断时（'…有限公' + 短碎片行'司'），拼接短续行补全。
+    表格单元格内换行的碎片可能隔着数据行，故向后多看两行。"""
+    if cand.endswith(_COMPANY_ALL_SUFFIXES):
+        return cand
+    for j in range(next_idx, min(next_idx + 3, len(lines))):
+        nxt = lines[j].strip()
+        if re.fullmatch(r'[\u4e00-\u9fa5]{1,3}', nxt):
+            combined = cand + nxt
+            if combined.endswith(_COMPANY_ALL_SUFFIXES) and _is_valid_company(combined):
+                return combined
+    return cand
+
+
+def _company_candidates_from_line(s):
+    """在（去空格的）一行文本中，按公司后缀向前取连续中文串，产出全部单位名候选"""
+    out = []
+    for m in re.finditer(
+            r'(有限责任公司|股份有限公司|有限公司|公司|集团|合作社|事务所|医院|学校|中心'
+            r'|厂|矿|院|所|店|场|馆|站|队|局|部)', s):
+        end = m.end()
+        start = end
+        # 向前扩展连续中文/间隔号（不含冒号等分隔符，最多回溯30字）
+        while start > 0 and re.match(r'[\u4e00-\u9fa5\u00b7·]', s[start - 1]) and end - start < 32:
+            start -= 1
+        if end - start >= 3:
+            out.append(s[start:end])
+    return out
+
+
 def extract_company_name(text):
     """
     从OCR文本中提取缴费单位/参保单位名称
 
-    策略：查找"现缴费单位"/"缴费单位"或"参保单位"关键词，提取后面的单位名称。
-    v1.1.34: "现缴费单位"关键词优先；提取结果去掉括号及括号内内容（只取括号外公司名）。
+    策略：
+    1. 查找"现缴费单位"/"缴费单位"等关键词，提取后面的单位名称
+       （候选必须通过 _is_valid_company 校验——v1.1.50 修复：OCR 漏识别单位名时，
+       "下一行兜底"曾把表头"序号"当成单位名返回）
+    2. 兜底：全文按公司后缀（公司/集团/厂/矿…）提取候选并投票，
+       强后缀池优先，频次高者胜（表格各行重复出现同一单位名，天然多数票）
+
+    v1.1.34: "现缴费单位"关键词优先；提取结果去掉括号及括号内内容。
 
     Returns:
         str: 单位名称，未找到返回空字符串
@@ -684,6 +774,7 @@ def extract_company_name(text):
     keywords = ['现缴费单位名称', '现缴费单位', '缴费单位名称', '参保单位名称',
                 '缴费单位', '参保单位', '用人单位', '单位名称', '单位:', '单位：']
 
+    dangling = None  # 疑似被换行截断的候选（不以公司后缀结尾），作为最后兜底
     for i, line in enumerate(lines):
         for kw in keywords:
             if kw in line:
@@ -694,15 +785,53 @@ def extract_company_name(text):
                 # 取非空白内容，通常单位名是中文
                 m = re.match(r'([\u4e00-\u9fa5\w\(\)（）\u00b7·]{2,40})', after)
                 if m:
-                    return _strip_parentheses(m.group(1))
-                # 如果当前行后面内容不够，看下一行
+                    cand = _strip_parentheses(m.group(1))
+                    if _is_valid_company(cand):
+                        ext = _extend_wrapped_company(cand, lines, i + 1)
+                        if ext.endswith(_COMPANY_ALL_SUFFIXES):
+                            return ext
+                        if dangling is None:
+                            dangling = ext  # 疑似截断的候选，先记着，继续找完整名
+                # 如果当前行后面内容不够，看下一行（同样须通过校验）
                 if i + 1 < len(lines):
                     next_line = lines[i + 1].strip()
                     m = re.match(r'([\u4e00-\u9fa5\w\(\)（）\u00b7·]{2,40})', next_line)
                     if m:
-                        return _strip_parentheses(m.group(1))
+                        cand = _strip_parentheses(m.group(1))
+                        if _is_valid_company(cand):
+                            ext = _extend_wrapped_company(cand, lines, i + 2)
+                            if ext.endswith(_COMPANY_ALL_SUFFIXES):
+                                return ext
+                            if dangling is None:
+                                dangling = ext
 
-    return ''
+    # 兜底：全文投票。表格中单位名常因换行被截断（"…有限公" + "司"），
+    # 且单元格内碎片可能隔着数据行——除拼接相邻下一行外，再拼接近3行内的短碎片行
+    strong_votes = {}
+    weak_votes = {}
+    for i, ln in enumerate(lines):
+        base = ln.replace(' ', '').replace('\u3000', '')
+        variants = [base]
+        if i + 1 < len(lines):
+            variants.append(base + lines[i + 1].strip().replace(' ', ''))
+        for j in range(i + 1, min(i + 4, len(lines))):
+            frag = lines[j].strip().replace(' ', '')
+            if re.fullmatch(r'[\u4e00-\u9fa5]{1,2}', frag):
+                variants.append(base + frag)
+        for v in variants:
+            for cand in _company_candidates_from_line(v):
+                cand = _clean_company_candidate(cand)
+                if not _is_valid_company(cand):
+                    continue
+                if cand.endswith(_COMPANY_STRONG_SUFFIXES):
+                    strong_votes[cand] = strong_votes.get(cand, 0) + 1
+                else:
+                    weak_votes[cand] = weak_votes.get(cand, 0) + 1
+    pool = strong_votes or weak_votes
+    if pool:
+        # 频次优先，同频次取更长（完整名优先于截断名）
+        return max(pool.items(), key=lambda kv: (kv[1], len(kv[0])))[0]
+    return dangling or ''
 
 
 # ============ 综合解析 ============

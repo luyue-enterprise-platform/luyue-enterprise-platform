@@ -9,7 +9,7 @@
 
 #define MyAppName "鲁岳企业服务·综合智能平台"
 #define MyAppShortName "LY重点群体涉税申报综合智能平台"
-#define MyAppVersion "1.1.48"
+#define MyAppVersion "1.1.50"
 #define MyAppPublisher "鲁岳企业服务"
 #define MyAppURL "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform"
 #define MyAppExeName "鲁岳企业服务_综合智能平台.exe"
@@ -82,8 +82,8 @@ Name: "{group}\卸载 {#MyAppShortName}"; Filename: "{uninstallexe}"
 [Run]
 ; 安装 WebView2 Runtime（如果未安装）——静默安装，无需用户交互
 Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "正在安装 WebView2 运行时组件..."; Check: WebView2NotInstalled; Flags: waituntilterminated
-; 安装完成后询问是否立即运行
-Filename: "{app}\{#MyAppExeName}"; Description: "立即运行 {#MyAppName}"; Flags: nowait postinstall skipifsilent
+; 安装完成后询问是否立即运行（静默升级模式下也会自动重启程序，实现无人值守升级）
+Filename: "{app}\{#MyAppExeName}"; Description: "立即运行 {#MyAppName}"; Flags: nowait postinstall
 
 [UninstallRun]
 ; 卸载时可选清理用户数据
