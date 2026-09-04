@@ -385,6 +385,9 @@ _UPDATE_ALLOWED_PREFIXES = (
 )
 # 安装包最小体积（防错误页/截断文件被当成安装包执行）
 _UPDATE_MIN_SIZE = 5 * 1024 * 1024
+# 安装器启动后的存活观察窗口（秒）。v1.1.52：窗口内安装器“早退”且退出码非零
+# → 判定安装失败（安装包损坏/不兼容），报错但保持当前进程存活，绝不可自杀。
+_UPDATE_INSTALL_GRACE_SEC = 8
 
 
 def _do_update(download_url, version):
@@ -419,10 +422,24 @@ def _do_update(download_url, version):
             _update_state['status'] = 'installing'
             _update_state['percent'] = 100
         logger.info(f'升级包下载完成({fsize}字节)，开始静默安装: {tmp_path}')
-        subprocess.Popen([
+        proc = subprocess.Popen([
             tmp_path, '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS'
         ], close_fds=True)
-        # 给安装器启动留出时间后退出当前进程，释放 EXE 文件锁（安装器负责重启程序）
+        # v1.1.52 加固：安装器启动后宽限观察其存活。
+        # 教训（v1.1.51 事故）：损坏的安装包启动后数秒内以非零码退出，而旧逻辑
+        # 不看存活直接 os._exit → 用户端表现为“下载完成→程序消失→什么都没装上”，
+        # 且程序已自杀无法再次自动升级，只能手动救。
+        # 现在：观察窗口内安装器早退（非零退出码）→ 抛错进入 error 状态，
+        # 当前进程保持存活，前端提示失败并自动回退浏览器下载。
+        deadline = time.time() + _UPDATE_INSTALL_GRACE_SEC
+        while time.time() < deadline:
+            rc = proc.poll()
+            if rc is not None:
+                if rc != 0:
+                    raise RuntimeError(f'安装程序异常退出（代码 {rc}），请重试或改用浏览器下载')
+                break  # 正常快速完成（罕见，多为测试桩）
+            time.sleep(0.5)
+        # 安装器存活（或已正常完成）→ 退出当前进程，释放 EXE 文件锁（安装器负责重启程序）
         time.sleep(5)
         os._exit(0)
     except Exception as e:

@@ -21,6 +21,8 @@ CHECKS = {
         '/api/app/start_update',
         '/api/app/update_progress',
         'https://luyue-1466112667.cos.ap-shanghai.myqcloud.com/',
+        # v1.1.52 安装器存活观察（f-string 片段，需子串匹配）
+        '安装程序异常退出',
     ],
     # v1.1.50 缴费单位误解析修复（序号/经办机构拒判 + 公司后缀投票兜底）
     # v1.1.51 中断信息明细剔除（'中断' 关键字 + 中断数据行日期正则）
@@ -54,7 +56,8 @@ def collect_consts(code, out):
 def has_string(mod_code, needle):
     seen = set()
     collect_consts(mod_code, seen)
-    return needle in seen
+    # 子串匹配：f-string 会被编译成若干常量片段，精确匹配整串会漏报
+    return any(needle in s for s in seen)
 
 
 exe = CArchiveReader(EXE_PATH)

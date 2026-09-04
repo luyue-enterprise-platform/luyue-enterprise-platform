@@ -108,6 +108,11 @@ class TestDoUpdateEndToEnd(unittest.TestCase):
         app_module._UPDATE_MIN_SIZE = 100
         self.popen_mock = mock.MagicMock()
         self.exit_mock = mock.MagicMock()
+        # v1.1.52：安装器默认视为“存活”（poll 返回 None，进程仍在运行），
+        # 并缩短存活观察窗口，避免 grace 轮询拖慢测试
+        self.popen_mock.return_value.poll.return_value = None
+        self._old_grace = app_module._UPDATE_INSTALL_GRACE_SEC
+        app_module._UPDATE_INSTALL_GRACE_SEC = 0.2
         self._patchers = [
             mock.patch('subprocess.Popen', self.popen_mock),
             mock.patch('os._exit', self.exit_mock),
@@ -123,6 +128,7 @@ class TestDoUpdateEndToEnd(unittest.TestCase):
             p.stop()
         app_module._UPDATE_ALLOWED_PREFIXES = self._old_prefixes
         app_module._UPDATE_MIN_SIZE = self._old_min
+        app_module._UPDATE_INSTALL_GRACE_SEC = self._old_grace
         self.httpd.shutdown()
         self.httpd.server_close()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
