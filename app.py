@@ -170,9 +170,12 @@ def login():
                 return jsonify({'ok': True})
             return redirect('/')
         else:
+            # 透传 verify_user 返回的真实错误（密码错/停用/认证服务不可用），
+            # 避免把所有失败都硬编码成"用户名或密码错误"误导用户
+            msg = err or '用户名或密码错误'
             if request.is_json:
-                return jsonify({'error': '用户名或密码错误'}), 401
-            return render_template('login.html', error='用户名或密码错误')
+                return jsonify({'error': msg}), 401
+            return render_template('login.html', error=msg)
 
     return render_template('login.html')
 
@@ -301,17 +304,23 @@ def api_app_version():
     })
 
 
-# 远程版本信息地址（GitHub Raw URL，无需 PythonAnywhere）
+# 远程版本信息地址（COS 首位：国内直连快；GitHub 兜底：COS 异常时可回退）
+# 注意：COS 与 raw.githubusercontent 返回明文 JSON；GitHub Contents API 返回 base64（下方单独解码）
 REMOTE_VERSION_URLS = [
+    'https://luyue-1466112667.cos.ap-shanghai.myqcloud.com/version.json',
     'https://raw.githubusercontent.com/luyue-enterprise-platform/luyue-enterprise-platform/main/version.json',
     'https://api.github.com/repos/luyue-enterprise-platform/luyue-enterprise-platform/contents/version.json',
 ]
 
 
 @app.route('/api/app/check_update', methods=['GET'])
-@login_required
 def api_check_update():
-    """从 GitHub 远程抓取最新版本信息，对比 version_code 判断是否需要更新"""
+    """从远程抓取最新版本信息，对比 version_code 判断是否需要更新
+
+    免登录：登录页也需要显示升级提示（认证服务异常导致无法登录时，
+    用户必须在登录前就能看到新版本并下载修复版本）。
+    接口仅返回版本/更新说明/公开下载地址，无敏感数据。
+    """
     import json as _json
     import urllib.request as _ur
     import urllib.error as _ue

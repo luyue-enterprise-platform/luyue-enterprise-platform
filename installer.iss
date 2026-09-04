@@ -9,7 +9,7 @@
 
 #define MyAppName "鲁岳企业服务·综合智能平台"
 #define MyAppShortName "LY重点群体涉税申报综合智能平台"
-#define MyAppVersion "1.1.45"
+#define MyAppVersion "1.1.46"
 #define MyAppPublisher "鲁岳企业服务"
 #define MyAppURL "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform"
 #define MyAppExeName "鲁岳企业服务_综合智能平台.exe"
@@ -58,8 +58,9 @@ Name: "startup"; Description: "加入开机启动（可选）"; GroupDescription
 [Files]
 ; 主程序 EXE
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-; 配置文件（云端认证）— 从项目根目录包含，确保所有电脑都有远程认证配置
-Source: "auth_config.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
+; 配置文件（云端认证）— 始终覆盖：每次安装写入最新认证服务器地址，
+; 确保老用户升级后自动恢复远程认证（认证服务器迁移时必须更新此文件，不能 onlyifdoesntexist）
+Source: "auth_config.json"; DestDir: "{app}"; Flags: ignoreversion
 ; WebView2 Runtime 安装包（安装过程中自动安装，解决其他电脑无法启动问题）
 Source: "MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: ignoreversion skipifsourcedoesntexist; Check: WebView2NotInstalled
 ; 版本信息

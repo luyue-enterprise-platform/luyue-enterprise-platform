@@ -35,6 +35,13 @@
                     </label>
                 </div>
                 <div id="loginError" class="auth-error" style="display:none;"></div>
+
+                <!-- 登录页升级提示：认证服务异常/版本过旧导致无法登录时，仍可在此下载新版修复 -->
+                <div id="updateBanner" style="display:none;margin-bottom:14px;padding:10px 12px;border-radius:8px;background:#fff7e0;border:1px solid #f0c36d;align-items:center;justify-content:space-between;gap:10px;">
+                    <span style="font-size:13px;color:#7a5b00;line-height:1.5;">发现新版本 v<span id="updRemoteVer" style="font-weight:700;"></span><br><span style="font-size:12px;color:#a07c1a;">升级后即可正常登录</span></span>
+                    <a id="updDownloadBtn" class="btn btn-primary" href="#" target="_blank" style="flex-shrink:0;padding:7px 14px;font-size:13px;text-decoration:none;">立即下载升级</a>
+                </div>
+
                 <button type="submit" class="btn btn-primary btn-block" id="loginBtn">登 录</button>
             </form>
 
@@ -115,6 +122,21 @@
         }
 
         loadSaved();
+
+        // 登录页自动检测新版本（免登录接口）：发现新版则显示升级横幅，
+        // 覆盖"认证服务器异常导致无法登录"的救火场景
+        function checkLoginUpdate() {
+            fetch('/api/app/check_update').then(function(resp) {
+                return resp.json();
+            }).then(function(data) {
+                if (data && data.has_update && data.download_url) {
+                    document.getElementById('updRemoteVer').textContent = data.remote_version || '';
+                    document.getElementById('updDownloadBtn').setAttribute('href', data.download_url);
+                    document.getElementById('updateBanner').style.display = 'flex';
+                }
+            }).catch(function(){});
+        }
+        checkLoginUpdate();
 
         // 表单提交：AJAX 登录 + 保存凭据
         var submitting = false;

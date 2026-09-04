@@ -310,7 +310,11 @@ def create_user(username, password, is_admin=False, invite_code=''):
 def verify_user(username, password):
     """验证用户登录，返回(user_dict, error)
 
-    远程模式：优先走远程API登录；远程失败时回退到本地数据库验证。
+    远程模式：优先走远程API登录；
+    - 远程明确拒绝（401 密码错误 / 403 停用）→ 直接返回业务错误，不误导用户
+    - 远程服务不可用（网络异常 / 404 / 5xx）→ 仅当本地数据库存在该用户且密码匹配
+      时才回退本地验证（离线注册过的老用户仍可登录）；否则明确提示服务不可用，
+      不再误报"用户名或密码错误"（此前曾因认证服务器下线导致全员误报密码错误）
     本地模式：直接在本地数据库验证。
     """
     if _is_remote():
@@ -327,9 +331,23 @@ def verify_user(username, password):
                 'is_active': True,
                 '_token': token,
             }, None
-        # 远程登录失败：回退到本地验证（用户可能在远程不可用时本地注册）
+        # 远程明确拒绝：账号/密码/停用类业务错误 → 原样透传
+        if status in (401, 403):
+            return None, result.get('error') or '用户名或密码错误'
+        # 远程服务不可用（网络错误 503 / 路径不存在 404 / 服务器错误 5xx）：
+        # 尝试本地回退，仅当本地确有该用户且密码匹配
         _log_fallback('登录', status, result.get('error', ''))
-    # 本地模式（或远程失败的回退）
+        conn = get_db()
+        row = conn.execute(
+            'SELECT * FROM users WHERE username = ?', (username,)
+        ).fetchone()
+        conn.close()
+        if row and row['password_hash'] == _hash_password(password):
+            if not row['is_active']:
+                return None, '账号已被停用，请联系管理员'
+            return dict(row), None
+        return None, '认证服务暂时不可用，请检查网络或联系管理员'
+    # 本地模式
     conn = get_db()
     row = conn.execute(
         'SELECT * FROM users WHERE username = ?', (username,)
