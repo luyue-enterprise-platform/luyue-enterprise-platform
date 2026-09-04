@@ -741,7 +741,8 @@ function fetchResult() {
 }
 
 // ===== 渲染结果 =====
-function renderResult(data) {
+function renderResult(data, opts) {
+    opts = opts || {};
     progressSection.style.display = 'none';
     progressActions.style.display = 'none';
     resultSection.style.display = 'block';
@@ -901,8 +902,21 @@ function renderResult(data) {
         }
         orgHtml += '</div>';
         var orgBox = document.getElementById('organizeInfo');
+        // v1.1.51: 重渲染时保留面板展开/收起状态（修改异常图片/手动补录后
+        // 不得自动收起用户已展开的面板，也不得让页面因布局突变而跳走）
+        var keepExpanded = orgBox.style.display !== 'none' && orgBox.innerHTML &&
+            !orgBox.classList.contains('collapsed');
+        var oldDetails = orgBox.querySelector ? orgBox.querySelector('details.image-details-block') : null;
+        var detailsWasOpen = oldDetails ? oldDetails.open : true;
         orgBox.innerHTML = orgHtml;
-        orgBox.className = 'organize-info collapsible-panel collapsed';
+        orgBox.className = 'organize-info collapsible-panel' + (keepExpanded ? '' : ' collapsed');
+        if (keepExpanded) {
+            var tog = orgBox.querySelector('.panel-toggle');
+            if (tog) tog.textContent = '收起 ▾';
+            // 同步保留"每张图片的识别详情"<details>的开合状态
+            var newDetails = orgBox.querySelector('details.image-details-block');
+            if (newDetails && !detailsWasOpen) newDetails.open = false;
+        }
         orgBox.style.display = 'block';
         btnDownloadOrganized.style.display = 'inline-flex';
     }
@@ -981,6 +995,26 @@ function renderResult(data) {
 
     // 渲染手动操作记录
     renderOperationLog(data.operation_log);
+
+    // v1.1.51: 修改异常图片/手动补录后，页面停留在被处理图片所在行
+    if (opts.scrollToFilename) {
+        scrollToImageRow(opts.scrollToFilename);
+    }
+}
+
+// v1.1.51: 滚动定位到"每张图片的识别详情"中指定文件所在行，并短暂高亮
+function scrollToImageRow(filename) {
+    var rows = document.querySelectorAll('#organizeInfo tr[data-filename]');
+    for (var i = 0; i < rows.length; i++) {
+        if (rows[i].getAttribute('data-filename') === filename) {
+            rows[i].scrollIntoView({ block: 'center', behavior: 'smooth' });
+            rows[i].classList.add('row-just-saved');
+            (function(row) {
+                setTimeout(function() { row.classList.remove('row-just-saved'); }, 2400);
+            })(rows[i]);
+            return;
+        }
+    }
 }
 
 // ===== v1.1.45: 结果表渲染（支持按姓名搜索过滤，实时刷新） =====
@@ -1285,9 +1319,11 @@ function submitManualFill() {
                 showToast(data.error);
                 return;
             }
+            // v1.1.51: 先记住当前文件名（close 会清空），补录后页面停留在该行
+            var savedFilename = currentManualFillFilename;
             closeManualFill();
             showToast('补录成功，统计结果已更新');
-            renderResult(data);
+            renderResult(data, { scrollToFilename: savedFilename });
         })
         .catch(function(err) {
             btn.disabled = false;
@@ -1603,9 +1639,11 @@ function submitExcludedHandle() {
                 showToast(data.error);
                 return;
             }
+            // v1.1.51: 先记住当前文件名（close 会清空），保存后页面停留在该行
+            var savedFilename = currentEhFilename;
             closeExcludedHandle();
             showToast('已保存：图片已归入正常列表并从异常列表移除');
-            renderResult(data);
+            renderResult(data, { scrollToFilename: savedFilename });
         })
         .catch(function(err) {
             btn.disabled = false;

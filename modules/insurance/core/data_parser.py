@@ -259,6 +259,45 @@ def _keep_latest_segment(periods):
     return [max(merged, key=lambda p: _ym_key(p[1]))]
 
 
+def _strip_interruption_sections(text):
+    """
+    剔除"中断信息明细"区块（v1.1.51）
+
+    医保参保证明上的"中断起止时间 201805-202104"等中断明细，格式与参保
+    时间段完全一致，会被时间段正则误当参保段提取；且文本路径一旦命中就
+    不再回退年度表格解析，导致统计表把"中断的时间段"计入参保时间。
+
+    规则：含"中断"二字的行整体剔除；其后连续出现的"含日期/数字对"的
+    数据行视为中断明细数据，一并剔除（最多跟随 10 行兜底，遇到非数据行
+    即恢复正常）。
+
+    Args:
+        text: OCR 全文文本
+
+    Returns:
+        str: 剔除中断区块后的文本
+    """
+    if '中断' not in text:
+        return text
+    date_like = re.compile(r'(\d{4}\s*[-./年]\s*\d{1,2})|(\d{6})')
+    out = []
+    skip_data_lines = 0
+    for line in text.split('\n'):
+        if '中断' in line:
+            # 中断表头/说明行本身剔除，后续数据行跟随剔除
+            skip_data_lines = 10
+            continue
+        if skip_data_lines > 0:
+            if date_like.search(line):
+                # 中断明细的数据行（如 201805-202104 / 2018年05月至2021年04月）
+                skip_data_lines -= 1
+                continue
+            # 非数据行：中断区块结束，恢复正常行
+            skip_data_lines = 0
+        out.append(line)
+    return '\n'.join(out)
+
+
 def extract_periods(text):
     """
     从OCR文本中提取所有参保时间段
@@ -274,6 +313,8 @@ def extract_periods(text):
     Returns:
         list of (start_ym, end_ym): 如 [('2024-01', '2024-12'), ('2025-01', '2025-12')]
     """
+    # v1.1.51: 先剔除"中断信息明细"区块，防止中断起止时间被误当参保时间段
+    text = _strip_interruption_sections(text)
     periods = []
 
     def make_period(y1, m1, y2, m2):
@@ -290,9 +331,11 @@ def extract_periods(text):
         start = parse_period_str(m.group(1))
         end = parse_period_str(m.group(2))
         if start and end:
-            periods.append(
-                (f'{start[0]:04d}-{start[1]:02d}', f'{end[0]:04d}-{end[1]:02d}')
-            )
+            # v1.1.51: 与其他模式一致走 make_period 校验年月范围，
+            # 防止"500000-600000"等数字对产出 ('5000-00','6000-00') 垃圾段
+            p = make_period(start[0], start[1], end[0], end[1])
+            if p:
+                periods.append(p)
 
     # 模式2：无分隔符的12位数字 YYYYMMYYYYMM
     if not periods:

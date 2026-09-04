@@ -1016,6 +1016,12 @@ body {
     white-space: nowrap;
 }
 
+/* v1.1.51: 保存异常图片/手动补录后，定位行短暂高亮 */
+.image-details-table tr.row-just-saved td {
+    background: #e3f2fd;
+    transition: background 0.3s;
+}
+
 .folder-grid {
     display: flex;
     flex-wrap: wrap;
