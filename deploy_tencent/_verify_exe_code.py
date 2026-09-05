@@ -33,12 +33,16 @@ CHECKS = {
         '事务所',
         '中断',
         r'(\d{4}\s*[-./年]\s*\d{1,2})|(\d{6})',
+        # v1.1.54 中断统计开始时间规则（中断结束月+1）
+        '中断信息明细统计规则',
     ],
     # v1.1.53 劳动合同叠加比对（花名册合同列 + 有效参保期裁剪 + 操作记录提示）
     'modules.insurance.core.contract_overlap': [
         '无固定期限',
         '合同比对',
         '有效参保期',
+        # v1.1.54 合同起止时间展示文本
+        '劳动合同起止时间展示文本',
     ],
     'modules.insurance.core.roster_parser': [
         '合同起止',
@@ -46,6 +50,12 @@ CHECKS = {
     ],
     'modules.insurance.blueprint': [
         '合同比对提示',
+        # v1.1.54 公开 person_stats 合同展示字段
+        '劳动合同起止时间展示文本',
+    ],
+    # v1.1.54 统计表/预览列表新增劳动合同起止时间列
+    'modules.insurance.core.excel_generator': [
+        '劳动合同起止时间',
     ],
 }
 

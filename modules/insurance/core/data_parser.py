@@ -298,6 +298,94 @@ def _strip_interruption_sections(text):
     return '\n'.join(out)
 
 
+def _extract_interruption_periods(text):
+    """
+    提取"中断信息明细"区块中的中断时间段（v1.1.54）
+
+    区块定位规则与 _strip_interruption_sections 同步：含"中断"的行，及其后
+    连续出现的含日期数据行（最多跟随 10 行，遇到非数据行即结束）视为中断区块。
+    区块内按出现顺序收集日期（YYYYMM / YYYY[-./年]MM），相邻两个日期配成一段。
+
+    Args:
+        text: OCR 全文文本（未剔除中断区块的原始文本）
+
+    Returns:
+        list of (start_ym, end_ym)：中断时间段列表，无中断返回 []
+    """
+    if '中断' not in text:
+        return []
+    date_like = re.compile(r'(\d{4}\s*[-./年]\s*\d{1,2})|(\d{6})')
+    zone_lines = []
+    skip_data_lines = 0
+    for line in text.split('\n'):
+        if '中断' in line:
+            # 中断表头/说明行本身也在区块内（日期可能与本行同行）
+            skip_data_lines = 10
+            zone_lines.append(line)
+            continue
+        if skip_data_lines > 0:
+            if date_like.search(line):
+                skip_data_lines -= 1
+                zone_lines.append(line)
+                continue
+            # 非数据行：中断区块结束
+            skip_data_lines = 0
+    if not zone_lines:
+        return []
+    zone_text = '\n'.join(zone_lines)
+    # 按出现顺序收集日期 token（两种格式统一为 (year, month)）
+    token_re = re.compile(r'(\d{4})\s*[-./年]\s*(\d{1,2})|(\d{6})')
+    tokens = []
+    for m in token_re.finditer(zone_text):
+        if m.group(3):
+            y, mo = int(m.group(3)[:4]), int(m.group(3)[4:6])
+        else:
+            y, mo = int(m.group(1)), int(m.group(2))
+        if 1900 <= y <= 2100 and 1 <= mo <= 12:
+            tokens.append((y, mo))
+    # 相邻两个日期配成一段
+    periods = []
+    for i in range(0, len(tokens) - 1, 2):
+        (y1, m1), (y2, m2) = tokens[i], tokens[i + 1]
+        if y1 * 12 + m1 <= y2 * 12 + m2:
+            periods.append((f'{y1:04d}-{m1:02d}', f'{y2:04d}-{m2:02d}'))
+    return periods
+
+
+def _ym_plus_one(ym):
+    """'YYYY-MM' 加一个月（12 月进位到次年 1 月）"""
+    y, m = map(int, ym.split('-'))
+    if m == 12:
+        return f'{y + 1:04d}-01'
+    return f'{y:04d}-{m + 1:02d}'
+
+
+def apply_interruption_start_rule(text, period):
+    """
+    中断信息明细统计规则（v1.1.54）
+
+    有中断信息明细时：统计参保开始时间 = 最后一段中断的结束月 +1 月；
+    多段中断取结束时间最晚的一段；无中断明细/区块为空时维持原解析结果不变。
+
+    Args:
+        text: OCR 全文文本（未剔除中断区块的原始文本）
+        period: (start_ym, end_ym) 或 None
+
+    Returns:
+        (start_ym, end_ym) 或 None（中断结束月+1 超过参保结束月时视为无有效段）
+    """
+    if not period:
+        return period
+    segs = _extract_interruption_periods(text)
+    if not segs:
+        return period
+    latest_end = max(segs, key=lambda p: _ym_key(p[1]))[1]
+    new_start = _ym_plus_one(latest_end)
+    if _ym_key(new_start) > _ym_key(period[1]):
+        return None
+    return (new_start, period[1])
+
+
 def extract_periods(text):
     """
     从OCR文本中提取所有参保时间段
@@ -663,12 +751,14 @@ def get_full_period(text):
     if periods:
         # 只保留最近连续段
         latest = _keep_latest_segment(periods)
-        return latest[0][0], latest[0][1]
+        # v1.1.54: 有中断信息明细时，统计开始时间 = 最后一段中断结束月+1
+        return apply_interruption_start_rule(text, (latest[0][0], latest[0][1]))
 
     # 回退：年度+月数表格（纯文本方式，已内置过滤）
     table_periods = extract_period_from_yearly_table(text)
     if table_periods:
-        return table_periods[0][0], table_periods[0][1]
+        # v1.1.54: 中断规则同样作用于年度表格路径
+        return apply_interruption_start_rule(text, (table_periods[0][0], table_periods[0][1]))
 
     return None
 
@@ -702,12 +792,14 @@ def get_full_period_from_items(items):
     if text_periods:
         # 只保留最近连续段
         latest = _keep_latest_segment(text_periods)
-        return latest[0][0], latest[0][1]
+        # v1.1.54: 有中断信息明细时，统计开始时间 = 最后一段中断结束月+1
+        return apply_interruption_start_rule(raw_text, (latest[0][0], latest[0][1]))
 
     # 回退：年度+月数表格（items 方式，已内置过滤）
     table_periods = extract_period_from_yearly_table_items(items)
     if table_periods:
-        return table_periods[0][0], table_periods[0][1]
+        # v1.1.54: 中断规则同样作用于年度表格路径
+        return apply_interruption_start_rule(raw_text, (table_periods[0][0], table_periods[0][1]))
 
     return None
 

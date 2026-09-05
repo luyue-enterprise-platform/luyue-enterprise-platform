@@ -249,3 +249,22 @@ def apply_contract_to_stats(person_stats, roster, year_range=None):
         # 合同完全覆盖参保期（未发生裁剪）→ 不记提示
 
     return notes
+
+
+def contract_display_text(entry):
+    """
+    花名册条目 → 劳动合同起止时间展示文本（v1.1.54）
+
+    展示花名册中原始填写内容（contract_raw，如 "2023-01-05~2025-12-31" /
+    "2023-01 至今"），未匹配到条目或无合同信息时返回 '-'。
+
+    Args:
+        entry: 花名册条目 dict 或 None
+
+    Returns:
+        str: 展示文本
+    """
+    if not entry:
+        return '-'
+    raw = (entry.get('contract_raw') or '').strip()
+    return raw if raw else '-'

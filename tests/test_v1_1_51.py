@@ -149,9 +149,11 @@ class TestSingleLatestYearRule(unittest.TestCase):
         self.assertEqual(get_full_period_from_items(items), ('2026-02', '2026-07'))
 
     def test_single_year_with_interruption_info(self):
-        """组合场景：仅最近年度有参保 + 存在中断信息 → 仍为 2026-02~2026-07"""
+        """组合场景：仅最近年度有参保 + 存在中断信息
+        v1.1.54 起中断规则优先：统计开始时间 = 中断结束月+1（202512→2026-01），
+        覆盖单年段倒推规则的 2026-02。"""
         text = self.SINGLE_YEAR_TEXT + '中断信息明细\n中断起止时间 202408-202512\n'
-        self.assertEqual(get_full_period(text), ('2026-02', '2026-07'))
+        self.assertEqual(get_full_period(text), ('2026-01', '2026-07'))
 
 
 class TestPeriodValidationRobustness(unittest.TestCase):

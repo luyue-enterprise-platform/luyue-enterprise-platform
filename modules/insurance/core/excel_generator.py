@@ -8,6 +8,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from .stats_calculator import INSURANCE_ORDER, calc_all_stats, parse_ym
+from .contract_overlap import contract_display_text
 
 
 def _thin_border():
@@ -173,10 +174,10 @@ def _get_year_overlap_period(overlap_start, overlap_end, year):
 def _generate_yearly_ledger(year, classified, roster_index, company_name, output_dir, timestamp):
     """为指定年份生成年度台账（独立Excel文件）
 
-    列结构（动态）：
-    - 有退役士兵时（9列）：序号/姓名/身份证号/人员身份类型/退役证编号/退役时间
-      /本年度参保证明时间段/申请退税月数/申请退税金额
-    - 无退役士兵时（7列）：序号/姓名/身份证号/人员身份类型
+    列结构（动态，v1.1.54 起含劳动合同起止时间列）：
+    - 有退役士兵时（10列）：序号/姓名/身份证号/人员身份类型/退役证编号/退役时间
+      /劳动合同起止时间/本年度参保证明时间段/申请退税月数/申请退税金额
+    - 无退役士兵时（8列）：序号/姓名/身份证号/人员身份类型/劳动合同起止时间
       /本年度参保证明时间段/申请退税月数/申请退税金额
 
     汇总行：金额在月数正下方（同一列），与总台账逻辑一致
@@ -202,32 +203,34 @@ def _generate_yearly_ledger(year, classified, roster_index, company_name, output
     RATE_TUIWU = 750
 
     if has_tuiwu_year:
-        total_cols = 9
+        total_cols = 10
         # 列：1序号 2姓名 3身份证号 4人员身份类型 5退役证编号 6退役时间
-        #     7本年度参保证明时间段 8申请退税月数 9申请退税金额
-        period_col = 7
-        months_col = 8
-        amount_col = 9
+        #     7劳动合同起止时间 8本年度参保证明时间段 9申请退税月数 10申请退税金额
+        period_col = 8
+        months_col = 9
+        amount_col = 10
         headers = [
             '序号', '姓名', '身份证号', '人员身份类型',
             '退役证编号/就业创业证编号', '退役时间/登记失业时间',
+            '劳动合同起止时间',
             '本年度参保证明时间段\n（养老+医疗+工伤+失业）',
             '申请退税月数', '申请退税金额',
         ]
-        widths = [6, 10, 22, 18, 22, 20, 28, 14, 16]
+        widths = [6, 10, 22, 18, 22, 20, 24, 28, 14, 16]
     else:
-        total_cols = 7
-        # 列：1序号 2姓名 3身份证号 4人员身份类型
-        #     5本年度参保证明时间段 6申请退税月数 7申请退税金额
-        period_col = 5
-        months_col = 6
-        amount_col = 7
+        total_cols = 8
+        # 列：1序号 2姓名 3身份证号 4人员身份类型 5劳动合同起止时间
+        #     6本年度参保证明时间段 7申请退税月数 8申请退税金额
+        period_col = 6
+        months_col = 7
+        amount_col = 8
         headers = [
             '序号', '姓名', '身份证号', '人员身份类型',
+            '劳动合同起止时间',
             '本年度参保证明时间段\n（养老+医疗+工伤+失业）',
             '申请退税月数', '申请退税金额',
         ]
-        widths = [6, 10, 22, 18, 28, 14, 16]
+        widths = [6, 10, 22, 18, 24, 28, 14, 16]
 
     # ========== 第1行：标题 ==========
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
@@ -277,13 +280,17 @@ def _generate_yearly_ledger(year, classified, roster_index, company_name, output
         _entry = _find_in_roster(ps, roster_index)
         seq_val = (_entry.get('seq') or idx + 1) if _entry else idx + 1
 
-        # 构建行数据
+        # 构建行数据（v1.1.54：劳动合同起止时间列位于参保证明时间段之前）
+        contract_text = contract_display_text(_entry)
+        months_col_letter = get_column_letter(months_col)
         if has_tuiwu_year:
             row = [seq_val, ps['name'], ps['idcard'], identity_type, '', '',
-                   year_period, year_months, f'=H{row_num}*{rate}']
+                   contract_text, year_period, year_months,
+                   f'={months_col_letter}{row_num}*{rate}']
         else:
             row = [seq_val, ps['name'], ps['idcard'], identity_type,
-                   year_period, year_months, f'=F{row_num}*{rate}']
+                   contract_text, year_period, year_months,
+                   f'={months_col_letter}{row_num}*{rate}']
 
         for col_idx, value in enumerate(row, start=1):
             cell = ws.cell(row=row_num, column=col_idx, value=value)
@@ -397,6 +404,7 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
             '人员身份类型',
             '退役证编号/就业创业证编号',
             '退役时间/登记失业时间',
+            '劳动合同起止时间',
             '养老保险参保证明时间段',
             '医疗保险参保证明时间段',
             '工伤保险参保证明时间段',
@@ -405,12 +413,12 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
             '申请退税总月数',
         ] + [f'{y}年申请退税月数' for y in year_cols] + ['合计申请退税总额']
         col_identity = 'D'
-        col_overlap_months = 'L'
-        col_year_start = 13
-        label_col_idx = 11
-        total_months_col_idx = 12
-        empty_prefix_cols = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
-        widths = [6, 10, 22, 18, 22, 20, 24, 24, 24, 24, 30, 14] + [14] * len(year_cols) + [16]
+        col_overlap_months = 'M'
+        col_year_start = 14
+        label_col_idx = 12
+        total_months_col_idx = 13
+        empty_prefix_cols = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+        widths = [6, 10, 22, 18, 22, 20, 24, 24, 24, 24, 24, 30, 14] + [14] * len(year_cols) + [16]
     else:
         # 没有退役士兵，不显示退役证编号和退役时间列
         headers = [
@@ -418,6 +426,7 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
             '姓名',
             '身份证号',
             '人员身份类型',
+            '劳动合同起止时间',
             '养老保险参保证明时间段',
             '医疗保险参保证明时间段',
             '工伤保险参保证明时间段',
@@ -426,12 +435,12 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
             '申请退税总月数',
         ] + [f'{y}年申请退税月数' for y in year_cols] + ['合计申请退税总额']
         col_identity = 'D'
-        col_overlap_months = 'J'
-        col_year_start = 11
-        label_col_idx = 9
-        total_months_col_idx = 10
-        empty_prefix_cols = (1, 2, 3, 4, 5, 6, 7, 8)
-        widths = [6, 10, 22, 18, 24, 24, 24, 24, 30, 14] + [14] * len(year_cols) + [16]
+        col_overlap_months = 'K'
+        col_year_start = 12
+        label_col_idx = 10
+        total_months_col_idx = 11
+        empty_prefix_cols = (1, 2, 3, 4, 5, 6, 7, 8, 9)
+        widths = [6, 10, 22, 18, 24, 24, 24, 24, 24, 30, 14] + [14] * len(year_cols) + [16]
 
     total_col_count = len(headers)
     col_total_letter = get_column_letter(total_col_count)
@@ -489,6 +498,9 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
         # 退役证编号和退役时间（仅在有退役士兵时显示）
         if has_tuiwu:
             row.extend(['', ''])
+
+        # 劳动合同起止时间（v1.1.54：位于养老保险列之前）
+        row.append(contract_display_text(_entry))
 
         # 四险时间段
         for ins_type in INSURANCE_ORDER:

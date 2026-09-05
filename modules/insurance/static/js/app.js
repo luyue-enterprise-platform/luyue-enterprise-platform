@@ -1043,6 +1043,7 @@ function renderPersonTable() {
         '序号',
         '姓名', '身份证号', '人员身份类型',
         '退役证编号/就业创业证编号', '退役时间/登记失业时间',
+        '劳动合同起止时间',
         '养老保险参保证明时间段', '医疗保险参保证明时间段',
         '工伤保险参保证明时间段', '失业保险参保证明时间段',
         '参保证明时间段（养老+医疗+工伤+失业）', '申请退税总月数'
@@ -1073,6 +1074,8 @@ function renderPersonTable() {
         html += '<td>' + esc(ps.identity_type || '') + '</td>';
         html += '<td></td>';
         html += '<td></td>';
+        // v1.1.54：劳动合同起止时间列（位于养老保险列之前）
+        html += '<td>' + esc(ps.contract || '-') + '</td>';
 
         for (var t = 0; t < INSURANCE_ORDER.length; t++) {
             var ins = ps.insurances[INSURANCE_ORDER[t]];

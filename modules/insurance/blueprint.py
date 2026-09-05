@@ -87,11 +87,32 @@ def _get_identity_type(person, roster_index):
 
     return ''
 
+
+def _get_contract_display(person, roster_index):
+    """
+    在花名册中查找人员的劳动合同起止时间展示文本（v1.1.54，先按身份证号，再按姓名）
+
+    Returns:
+        str: 合同起止时间原文，未匹配或无合同信息返回 '-'
+    """
+    idcard = person.get('idcard', '').strip()
+    name = person.get('name', '').strip()
+
+    entry = None
+    if idcard and roster_index.get('idcard_to_entry', {}).get(idcard):
+        entry = roster_index['idcard_to_entry'][idcard]
+    elif name and roster_index.get('name_to_entries', {}).get(name):
+        entries = roster_index['name_to_entries'][name]
+        if entries:
+            entry = entries[0]
+
+    return contract_display_text(entry)
+
 # ============ 导入保险系统核心模块 ============
 from modules.insurance.core.ocr_engine import pdf_to_images
 from modules.insurance.core.data_parser import parse_ocr_result, parse_ocr_result_from_image, group_by_person, extract_company_name
 from modules.insurance.core.stats_calculator import calc_all_stats, get_overlap_years
-from modules.insurance.core.contract_overlap import apply_contract_to_stats
+from modules.insurance.core.contract_overlap import apply_contract_to_stats, contract_display_text
 from modules.insurance.core.excel_generator import generate_excel
 from modules.insurance.core.roster_parser import (parse_roster, parse_roster_from_table,
                                                    match_person_to_roster, extract_roster_company_name)
@@ -369,6 +390,7 @@ def _rebuild_result(task_id):
                 'name': ps['name'],
                 'idcard': ps['idcard'],
                 'identity_type': _get_identity_type(ps, roster_index),
+                'contract': _get_contract_display(ps, roster_index),
                 'insurances': {
                     k: {'start': v[0], 'end': v[1]}
                     for k, v in ps['insurances'].items()

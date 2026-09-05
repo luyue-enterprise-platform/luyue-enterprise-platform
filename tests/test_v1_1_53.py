@@ -344,7 +344,7 @@ class TestGenerateExcelStatsParam(unittest.TestCase):
         from openpyxl import load_workbook
         wb = load_workbook(path)
         ws = wb.active
-        row = [ws.cell(row=3, column=c).value for c in range(1, 12)]
+        row = [ws.cell(row=3, column=c).value for c in range(1, 13)]
         wb.close()
         return row
 
@@ -359,9 +359,11 @@ class TestGenerateExcelStatsParam(unittest.TestCase):
         out = os.path.join(self.tmpdir, 'with_stats.xlsx')
         generate_excel(persons, out, stats=(ps_list, [2024]))
         row = self._read_row3(out)
-        self.assertEqual(row[8], '2024-01~2024-12')   # 第9列：重叠时间段
-        self.assertEqual(row[9], 12)                  # 第10列：重叠月数
-        self.assertEqual(row[10], 12)                 # 第11列：2024年度月数
+        # v1.1.54：第5列新增"劳动合同起止时间"，后续列 +1
+        self.assertEqual(row[4], '-')                 # 第5列：合同列（无花名册→'-'）
+        self.assertEqual(row[9], '2024-01~2024-12')   # 第10列：重叠时间段
+        self.assertEqual(row[10], 12)                 # 第11列：重叠月数
+        self.assertEqual(row[11], 12)                 # 第12列：2024年度月数
 
     def test_default_behavior_without_stats(self):
         """不传 stats → 保持原行为（内部自行统计）"""
@@ -369,8 +371,8 @@ class TestGenerateExcelStatsParam(unittest.TestCase):
         out = os.path.join(self.tmpdir, 'no_stats.xlsx')
         generate_excel(persons, out)
         row = self._read_row3(out)
-        self.assertEqual(row[8], '2023-01~2025-12')
-        self.assertEqual(row[9], 36)
+        self.assertEqual(row[9], '2023-01~2025-12')   # 第10列：重叠时间段（v1.1.54 +1）
+        self.assertEqual(row[10], 36)                 # 第11列：重叠月数
 
 
 # ==================== 6. _rebuild_result 全链路集成 ====================
@@ -444,8 +446,9 @@ class TestRebuildResultContractIntegration(unittest.TestCase):
         from openpyxl import load_workbook
         wb = load_workbook(result['excel_path'])
         ws = wb.active
-        self.assertEqual(ws.cell(row=3, column=9).value, '2024-01~2024-12')
-        self.assertEqual(ws.cell(row=3, column=10).value, 12)
+        # v1.1.54：合同列插入后，重叠时间段/月数列顺移至 10/11
+        self.assertEqual(ws.cell(row=3, column=10).value, '2024-01~2024-12')
+        self.assertEqual(ws.cell(row=3, column=11).value, 12)
         wb.close()
         # 内部状态里 person_stats 不带合同字段泄漏（公开字段裁剪正确即可）
         self.assertNotIn('_manual_log', result)
