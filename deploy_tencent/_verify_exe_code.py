@@ -10,9 +10,14 @@ from PyInstaller.archive.readers import CArchiveReader
 EXE_PATH = sys.argv[1] if len(sys.argv) > 1 else \
     r'D:\鲁岳企业服务\重点群体项目\鲁岳企业服务_综合智能平台\dist\鲁岳企业服务_综合智能平台.exe'
 
-# 需要确认的关键串 -> 所在模块
+# 需要确认的关键串 -> 所在模块（注意：注释不进字节码，针刺必须来自字符串常量/docstring）
 CHECKS = {
-    'core.auth': ['认证服务暂时不可用，请检查网络或联系管理员'],
+    # v1.1.55 需求5 账号管理远程化（get_user_by_id 走云端列表 + 写操作不假成功回退）
+    'core.auth': [
+        '认证服务暂时不可用，请检查网络或联系管理员',
+        '云端无单用户查询端点，走用户列表接口按 id 过滤',
+        '非200不再静默回退本地',
+    ],
     'app': [
         'https://luyue-1466112667.cos.ap-shanghai.myqcloud.com/version.json',
         'https://raw.githubusercontent.com/luyue-enterprise-platform/luyue-enterprise-platform/main/version.json',
@@ -54,8 +59,14 @@ CHECKS = {
         '劳动合同起止时间展示文本',
     ],
     # v1.1.54 统计表/预览列表新增劳动合同起止时间列
+    # v1.1.55 需求4 打开即重算（docstring 针刺）
     'modules.insurance.core.excel_generator': [
         '劳动合同起止时间',
+        '打开即重算',
+    ],
+    # v1.1.55 需求1 统计结果起点与统计时间段对齐（apply_stat_range_clamp docstring 针刺）
+    'modules.insurance.core.stats_calculator': [
+        '统计结果起点 = max(统计开始, 重叠起点)',
     ],
 }
 

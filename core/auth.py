@@ -551,15 +551,21 @@ def get_all_users():
 def toggle_user_active(user_id):
     """切换用户启用/停用状态，返回新状态
 
-    远程模式：优先走远程API；远程失败时回退到本地数据库。
+    v1.1.55 需求5：远程模式下操作结果以云端为准，非200不再静默回退本地
+    （本地库无云端账号，回退等于对云端账号假成功）。
+
+    Returns:
+        bool: 新状态（成功时）
+        str: 远程返回的业务错误信息（远程模式非200）
+        None: 本地模式下用户不存在
     """
     if _is_remote():
         token = session.get(_SESSION_TOKEN_KEY, '')
         result, status = _remote_request(f'/api/auth/users/{user_id}/toggle', token=token)
         if status == 200:
             return result.get('is_active', True)
-        _log_fallback('切换用户状态', status, result.get('error', ''))
-    # 本地模式（或远程失败的回退）
+        return result.get('error', '操作失败') or '操作失败'
+    # 本地模式
     conn = get_db()
     row = conn.execute('SELECT is_active FROM users WHERE id = ?', (user_id,)).fetchone()
     if not row:
@@ -575,15 +581,20 @@ def toggle_user_active(user_id):
 def delete_user(user_id):
     """删除用户
 
-    远程模式：优先走远程API；远程失败时回退到本地数据库。
+    v1.1.55 需求5：远程模式下删除结果以云端为准，非200不再静默回退本地
+    （本地库无云端账号，回退删除等于假成功且用户仍留在云端列表中）。
+
+    Returns:
+        True: 删除成功
+        str: 远程返回的业务错误信息（远程模式非200，如'用户不存在'/'不能删除管理员'）
     """
     if _is_remote():
         token = session.get(_SESSION_TOKEN_KEY, '')
         result, status = _remote_request(f'/api/auth/users/{user_id}/delete', token=token)
         if status == 200:
             return True
-        _log_fallback('删除用户', status, result.get('error', ''))
-    # 本地模式（或远程失败的回退）
+        return result.get('error', '删除失败') or '删除失败'
+    # 本地模式
     conn = get_db()
     conn.execute('DELETE FROM users WHERE id = ?', (user_id,))
     conn.commit()
@@ -594,7 +605,12 @@ def delete_user(user_id):
 def reset_password(user_id, new_password):
     """重置用户密码
 
-    远程模式：优先走远程API；远程失败时回退到本地数据库。
+    v1.1.55 需求5：远程模式下结果以云端为准，非200不再静默回退本地
+    （本地库无云端账号，回退等于对云端账号假成功）。
+
+    Returns:
+        True: 重置成功
+        str: 远程返回的业务错误信息（远程模式非200）
     """
     if _is_remote():
         token = session.get(_SESSION_TOKEN_KEY, '')
@@ -602,8 +618,8 @@ def reset_password(user_id, new_password):
                                           {'password': new_password}, token=token)
         if status == 200:
             return True
-        _log_fallback('重置密码', status, result.get('error', ''))
-    # 本地模式（或远程失败的回退）
+        return result.get('error', '重置失败') or '重置失败'
+    # 本地模式
     conn = get_db()
     conn.execute(
         'UPDATE users SET password_hash = ? WHERE id = ?',
@@ -615,7 +631,23 @@ def reset_password(user_id, new_password):
 
 
 def get_user_by_id(user_id):
-    """根据ID获取用户"""
+    """根据ID获取用户
+
+    v1.1.55 需求5：远程模式优先走远程API——用户列表来自云端认证服务器，
+    本地库无云端账号，仅查本地会误报"用户不存在"，导致账号管理中
+    删除/停用/重置密码对云端账号全部失效（即"无法移除的账号"问题）。
+    云端无单用户查询端点，走用户列表接口按 id 过滤；
+    远程请求失败（网络/服务异常）时回退本地数据库。
+    """
+    if _is_remote():
+        token = session.get(_SESSION_TOKEN_KEY, '')
+        result, status = _remote_request('/api/auth/users', method='GET', token=token)
+        if status == 200:
+            for u in result.get('users', []):
+                if u.get('id') == user_id:
+                    return u
+            return None  # 云端列表确认不存在
+        _log_fallback('查询用户', status, result.get('error', ''))
     conn = get_db()
     row = conn.execute(
         'SELECT id, username, is_admin, is_active, created_at FROM users WHERE id = ?',

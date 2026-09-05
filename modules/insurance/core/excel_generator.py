@@ -182,6 +182,7 @@ def _generate_yearly_ledger(year, classified, roster_index, company_name, output
 
     汇总行：金额在月数正下方（同一列），与总台账逻辑一致
     合计总金额行：下一列也是金额（不是月数）
+    v1.1.55 需求4：工作簿设置打开即重算（fullCalcOnLoad），确保公式在本地打开时正常显示
     """
     # 筛选当年有重叠月数的人员
     year_persons = []
@@ -196,6 +197,9 @@ def _generate_yearly_ledger(year, classified, roster_index, company_name, output
     has_tuiwu_year = any(it == '自主就业退役士兵' for _, it in year_persons)
 
     wb = Workbook()
+    # v1.1.55 需求4：打开文件时强制重算全部公式——openpyxl 写入的公式不带缓存值，
+    # 置 fullCalcOnLoad 确保本地打开时公式不失效、计算结果正常显示
+    wb.calculation.fullCalcOnLoad = True
     ws = wb.active
     ws.title = f'{year}年度台账'
 
@@ -380,7 +384,14 @@ def _generate_yearly_ledger(year, classified, roster_index, company_name, output
 
 def generate_excel(persons, output_path, roster=None, company_name='', year_range=None,
                    stats=None):
-    # v1.1.53：外部可传入已做合同叠加裁剪的统计结果，保证 Excel 与页面 JSON 一致；
+    """生成申报重点群体税收优惠政策总台账（含年度台账子文件）
+
+    v1.1.53：外部可传入已做合同叠加裁剪的统计结果（stats），保证 Excel 与页面
+    JSON 一致；未传入时保持原行为（内部自行统计）。
+    v1.1.55 需求4：工作簿设置打开即重算（fullCalcOnLoad），确保公式在本地
+    打开时不丢失、不失效、计算结果显示正常。
+    """
+    # 外部可传入已做合同叠加裁剪的统计结果，保证 Excel 与页面 JSON 一致；
     # 未传入时保持原行为（内部自行统计）
     person_stats, year_cols = stats if stats else calc_all_stats(persons, year_range=year_range)
     roster_index = _build_roster_index(roster or [])
@@ -446,6 +457,9 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
     col_total_letter = get_column_letter(total_col_count)
 
     wb = Workbook()
+    # v1.1.55 需求4：打开文件时强制重算全部公式——openpyxl 写入的公式不带缓存值，
+    # 置 fullCalcOnLoad 确保本地打开时公式不失效、计算结果正常显示
+    wb.calculation.fullCalcOnLoad = True
     ws = wb.active
     ws.title = '四险重叠统计'
 

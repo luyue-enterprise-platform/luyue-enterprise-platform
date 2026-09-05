@@ -111,7 +111,7 @@ def _get_contract_display(person, roster_index):
 # ============ 导入保险系统核心模块 ============
 from modules.insurance.core.ocr_engine import pdf_to_images
 from modules.insurance.core.data_parser import parse_ocr_result, parse_ocr_result_from_image, group_by_person, extract_company_name
-from modules.insurance.core.stats_calculator import calc_all_stats, get_overlap_years
+from modules.insurance.core.stats_calculator import calc_all_stats, get_overlap_years, apply_stat_range_clamp
 from modules.insurance.core.contract_overlap import apply_contract_to_stats, contract_display_text
 from modules.insurance.core.excel_generator import generate_excel
 from modules.insurance.core.roster_parser import (parse_roster, parse_roster_from_table,
@@ -331,10 +331,13 @@ def _rebuild_result(task_id):
     # v1.1.53：劳动合同起止时间 ∩ 四险重叠参保段 = 有效参保期。
     # 仅裁剪重叠结果层（各险种原始时间段不变）；合同缺失/异常不裁剪、仅生成提示。
     contract_notes = apply_contract_to_stats(person_stats, roster, year_range=year_range)
+    # v1.1.55 需求1：统计结果起点与统计时间段对齐——
+    # 起点 = max(统计开始, 重叠起点)，终点保持重叠实际结束不裁剪（合同叠加后统一钳制）
+    apply_stat_range_clamp(person_stats, year_range)
+    # 钳制/合同叠加后按最终重叠层重算年度列
+    year_cols = get_overlap_years(
+        [ps for ps in person_stats if ps['has_overlap']], year_range=year_range)
     if contract_notes:
-        # 裁剪后首末年份可能变化，按有效参保期重算年度列
-        year_cols = get_overlap_years(
-            [ps for ps in person_stats if ps['has_overlap']], year_range=year_range)
         logger.info(f'[task:{task_id}] 合同比对提示 {len(contract_notes)} 条，年度列重算: {year_cols}')
     excel_filename = f'申报重点群体税收优惠政策总台账_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
     excel_path = os.path.join(OUTPUT_DIR, excel_filename)

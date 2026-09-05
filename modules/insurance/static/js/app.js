@@ -16,6 +16,8 @@ var rosterSourcePath = '';
 // 当前结果的图片详情与人员统计（供手动补录/时间段编辑弹窗使用）
 var currentImageDetails = [];
 var currentPersonStats = [];
+// v1.1.55 需求3：文件整理结果搜索关键字（重渲染时保留）
+var organizeSearchKeyword = '';
 
 // ===== DOM元素 =====
 var dropzone = document.getElementById('dropzone');
@@ -806,6 +808,13 @@ function renderResult(data, opts) {
         orgHtml += '<span class="panel-toggle">展开 ▸</span>';
         orgHtml += '</div>';
         orgHtml += '<div class="panel-body">';
+        // v1.1.55 需求3：文件整理结果区顶部实时搜索框（按文件名或关键词过滤）
+        orgHtml += '<div class="org-search-bar">';
+        orgHtml += '<input type="text" id="orgSearchInput" class="form-input org-search-input" ' +
+            'placeholder="🔍 输入文件名或关键词，实时过滤文件..." value="' + esc(organizeSearchKeyword) + '">';
+        orgHtml += '<span id="orgSearchCount" class="org-search-count"></span>';
+        orgHtml += '</div>';
+        orgHtml += '<div id="orgSearchEmptyTip" class="org-search-empty-tip" style="display:none">未找到相关文件</div>';
         orgHtml += '<p class="organize-summary">已整理 ' + org.organized_count + ' 个文件';
         if (abnormalCnt > 0) {
             orgHtml += '，异常图片 ' + abnormalCnt + ' 个（识别失败/无时间段/缴费单位不一致，可双击行预览或点击"处理"按钮手动处理）';
@@ -908,6 +917,9 @@ function renderResult(data, opts) {
             !orgBox.classList.contains('collapsed');
         var oldDetails = orgBox.querySelector ? orgBox.querySelector('details.image-details-block') : null;
         var detailsWasOpen = oldDetails ? oldDetails.open : true;
+        // v1.1.55 需求3：重渲染前保留搜索关键字（异常处理后重建面板不丢输入）
+        var prevSearchInput = document.getElementById('orgSearchInput');
+        if (prevSearchInput) organizeSearchKeyword = prevSearchInput.value;
         orgBox.innerHTML = orgHtml;
         orgBox.className = 'organize-info collapsible-panel' + (keepExpanded ? '' : ' collapsed');
         if (keepExpanded) {
@@ -919,6 +931,12 @@ function renderResult(data, opts) {
         }
         orgBox.style.display = 'block';
         btnDownloadOrganized.style.display = 'inline-flex';
+        // v1.1.55 需求3：绑定实时搜索（重渲染后重新挂事件并恢复过滤状态）
+        var newSearchInput = document.getElementById('orgSearchInput');
+        if (newSearchInput) {
+            newSearchInput.addEventListener('input', filterOrganizeResults);
+            if (organizeSearchKeyword) filterOrganizeResults();
+        }
     }
 
     // 年度台账文件列表
@@ -1039,7 +1057,9 @@ function renderPersonTable() {
     }
 
     var html = '<thead><tr>';
+    // v1.1.55 需求2：修改时间段按钮移至第一列
     var headers = [
+        '操作',
         '序号',
         '姓名', '身份证号', '人员身份类型',
         '退役证编号/就业创业证编号', '退役时间/登记失业时间',
@@ -1052,7 +1072,6 @@ function renderPersonTable() {
         headers.push(currentYearCols[j] + '年申请退税月数');
     }
     headers.push('合计申请退税总额');
-    headers.push('操作');
     for (var h = 0; h < headers.length; h++) {
         html += '<th>' + headers[h] + '</th>';
     }
@@ -1068,6 +1087,8 @@ function renderPersonTable() {
         var ps = matched[p];
         var srcIdx = all.indexOf(ps);
         html += '<tr>';
+        // v1.1.55 需求2：修改时间段按钮移至第一列（其余列顺延，绑定 data-idx 不变）
+        html += '<td><button class="btn btn-ghost btn-sm pe-btn" data-idx="' + srcIdx + '">修改时间段</button></td>';
         html += '<td>' + (srcIdx + 1) + '</td>';
         html += '<td>' + esc(ps.name) + '</td>';
         html += '<td>' + esc(ps.idcard) + '</td>';
@@ -1099,8 +1120,6 @@ function renderPersonTable() {
         }
 
         html += '<td></td>';
-
-        html += '<td><button class="btn btn-ghost btn-sm pe-btn" data-idx="' + srcIdx + '">修改时间段</button></td>';
 
         html += '</tr>';
     }
@@ -1460,6 +1479,72 @@ function apiJson(res) {
         return new Promise(function(resolve) { resolve({error: '响应格式异常，请重新登录后重试'}); });
     }
     return res.json();
+}
+
+// ===== v1.1.55 需求3：文件整理结果实时搜索 =====
+// 按文件名或关键词过滤识别详情表行与文件夹卡片文件列表，即时更新无延迟；
+// 无匹配项时显示"未找到相关文件"友好提示，不出现空白页或报错
+function filterOrganizeResults() {
+    var box = document.getElementById('organizeInfo');
+    var input = document.getElementById('orgSearchInput');
+    if (!box || !input) return;
+    var kw = input.value.trim().toLowerCase();
+    organizeSearchKeyword = input.value;
+    var cntEl = document.getElementById('orgSearchCount');
+
+    // 1) 识别详情表行过滤（整行文本匹配：文件名/姓名/身份证/险种/时间段/单位/状态）
+    var rows = box.querySelectorAll('tr[data-filename]');
+    var visibleRows = 0;
+    for (var i = 0; i < rows.length; i++) {
+        var text = (rows[i].textContent || '').toLowerCase();
+        var show = !kw || text.indexOf(kw) >= 0;
+        rows[i].style.display = show ? '' : 'none';
+        if (show) visibleRows++;
+    }
+    // 空状态提示行（表格内）：先移除旧的，需要时再追加
+    var oldEmptyRow = box.querySelector('tr.org-search-empty');
+    if (oldEmptyRow) oldEmptyRow.parentNode.removeChild(oldEmptyRow);
+    if (kw && rows.length > 0 && visibleRows === 0) {
+        var tbody = rows[0].parentNode;
+        var emptyRow = document.createElement('tr');
+        emptyRow.className = 'org-search-empty';
+        var td = document.createElement('td');
+        td.colSpan = rows[0].cells.length;
+        td.textContent = '未找到相关文件';
+        emptyRow.appendChild(td);
+        tbody.appendChild(emptyRow);
+    }
+
+    // 2) 文件夹卡片过滤（文件夹名命中则整卡保留；否则逐文件匹配）
+    var cards = box.querySelectorAll('.folder-card');
+    var visibleCards = 0;
+    for (var c = 0; c < cards.length; c++) {
+        var card = cards[c];
+        var nameEl = card.querySelector('.folder-name');
+        var nameHit = nameEl && kw &&
+            (nameEl.textContent || '').toLowerCase().indexOf(kw) >= 0;
+        var lis = card.querySelectorAll('.folder-files li:not(.more)');
+        var visFiles = 0;
+        for (var li = 0; li < lis.length; li++) {
+            var hit = !kw || nameHit ||
+                (lis[li].textContent || '').toLowerCase().indexOf(kw) >= 0;
+            lis[li].style.display = hit ? '' : 'none';
+            if (hit) visFiles++;
+        }
+        var cardShow = !kw || nameHit || visFiles > 0;
+        card.style.display = cardShow ? '' : 'none';
+        if (cardShow) visibleCards++;
+    }
+
+    // 3) 匹配计数与整体空状态提示
+    if (cntEl) {
+        cntEl.textContent = kw ? ('匹配 ' + visibleRows + ' / ' + rows.length + ' 个文件') : '';
+    }
+    var emptyTip = document.getElementById('orgSearchEmptyTip');
+    if (emptyTip) {
+        var nothing = kw && visibleRows === 0 && visibleCards === 0;
+        emptyTip.style.display = nothing ? 'block' : 'none';
+    }
 }
 
 // ===== v1.1.45: 可折叠面板（花名册/文件整理结果） =====

@@ -575,7 +575,12 @@ def api_toggle_user(uid):
     user = get_user_by_id(uid)
     if not user:
         return jsonify({'error': '用户不存在'}), 404
-    toggle_user_active(uid)
+    result = toggle_user_active(uid)
+    # v1.1.55 需求5：远程模式操作结果以云端为准，业务错误透传给前端
+    if result is None:
+        return jsonify({'error': '用户不存在'}), 404
+    if isinstance(result, str):
+        return jsonify({'error': result}), 400
     return jsonify({'ok': True})
 
 
@@ -590,7 +595,10 @@ def api_delete_user(uid):
         return jsonify({'error': '不能删除自己'}), 400
     if user.get('is_admin'):
         return jsonify({'error': '不能删除管理员'}), 400
-    delete_user(uid)
+    result = delete_user(uid)
+    # v1.1.55 需求5：远程模式删除结果以云端为准，业务错误透传给前端
+    if result is not True:
+        return jsonify({'error': result}), 400
     return jsonify({'ok': True})
 
 
@@ -605,7 +613,10 @@ def api_reset_password(uid):
     new_pwd = data.get('password', '')
     if len(new_pwd) < 6:
         return jsonify({'error': '密码至少6位'}), 400
-    reset_password(uid, new_pwd)
+    result = reset_password(uid, new_pwd)
+    # v1.1.55 需求5：远程模式结果以云端为准，业务错误透传给前端
+    if result is not True:
+        return jsonify({'error': result}), 400
     return jsonify({'ok': True})
 
 

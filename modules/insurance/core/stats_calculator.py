@@ -278,3 +278,62 @@ def calc_all_stats(persons, year_range=None):
         year_range=year_range
     )
     return person_stats, all_years
+
+
+def apply_stat_range_clamp(person_stats, year_range):
+    """v1.1.55 需求1：统计结果起点与统计时间段对齐（作用于合同叠加后的最终重叠层）
+
+    规则（依据需求示例，统计时间段 2023-01~2025-12 时）：
+    - 重叠 2023-04~2026-07 → 统计结果 2023-04~2026-07（重叠起点晚于统计开始，不变）
+    - 重叠 2022-09~2026-07 → 统计结果 2023-01~2026-07（重叠起点早于统计开始，钳到统计开始）
+    - 重叠 2023-01~2026-07 → 统计结果 2023-01~2026-07（两者一致，不变）
+    即：统计结果起点 = max(统计开始, 重叠起点)；终点保持重叠实际结束，不按统计截止裁剪。
+    月数计算规则不变（v1.1.38：年度/总月数跟筛选走），仅年度键随钳制后起点重排
+    （被剔除年份在筛选范围外、月数必为 0，总月数不变）。
+    钳制后起点晚于重叠终点（统计时间段与重叠段无交集）→ 该人按无统计结果处理。
+
+    Args:
+        person_stats: calc_all_stats / apply_contract_to_stats 之后的统计列表（原地修改）
+        year_range: 可选, (start_ym, end_ym) 用户设置的统计起止范围
+    """
+    if not year_range:
+        return
+    try:
+        stat_start = year_range[0]
+        if not stat_start:
+            return
+        s_int = ym_to_int(stat_start)
+    except (ValueError, TypeError, AttributeError, IndexError):
+        return
+
+    for ps in person_stats:
+        if not ps.get('has_overlap') or not ps.get('overlap_start') \
+                or not ps.get('overlap_end'):
+            continue
+        try:
+            os_int = ym_to_int(ps['overlap_start'])
+            oe_int = ym_to_int(ps['overlap_end'])
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if s_int <= os_int:
+            continue  # 重叠起点不早于统计开始 → 无需钳制（示例1/示例3）
+        if s_int > oe_int:
+            # 统计开始晚于重叠终点 → 统计时间段与重叠段无交集，按无统计结果处理
+            ps['has_overlap'] = False
+            ps['overlap_start'] = None
+            ps['overlap_end'] = None
+            ps['overlap_months'] = 0
+            ps['years'] = []
+            ps['yearly_months'] = {}
+            continue
+        # 钳制起点为统计开始；终点保持重叠实际结束（示例2）
+        ps['overlap_start'] = stat_start
+        sy, _ = parse_ym(stat_start)
+        ey, _ = parse_ym(ps['overlap_end'])
+        old_yearly = ps.get('yearly_months') or {}
+        yearly = {}
+        for y in range(sy, ey + 1):
+            yearly[y] = old_yearly.get(y, 0)
+        ps['yearly_months'] = yearly
+        ps['years'] = list(range(sy, ey + 1))
+        ps['overlap_months'] = sum(yearly.values())
