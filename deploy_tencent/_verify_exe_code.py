@@ -34,6 +34,19 @@ CHECKS = {
         '中断',
         r'(\d{4}\s*[-./年]\s*\d{1,2})|(\d{6})',
     ],
+    # v1.1.53 劳动合同叠加比对（花名册合同列 + 有效参保期裁剪 + 操作记录提示）
+    'modules.insurance.core.contract_overlap': [
+        '无固定期限',
+        '合同比对',
+        '有效参保期',
+    ],
+    'modules.insurance.core.roster_parser': [
+        '合同起止',
+        '劳动合同',
+    ],
+    'modules.insurance.blueprint': [
+        '合同比对提示',
+    ],
 }
 
 

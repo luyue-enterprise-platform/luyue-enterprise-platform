@@ -371,8 +371,11 @@ def _generate_yearly_ledger(year, classified, roster_index, company_name, output
     return {'filename': filename, 'filepath': filepath}
 
 
-def generate_excel(persons, output_path, roster=None, company_name='', year_range=None):
-    person_stats, year_cols = calc_all_stats(persons, year_range=year_range)
+def generate_excel(persons, output_path, roster=None, company_name='', year_range=None,
+                   stats=None):
+    # v1.1.53：外部可传入已做合同叠加裁剪的统计结果，保证 Excel 与页面 JSON 一致；
+    # 未传入时保持原行为（内部自行统计）
+    person_stats, year_cols = stats if stats else calc_all_stats(persons, year_range=year_range)
     roster_index = _build_roster_index(roster or [])
 
     # ========== 分类人员并按花名册顺序排序 ==========

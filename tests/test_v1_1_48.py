@@ -125,9 +125,10 @@ class TestUpdatePeriodEndpoint(unittest.TestCase):
         ps = [p for p in data['person_stats'] if p['name'] == '张三'][0]
         self.assertEqual(ps['insurances']['养老保险']['start'], '2022-07')
         self.assertEqual(ps['insurances']['养老保险']['end'], '2024-06')
-        # 操作记录已产生
-        self.assertEqual(len(data['operation_log']), 1)
-        self.assertEqual(data['operation_log'][0]['action'], '修改时间段')
+        # 操作记录已产生（v1.1.53 起：花名册人员合同缺失会追加一条"合同比对"待补提示）
+        actions = [l['action'] for l in data['operation_log']]
+        self.assertEqual(actions.count('修改时间段'), 1)
+        self.assertEqual(actions.count('合同比对'), 1)
 
     def test_update_period_then_clear(self):
         # 先修改

@@ -90,7 +90,8 @@ def _get_identity_type(person, roster_index):
 # ============ 导入保险系统核心模块 ============
 from modules.insurance.core.ocr_engine import pdf_to_images
 from modules.insurance.core.data_parser import parse_ocr_result, parse_ocr_result_from_image, group_by_person, extract_company_name
-from modules.insurance.core.stats_calculator import calc_all_stats
+from modules.insurance.core.stats_calculator import calc_all_stats, get_overlap_years
+from modules.insurance.core.contract_overlap import apply_contract_to_stats
 from modules.insurance.core.excel_generator import generate_excel
 from modules.insurance.core.roster_parser import (parse_roster, parse_roster_from_table,
                                                    match_person_to_roster, extract_roster_company_name)
@@ -304,12 +305,21 @@ def _rebuild_result(task_id):
     if overrides:
         _apply_period_overrides(persons, overrides)
 
-    # 3) 统计 + 生成Excel
+    # 3) 统计 + 合同叠加比对（v1.1.53）+ 生成Excel
     person_stats, year_cols = calc_all_stats(persons, year_range)
+    # v1.1.53：劳动合同起止时间 ∩ 四险重叠参保段 = 有效参保期。
+    # 仅裁剪重叠结果层（各险种原始时间段不变）；合同缺失/异常不裁剪、仅生成提示。
+    contract_notes = apply_contract_to_stats(person_stats, roster, year_range=year_range)
+    if contract_notes:
+        # 裁剪后首末年份可能变化，按有效参保期重算年度列
+        year_cols = get_overlap_years(
+            [ps for ps in person_stats if ps['has_overlap']], year_range=year_range)
+        logger.info(f'[task:{task_id}] 合同比对提示 {len(contract_notes)} 条，年度列重算: {year_cols}')
     excel_filename = f'申报重点群体税收优惠政策总台账_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
     excel_path = os.path.join(OUTPUT_DIR, excel_filename)
     gen_result = generate_excel(persons, excel_path, roster=roster,
-                                company_name=company_name, year_range=year_range)
+                                company_name=company_name, year_range=year_range,
+                                stats=(person_stats, year_cols))
     yearly_ledger_files = gen_result.get('yearly_ledger_files', [])
     logger.info(f'[task:{task_id}] Excel重建完成: {excel_path}')
 
@@ -403,8 +413,8 @@ def _rebuild_result(task_id):
         'roster_company': roster_company,
         'ocr_companies': ocr_companies,
         'company_mismatch_files': company_mismatch_files,
-        # 操作记录（手动补录/修改时间段/恢复识别值）
-        'operation_log': manual_log,
+        # 操作记录（手动补录/修改时间段/恢复识别值 + v1.1.53 合同比对提示；提示不落盘，每次重建重新生成）
+        'operation_log': manual_log + contract_notes,
         # ===== 内部状态（不返回前端） =====
         '_success_results': success_results,
         '_excluded_results': excluded_results,

@@ -67,11 +67,14 @@ def _extract_roster_from_rows(rows):
     seq_col_idx = -1
     idcard_col_idx = -1
     identity_type_col_idx = -1
+    contract_col_idx = -1  # v1.1.53
 
     name_keywords = ['姓名', '名字', '员工姓名', '人员姓名']
     seq_keywords = ['序号', '编号', '序', '行号', 'No', 'no', 'NO']
     idcard_keywords = ['身份证', '身份证号', '证件号码', '身份证号码', '身份证明']
     identity_type_keywords = ['人员身份类型', '身份类型', '人员类别', '身份', '人员类型']
+    # v1.1.53: 劳动合同起止时间列（表头变体兼容）
+    contract_keywords = ['合同起止', '合同期限', '劳动合同', '合同时间', '合同日期']
 
     for row_idx, row in enumerate(rows[:10]):  # 只看前10行找表头
         row_strs = [str(c).strip() if c is not None else '' for c in row]
@@ -97,6 +100,10 @@ def _extract_roster_from_rows(rows):
                 for kw in identity_type_keywords:
                     if kw in cell_val:
                         identity_type_col_idx = col_idx
+                        break
+                for kw in contract_keywords:
+                    if kw in cell_val:
+                        contract_col_idx = col_idx
                         break
             break
 
@@ -159,6 +166,17 @@ def _extract_roster_from_rows(rows):
         if identity_type_col_idx >= 0 and identity_type_col_idx < len(row):
             identity_type = str(row[identity_type_col_idx]).strip() if row[identity_type_col_idx] else ''
 
+        # v1.1.53: 提取劳动合同起止时间（如果有该列）并做日期格式校验
+        contract_periods, contract_status, contract_raw, contract_error = [], 'missing', '', ''
+        if contract_col_idx >= 0 and contract_col_idx < len(row):
+            cell = row[contract_col_idx]
+            contract_raw = _stringify_contract_cell(cell)
+            from modules.insurance.core.contract_overlap import parse_contract_cell
+            parsed = parse_contract_cell(contract_raw)
+            contract_periods = parsed['periods']
+            contract_status = parsed['status']
+            contract_error = parsed['error']
+
         # v1.1.40: 去重键改为 (序号, 姓名)，重名且序号不同的人员都保留
         final_seq = seq if seq else len(roster) + 1
         dedup_key = (final_seq, name_val)
@@ -168,6 +186,11 @@ def _extract_roster_from_rows(rows):
                 'name': name_val,
                 'idcard': idcard,
                 'identity_type': identity_type,
+                # v1.1.53 劳动合同起止时间（月粒度段列表 + 解析状态）
+                'contract_periods': contract_periods,
+                'contract_status': contract_status,
+                'contract_raw': contract_raw,
+                'contract_error': contract_error,
             })
             seen_keys.add(dedup_key)
 
@@ -262,6 +285,19 @@ def parse_roster(text):
     # v1.1.34: 严格保持原始顺序，序号用原始值，不排序不重新编号
 
     return roster
+
+
+def _stringify_contract_cell(cell):
+    """v1.1.53: 合同单元格值统一转文本（兼容 Excel 日期型/浮点型单元格）"""
+    if cell is None:
+        return ''
+    import datetime as _dt
+    if isinstance(cell, (_dt.datetime, _dt.date)):
+        return cell.strftime('%Y-%m-%d')
+    s = str(cell).strip()
+    if s.endswith('.0'):  # 浮点格式 20230101.0 → 20230101
+        s = s[:-2]
+    return s
 
 
 def _is_header_word(word):
