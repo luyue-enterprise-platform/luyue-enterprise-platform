@@ -96,6 +96,9 @@ CHECKS = {
         '与 _process_task 完全隔离',
         'output_mode',
         '该文件夹中没有可转换的文件',
+        # v2.1.1 多文件夹 pick_ids 全部消费（getlist 修复）+ 失效 pick 提示（字面量）
+        '一个文件夹选择',
+        '请移除后重新选择文件夹',
     ],
     'modules.pdf2word': [
         '可逆转换',

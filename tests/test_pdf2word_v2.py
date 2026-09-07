@@ -473,6 +473,57 @@ class TestEndpoints(unittest.TestCase):
         with bp.picked_folders_lock:
             bp.picked_folders.pop(data['pick_id'], None)
 
+    def test_upload_consumes_all_pick_ids(self):
+        """v2.1.1 回归：多个 pick_ids 必须全部消费（此前 get() 只取第一个，
+        其余文件夹被静默丢弃——用户 7 个文件夹 461 个文件未转换的根因）"""
+        import io as _io
+        from PIL import Image
+        pick_ids = []
+        for i in range(3):
+            folder = os.path.join(self.tmp, 'pf%d' % i)
+            os.makedirs(folder)
+            files = []
+            for j in range(2):
+                fp = os.path.join(folder, 'img%d.png' % j)
+                Image.new('RGB', (60, 40), (i * 40, j * 40, 0)).save(fp)
+                files.append(fp)
+            pid = 'ut_pick_%d' % i
+            with bp.picked_folders_lock:
+                bp.picked_folders[pid] = {'folder': folder, 'files': files}
+            pick_ids.append(pid)
+
+        buf = _io.BytesIO()
+        Image.new('RGB', (60, 40), (1, 2, 3)).save(buf, 'PNG')
+        r = self.c.post('/pdf2word/api/upload', data={
+            'direction': 'topdf', 'output_mode': 'individual',
+            'files': [(buf, 'direct.png')],
+            'pick_ids': pick_ids,   # 同名字段多值（与前端逐个 append 一致）
+        }, content_type='multipart/form-data')
+        self.assertEqual(r.status_code, 200, r.get_json())
+        resp = r.get_json()
+        # 1 直接文件 + 3 文件夹 × 2 = 7，全部进入任务
+        self.assertEqual(resp['total_files'], 7, resp)
+        # 服务端暂存全部消费，无残留
+        with bp.picked_folders_lock:
+            for pid in pick_ids:
+                self.assertNotIn(pid, bp.picked_folders)
+
+    def test_upload_invalid_pick_id_warns(self):
+        """v2.1.1：失效的 pick（已消费/重启后残留引用）明确提示，不静默跳过"""
+        import io as _io
+        from PIL import Image
+        buf = _io.BytesIO()
+        Image.new('RGB', (60, 40), (1, 2, 3)).save(buf, 'PNG')
+        r = self.c.post('/pdf2word/api/upload', data={
+            'direction': 'topdf', 'output_mode': 'individual',
+            'files': [(buf, 'x.png')],
+            'pick_ids': ['pid_not_exist_123'],
+        }, content_type='multipart/form-data')
+        self.assertEqual(r.status_code, 200, r.get_json())
+        skipped = r.get_json()['skipped']
+        self.assertEqual(len(skipped), 1)
+        self.assertIn('已失效', skipped[0]['reason'])
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

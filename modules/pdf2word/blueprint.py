@@ -94,7 +94,12 @@ def api_upload():
         output_mode = 'merge'
 
     files = request.files.getlist('files')
-    pick_ids = [p for p in request.form.get('pick_ids', '').split(',') if p]
+    # v2.1.1 修复：多文件夹选择必须全部消费——get() 只返回同名字段第一个值，
+    # 导致多个 pick_ids 只有第一个文件夹被转换、其余静默丢弃。
+    # getlist 收取全部重复字段，并兼容逗号拼接形式。
+    pick_ids = []
+    for v in request.form.getlist('pick_ids'):
+        pick_ids.extend(p for p in str(v).split(',') if p)
 
     has_files = files and not (len(files) == 1 and files[0].filename == '')
     if not has_files and not pick_ids:
@@ -142,6 +147,9 @@ def api_upload():
         picks = [picked_folders.pop(pid, None) for pid in pick_ids]
     for pick in picks:
         if not pick:
+            # v2.1.1：失效的 pick（已被消费/服务重启/会话过期）明确提示，不再静默跳过
+            skipped.append({'name': '一个文件夹选择',
+                            'reason': '该文件夹选择已失效（可能已转换过或程序已重启），请移除后重新选择文件夹'})
             continue
         for src_path in pick['files']:
             try:
