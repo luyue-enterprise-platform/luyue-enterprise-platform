@@ -1,216 +1,352 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<html lang="zh-CN" data-page-node-id="4czFQIuLCwjSOfR055mVsk">
+<head data-page-node-id="bEGk5qvZd4vELV9lXEh8w6">
+    <meta charset="UTF-8" data-page-node-id="81Cs4BT2phcslVGzBli368">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="fK0KNuDizat58pct9MOD2P">
     <title>鲁岳企业服务·综合智能平台</title>
-    <link rel="stylesheet" href="/static/css/portal.css">
+    <link rel="stylesheet" href="/static/css/portal.css" data-page-node-id="9QGikrUcFqyXsWTv4F9HOi">
 </head>
-<body>
+<body data-page-node-id="UjZZR2I0k8yU7YJyPTtR7b">
     <!-- 顶部导航 -->
-    <header class="navbar">
-        <div class="nav-brand">
-            <img class="brand-icon" src="/static/assets/logo.png" alt="鲁岳企业服务">
-            <span class="brand-text">鲁岳企业服务·重点群体涉税申报项目资料处理综合智能平台</span>
+    <header class="navbar" data-page-node-id="cDXwvBpkgN6DHGHz5AQp06">
+        <div class="nav-brand" data-page-node-id="Xn7lIVlRbVz9CizG9REubA">
+            <img class="brand-icon" src="/static/assets/logo.png" alt="鲁岳企业服务" data-page-node-id="ujz26BhQPgEHPOFh3cAipr">
+            <span class="brand-text" data-page-node-id="ROnmXxKa4ShEp20X3khhT3">鲁岳企业服务·重点群体涉税申报项目资料处理综合智能平台</span>
+            <!-- 版本号：动态读取自 version.json（app_version 由后端注入），禁止硬编码 -->
+            <span class="brand-version" id="brandVersion" title="当前版本" data-page-node-id="d8azflp4Gx7AZNxRj40FQq">v{{ app_version }}</span>
         </div>
-        <div class="nav-user">
-            {% if is_admin %}
-            <button class="btn-nav" onclick="openInviteModal()">邀请码</button>
-            <button class="btn-nav" onclick="openUserModal()">账号管理</button>
-            {% endif %}
-            <span class="user-name">{{ username }}</span>
-            {% if is_admin %}<span class="user-badge">管理员</span>{% endif %}
-            <button class="btn-nav" id="btnCheckUpdate" onclick="checkAppUpdate(true)">🔄 检查更新</button>
-            <button class="btn-nav" onclick="openPwdModal()">🔑 修改密码</button>
-            <a href="/logout" class="btn-logout">退出</a>
+        <div class="nav-user" data-page-node-id="VcvQTPWuxyCRWt8lAH9q0j">
+            <!-- 账号管理下拉（账号管理 / 邀请码 / 修改密码 三项入口迁移至此） -->
+            <div class="nav-dropdown" id="ddAccount" data-page-node-id="dei4AaHJFKTQZVOqH6Lq6i">
+                <button type="button" class="btn-nav btn-dropdown-toggle"
+                        onclick="toggleDropdown('ddAccount', event)"
+                        aria-haspopup="true" aria-expanded="false" data-page-node-id="2mOSN8fe1wDN4P7FYxixw2">
+                    👤 账号管理 <span class="caret" data-page-node-id="pgt0t2bCkBLPJcAQcDWpIC">▾</span>
+                </button>
+                <div class="dropdown-menu" role="menu" data-page-node-id="PXv1ic20GtDrLse7qc9iFK">
+                    {% if is_admin %}
+                    <button type="button" class="dropdown-item" role="menuitem"
+                            onclick="dropdownAction('ddAccount', openUserModal)" data-page-node-id="MP3Z5fO8a1umZOcWGyxGaG">👥 账号管理</button>
+                    <button type="button" class="dropdown-item" role="menuitem"
+                            onclick="dropdownAction('ddAccount', openInviteModal)" data-page-node-id="pTdw0RsGKcyHEoklShg1hD">🎟️ 邀请码</button>
+                    {% endif %}
+                    <button type="button" class="dropdown-item" role="menuitem"
+                            onclick="dropdownAction('ddAccount', openPwdModal)" data-page-node-id="hxt6FQkLtsWecczEphSFsK">🔑 修改密码</button>
+                </div>
+            </div>
+            <!-- 关于系统下拉（功能介绍 / 版本更新） -->
+            <div class="nav-dropdown" id="ddAbout" data-page-node-id="yREGs34tZd9RFpGHrubcDQ">
+                <button type="button" class="btn-nav btn-dropdown-toggle"
+                        onclick="toggleDropdown('ddAbout', event)"
+                        aria-haspopup="true" aria-expanded="false" data-page-node-id="2mXGNrCSpi4FzO4ZEX8eEU">
+                    ℹ️ 关于系统 <span class="caret" data-page-node-id="4TEZVKR2vAIOYhTD3gZP07">▾</span>
+                </button>
+                <div class="dropdown-menu" role="menu" data-page-node-id="PGcAyWFr2bqoJGC91Chrjh">
+                    <button type="button" class="dropdown-item" role="menuitem"
+                            onclick="dropdownAction('ddAbout', openAboutModal)" data-page-node-id="OrS1zncKz9AqZxpNELpwNs">📖 功能介绍</button>
+                    <button type="button" class="dropdown-item" role="menuitem" id="btnCheckUpdate"
+                            onclick="dropdownAction('ddAbout', function(){ checkAppUpdate(true); })" data-page-node-id="RP3aRbfN0hPhacjCkhEssl">🔄 版本更新</button>
+                </div>
+            </div>
+            <span class="user-name" data-page-node-id="1ikUnH3tD6EABxXAw4bA9s">{{ username }}</span>
+            {% if is_admin %}<span class="user-badge" data-page-node-id="XDRLqqC3yQAFbO1IyXXYIa">管理员</span>{% endif %}
+            <a href="/logout" class="btn-logout" data-page-node-id="GzzfJNFKNAf8wPUW6gNhMN">退出</a>
         </div>
     </header>
 
     <!-- 主内容 -->
-    <main class="portal-main">
-        <div class="portal-hero">
-            <h1>欢迎使用综合智能平台</h1>
-            <p>请选择您需要的功能模块</p>
+    <main class="portal-main" data-page-node-id="kxmyG3SxlHjp9eT550XI4a">
+        <div class="portal-hero" data-page-node-id="t1Z8rycGZ2PaW32lewBWkQ">
+            <h1 data-page-node-id="tLLeIOIXXMpOGAJyk8UHH5">欢迎使用综合智能平台</h1>
+            <p data-page-node-id="NmC4TIrOZD9t1N09BuCwKv">请选择您需要的功能模块</p>
         </div>
 
-        <div class="module-grid">
+        <div class="module-grid" data-page-node-id="yJNYHQeggmtScNUFhuo8qB">
             <!-- 社保批量统计 -->
-            <a href="/insurance/" class="module-card">
-                <div class="module-icon">📊</div>
-                <h2 class="module-title">社保批量统计智能核算系统</h2>
-                <p class="module-desc">
+            <a href="/insurance/" class="module-card" data-page-node-id="Iym8lgrtEOo7SivZBuBqGw">
+                <div class="module-icon" data-page-node-id="m5FfzjKSVD8Xdlk3c9FzQz">📊</div>
+                <h2 class="module-title" data-page-node-id="73ul2MFvdd022MJBAVSWBM">社保批量统计智能核算系统</h2>
+                <p class="module-desc" data-page-node-id="uKCUsgZsvOen37QeaKunBS">
                     上传社保权益记录单图片/PDF，自动OCR识别并统计四险重叠月数，
                     生成退税核算Excel表。支持花名册匹配、缴费单位验证、文件自动整理。
                 </p>
-                <div class="module-features">
-                    <span class="feature-tag">OCR识别</span>
-                    <span class="feature-tag">四险统计</span>
-                    <span class="feature-tag">Excel导出</span>
-                    <span class="feature-tag">文件整理</span>
+                <div class="module-features" data-page-node-id="L9FUMxDjfKwRIzCXYIbfSp">
+                    <span class="feature-tag" data-page-node-id="aj7WVWDuwndtFQJPTIg16V">OCR识别</span>
+                    <span class="feature-tag" data-page-node-id="QAyPQiGvfTeIUdACVpov6C">四险统计</span>
+                    <span class="feature-tag" data-page-node-id="RYuJwoG1zIWHrMYE3eQ7sa">Excel导出</span>
+                    <span class="feature-tag" data-page-node-id="h0MK2mkVil42u2arDTmmBb">文件整理</span>
                 </div>
-                <span class="module-action">进入系统 →</span>
+                <span class="module-action" data-page-node-id="3NlTwDzrEGHAAZGuLY3rCf">进入系统 →</span>
             </a>
 
             <!-- 劳动合同整理 -->
-            <a href="/contract/" class="module-card">
-                <div class="module-icon">📋</div>
-                <h2 class="module-title">劳动合同图片整理系统</h2>
-                <p class="module-desc">
+            <a href="/contract/" class="module-card" data-page-node-id="DzZFDKnpdH6YHiaTHkGqz7">
+                <div class="module-icon" data-page-node-id="jyQbFlDylfWikaVolFoWot">📋</div>
+                <h2 class="module-title" data-page-node-id="XPQDkw4pFO31EVA6DFL4CY">劳动合同图片整理系统</h2>
+                <p class="module-desc" data-page-node-id="1LzsjS2d7wPNz2tQQfBECp">
                     上传人员花名册和劳动合同图片/PDF，按花名册顺序自动重命名图片。
                     支持PDF转图片、文件夹批量导入、同人多文件自动编号。
                 </p>
-                <div class="module-features">
-                    <span class="feature-tag">花名册匹配</span>
-                    <span class="feature-tag">PDF转图片</span>
-                    <span class="feature-tag">批量重命名</span>
-                    <span class="feature-tag">序号编号</span>
+                <div class="module-features" data-page-node-id="nt4JDmoOt9yovNDamNGQWs">
+                    <span class="feature-tag" data-page-node-id="keTRDyotaxrCkUpp7oKnhf">花名册匹配</span>
+                    <span class="feature-tag" data-page-node-id="0ugJMHRo6W1IPURK8CR1bd">PDF转图片</span>
+                    <span class="feature-tag" data-page-node-id="Iu5lzB4JN9iAIwGK6AsSII">批量重命名</span>
+                    <span class="feature-tag" data-page-node-id="gWFKWnEFX4DRghzbsDsYET">序号编号</span>
                 </div>
-                <span class="module-action">进入系统 →</span>
+                <span class="module-action" data-page-node-id="tX3stlqFQL9zF4Ab0wrPds">进入系统 →</span>
             </a>
 
-            <!-- PDF转Word -->
-            <a href="/pdf2word/" class="module-card">
-                <div class="module-icon">📄</div>
-                <h2 class="module-title">批量PDF转WORD系统</h2>
-                <p class="module-desc">
-                    上传一个或多个PDF文件，批量转换为可编辑的Word（.docx）文档。
-                    保留原文档的文本、图片、表格和排版格式，支持单文件下载或打包下载。
+            <!-- PDF转Word（v2.0.0 可逆转换） -->
+            <a href="/pdf2word/" class="module-card" data-page-node-id="OsO9fYSVPZIQN0aG1kI0G7">
+                <div class="module-icon" data-page-node-id="mM5AtjnYdGJb9rn8eCmLBU">📄</div>
+                <h2 class="module-title" data-page-node-id="VybbA9NTKvBLUkuBFsETdO">批量PDF转WORD系统 <span style="font-size:11px;color:#999;" data-page-node-id="qFjsEaMjg8uCl4IEsZ1JNb">v2.0.0 可逆转换</span></h2>
+                <p class="module-desc" data-page-node-id="Qi1NHlpuHeGhyGJ2n6wCAo">
+                    双向批量转换：PDF 转 Word（保留文本、图片、表格与排版），
+                    或将图片 / Word / Excel / TXT 等批量转为 PDF（支持文件夹递归、合并/独立两种输出模式）。
                 </p>
-                <div class="module-features">
-                    <span class="feature-tag">批量转换</span>
-                    <span class="feature-tag">保留排版</span>
-                    <span class="feature-tag">表格提取</span>
-                    <span class="feature-tag">打包下载</span>
+                <div class="module-features" data-page-node-id="A2E2tCUaHpKZhMEApgE9rq">
+                    <span class="feature-tag" data-page-node-id="Kn6WwNfhraffqdKysg8vmf">批量转换</span>
+                    <span class="feature-tag" data-page-node-id="FlP2C48TkABxuNiAcbeMKk">保留排版</span>
+                    <span class="feature-tag" data-page-node-id="CG0VzKsQHuNkFUGcrCMJFk">可逆转换</span>
+                    <span class="feature-tag" data-page-node-id="Tu8pxOPk01Fomnr0l885sM">文件夹递归</span>
+                    <span class="feature-tag" data-page-node-id="woD3KKm7IEsE4vTbIbnnbC">打包下载</span>
                 </div>
-                <span class="module-action">进入系统 →</span>
+                <span class="module-action" data-page-node-id="N5cW3QPyEcqYaMCaIk8h5u">进入系统 →</span>
             </a>
 
             <!-- 医保参保证明下载 -->
-            <a href="/medical/" class="module-card">
-                <div class="module-icon">🏥</div>
-                <h2 class="module-title">医保参保证明批量下载系统</h2>
-                <p class="module-desc">
+            <a href="/medical/" class="module-card" data-page-node-id="At3KOD8irMlMaPyT8l9z51">
+                <div class="module-icon" data-page-node-id="BgKaDGB9iO9CcTecfx51gF">🏥</div>
+                <h2 class="module-title" data-page-node-id="BdKeKBIHfO9tpIlK5A3h66">医保参保证明批量下载系统</h2>
+                <p class="module-desc" data-page-node-id="iOWSHs03Oc1TNxDGNCQgJG">
                     上传员工花名册，自动打开陕西医保网厅完成登录后，逐人查询并批量下载
                     职工参保证明PDF，文件以姓名命名自动归档到日期文件夹。
                 </p>
-                <div class="module-features">
-                    <span class="feature-tag">名单导入</span>
-                    <span class="feature-tag">自动查询</span>
-                    <span class="feature-tag">批量下载</span>
-                    <span class="feature-tag">姓名归档</span>
+                <div class="module-features" data-page-node-id="nOWdZiwNJ43z8cCjO4luQg">
+                    <span class="feature-tag" data-page-node-id="vvXrwv3k6V2d7oi2FjqhqZ">名单导入</span>
+                    <span class="feature-tag" data-page-node-id="KwkWqG5DkEvfAE2Qd3izG1">自动查询</span>
+                    <span class="feature-tag" data-page-node-id="ALpEDjQtirDCTkPWtyngtS">批量下载</span>
+                    <span class="feature-tag" data-page-node-id="iYH3Hz3wRzilfi5SQV8EEf">姓名归档</span>
                 </div>
-                <span class="module-action">进入系统 →</span>
+                <span class="module-action" data-page-node-id="UOK1BSnIsUCHRiwLe4QNrl">进入系统 →</span>
             </a>
 
         </div>
     </main>
 
     <!-- 底部版权信息 -->
-    <footer class="portal-footer">
-        <div class="footer-content">
-            <span>陕西鲁岳企业服务有限公司</span>
-            <span class="footer-divider">|</span>
-            <span>版权所有</span>
-            <span class="footer-divider">|</span>
-            <span>联系方式：18509240888</span>
+    <footer class="portal-footer" data-page-node-id="cX9vxhESbarRcHgjCGnCXw">
+        <div class="footer-content" data-page-node-id="0t54g9biJchyRBKxeUWM2D">
+            <span data-page-node-id="3l5cabhJaDBxchTUf7H1tJ">陕西鲁岳企业服务有限公司</span>
+            <span class="footer-divider" data-page-node-id="nKTAeGuylS3oqbQNDOddFS">|</span>
+            <span data-page-node-id="fYk9kjl6qxQrDB7WjCtJ26">版权所有</span>
+            <span class="footer-divider" data-page-node-id="aC03oOidIK5ojwJFG9YqzC">|</span>
+            <span data-page-node-id="um0zJb36BYnV2xzzslYz0s">联系方式：18509240888</span>
         </div>
     </footer>
 
     <!-- 修改密码弹窗 -->
-    <div class="modal-overlay" id="pwdModal" style="display:none;">
-        <div class="modal-box">
-            <h3>修改密码</h3>
-            <div class="form-group">
-                <label>旧密码</label>
-                <input type="password" id="oldPassword" placeholder="请输入旧密码">
+    <div class="modal-overlay" id="pwdModal" style="display:none;" data-page-node-id="3bWMzDyG4N1FDA79xjUbCQ">
+        <div class="modal-box" data-page-node-id="wSyNFo7tW3uAh3jecSLhMK">
+            <h3 data-page-node-id="zymfFtvABTo8CtoIfMhgsk">修改密码</h3>
+            <div class="form-group" data-page-node-id="oFBDfXa21fPP7mfBzciic2">
+                <label data-page-node-id="YHF8lSlTNGUevKnlhVTQRG">旧密码</label>
+                <input type="password" id="oldPassword" placeholder="请输入旧密码" data-page-node-id="1mHxfRc5dJRrg0CjmgBTz6">
             </div>
-            <div class="form-group">
-                <label>新密码（至少6位）</label>
-                <input type="password" id="newPassword" placeholder="请输入新密码">
+            <div class="form-group" data-page-node-id="G45Y6D4Gd3FddFjz1wwzSC">
+                <label data-page-node-id="xNeX1o0tE3Fxty3UIaXr4f">新密码（至少6位）</label>
+                <input type="password" id="newPassword" placeholder="请输入新密码" data-page-node-id="4XboGTEjcmnb84u312cujR">
             </div>
-            <div class="form-group">
-                <label>确认新密码</label>
-                <input type="password" id="confirmPassword" placeholder="请再次输入新密码">
+            <div class="form-group" data-page-node-id="gRvDB2S3xZCLQzcVFmUMen">
+                <label data-page-node-id="1Wv5HeJXCE4nmJFNvjfhs3">确认新密码</label>
+                <input type="password" id="confirmPassword" placeholder="请再次输入新密码" data-page-node-id="ubJvr3Hu9cfEBmSuVuy2Eg">
             </div>
-            <p class="form-error" id="pwdError"></p>
-            <div class="modal-actions">
-                <button class="btn-ghost" onclick="closePwdModal()">取消</button>
-                <button class="btn-primary" onclick="changePassword()">确认修改</button>
+            <p class="form-error" id="pwdError" data-page-node-id="aVlAxaULErNUpbZGA2oJ9C"></p>
+            <div class="modal-actions" data-page-node-id="mk670EB00ZboEgXbQx6wFS">
+                <button class="btn-ghost" onclick="closePwdModal()" data-page-node-id="YDy4SGutHnSCwYmwOTg2vH">取消</button>
+                <button class="btn-primary" onclick="changePassword()" data-page-node-id="A0j6miicgXfCUbv1GCEulA">确认修改</button>
             </div>
         </div>
     </div>
 
     <!-- 邀请码管理弹窗（仅管理员） -->
     {% if is_admin %}
-    <div class="modal-overlay" id="inviteModal" style="display:none;">
-        <div class="modal-box modal-wide">
-            <h3>邀请码管理 — 动态生成</h3>
-            <div class="modal-body">
-                <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+    <div class="modal-overlay" id="inviteModal" style="display:none;" data-page-node-id="1TD2hv34AGiQeBDUny8Njh">
+        <div class="modal-box modal-wide" data-page-node-id="BOmaEcuqG5E1Q64eRlT7cV">
+            <h3 data-page-node-id="avKC0AirdVaq4BBXbgFhgW">邀请码管理 — 动态生成</h3>
+            <div class="modal-body" data-page-node-id="oPyuXJ6im5z6U8o5sxl0LW">
+                <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;" data-page-node-id="U37VrHd9DDBtyXSrptRjSG">
                     <input type="number" id="genCount" value="1" min="1" max="100"
-                           style="width:70px;padding:6px 8px;border:1px solid #ddd;border-radius:4px;text-align:center;">
-                    <button class="btn-primary btn-sm" id="btnGenInvite">批量生成邀请码</button>
-                    <span style="color:#999;font-size:12px;">（一次最多100个）</span>
+                           style="width:70px;padding:6px 8px;border:1px solid #ddd;border-radius:4px;text-align:center;" data-page-node-id="yfNCNcU4D1jIFXx7yhPaly">
+                    <button class="btn-primary btn-sm" id="btnGenInvite" data-page-node-id="BXpJADcQJDxPoqBtbAKKSx">批量生成邀请码</button>
+                    <span style="color:#999;font-size:12px;" data-page-node-id="7pvPquR3hpGEXSVXc56iFN">（一次最多100个）</span>
                 </div>
-                <div id="newInviteCodes" class="invite-code-display" style="display:none;"></div>
+                <div id="newInviteCodes" class="invite-code-display" style="display:none;" data-page-node-id="BJaSt6XaXlWYCApTd1Jeq5"></div>
             </div>
-            <div class="modal-actions">
-                <button class="btn-ghost" onclick="closeInviteModal()">关闭</button>
+            <div class="modal-actions" data-page-node-id="1CXBfonuXKizHeKYERnDyM">
+                <button class="btn-ghost" onclick="closeInviteModal()" data-page-node-id="fDqKSHPzDyeha5TMVGFV2T">关闭</button>
             </div>
         </div>
     </div>
 
     <!-- 账号管理弹窗（仅管理员） -->
-    <div class="modal-overlay" id="userModal" style="display:none;">
-        <div class="modal-box modal-wide">
-            <h3>账号管理</h3>
-            <div class="modal-body">
-                <table class="portal-table" id="userTable" style="margin-top:8px;">
-                    <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>注册时间</th><th>操作</th></tr></thead>
-                    <tbody id="userTableBody"></tbody>
+    <div class="modal-overlay" id="userModal" style="display:none;" data-page-node-id="GsVakILAFq48nY6hYV0DMN">
+        <div class="modal-box modal-wide" data-page-node-id="YAHTFhL4Qpa9B9YEwGV3u2">
+            <h3 data-page-node-id="I3JVDCe6Fcw0gMRCjqIrH5">账号管理</h3>
+            <div class="modal-body" data-page-node-id="4X74ftLEFjNr0lJouCRq7t">
+                <table class="portal-table" id="userTable" style="margin-top:8px;" data-page-node-id="DdjFEzcAvvTYYYtfKbyPCX">
+                    <thead data-page-node-id="vxaxatGkJVA4SuwW9zEWXi"><tr data-page-node-id="2V6Xf3ShfeLjn1WTOuyLZq"><th data-page-node-id="VBlaGhisyEEEg3DfTOdvIK">ID</th><th data-page-node-id="iSDbV4pi6kkPbSRGJDX01p">用户名</th><th data-page-node-id="77iI8sJQEiN4QXFhsTgofm">角色</th><th data-page-node-id="0pT2PGNl7a0UmH20LH6bJ0">状态</th><th data-page-node-id="5LmvEUsjm23yqn7drqoTiL">注册时间</th><th data-page-node-id="7vnnuFIj6lPqIuahqNV6CD">操作</th></tr></thead>
+                    <tbody id="userTableBody" data-page-node-id="2qJH9dFl9AiiEiQuMHGxBr"></tbody>
                 </table>
             </div>
-            <div class="modal-actions">
-                <button class="btn-ghost" onclick="closeUserModal()">关闭</button>
+            <div class="modal-actions" data-page-node-id="2GmRaNnd2o2mbP4Lxi9B08">
+                <button class="btn-ghost" onclick="closeUserModal()" data-page-node-id="RVrDgHoSLIGLmznEug7fTl">关闭</button>
             </div>
         </div>
     </div>
     {% endif %}
 
+    <!-- 功能介绍弹窗（关于系统 → 功能介绍） -->
+    <div class="modal-overlay" id="aboutModal" style="display:none;" data-page-node-id="EdBnEduI6ZxVlLRen5UfAd">
+        <div class="modal-box modal-wide" data-page-node-id="8BcJaQyHKR0ASHcvUzEVtP">
+            <h3 data-page-node-id="xs86Hg4qz7QFSkZqOXu87c">功能介绍 — 各模块使用说明</h3>
+            <div class="modal-body about-body" data-page-node-id="M6ZTlFXsAyGUGyc3ssJqZo">
+                <section class="about-section" data-page-node-id="X4ZwYpha8xkp80Ic4icMdA">
+                    <h4 data-page-node-id="8GDX70gcWU3QNYh4mAXf62">📊 社保批量统计智能核算系统</h4>
+                    <ol data-page-node-id="uF9SUFilfOboEWqP0DZ7o3">
+                        <li data-page-node-id="ABKndoCR04obPuM8LRzY9F">进入模块后，先上传<b data-page-node-id="MzJbUwqSbTkGnNa0Jn2Ti3">社保权益记录单</b>（图片或 PDF，支持批量与文件夹导入）；</li>
+                        <li data-page-node-id="ZmclMqytAmWdz2kCxBhyD3">系统自动 OCR 识别人员姓名、证件号与四险（养老/医疗/工伤/失业）缴费起止时间；</li>
+                        <li data-page-node-id="ruULurBzxzVwReWSVGsu4m">可上传<b data-page-node-id="kfeeWxSvgLT6071Lb7zqrS">人员花名册</b>进行姓名匹配，系统校验缴费单位一致性；</li>
+                        <li data-page-node-id="suEs3T6PArpSqWdvRft9pU">按统计时间段自动核算四险<b data-page-node-id="GxaWsMHILOP89XCpi6xCFg">重叠月数</b>，并结合劳动合同区间计算有效参保期；</li>
+                        <li data-page-node-id="CfJhHVF87CPwBVVhbExxda">支持"退税 / 抵税"两种税种模式切换、手动补录、时间段修改；</li>
+                        <li data-page-node-id="PDd8ehTI2vlTFFjDjTiQcz">一键生成<b data-page-node-id="nMp0Aed68fgaaxwPJ7Ayai">总台账 / 年度台账 Excel</b>，并可对识别异常的图片进行文件整理归档。</li>
+                    </ol>
+                </section>
+                <section class="about-section" data-page-node-id="HeABLMJEFiAbaC3JgP93cr">
+                    <h4 data-page-node-id="YCdlO8kCFFzq5PIRBwzVH7">📋 劳动合同图片整理系统</h4>
+                    <ol data-page-node-id="xiBnqTpeMw9PIQfHI0KClJ">
+                        <li data-page-node-id="i7ViSCU8iBAnndNQ8mAcAt">先上传<b data-page-node-id="kn8oPp1opUBxLGYJjW00v2">人员花名册</b>（Excel），系统解析人员顺序；</li>
+                        <li data-page-node-id="tSGsFKhIhpCdUVYgTUyseq">再上传<b data-page-node-id="7q0a4yFnrYTYY132JtWGzl">劳动合同</b>图片或 PDF（支持文件夹批量导入）；</li>
+                        <li data-page-node-id="Yb6eKCyyJK9tSaylRTR5f1">系统按花名册顺序自动重命名合同文件，同一人多文件时自动编号；</li>
+                        <li data-page-node-id="fVmblGmlRfgQbzDfp5XpHn">转换前可<b data-page-node-id="s263GgmikuoGO41MZEgr2B">预览重命名计划</b>，确认后执行，支持一键回滚。</li>
+                    </ol>
+                </section>
+                <section class="about-section" data-page-node-id="lmuPonN7SY8Drr9yhJCVCc">
+                    <h4 data-page-node-id="vbre3sb6lnZlz4fFCIixxs">📄 批量PDF转WORD系统（v2.0.0 可逆转换）</h4>
+                    <ol data-page-node-id="kSmebp2DgmnGmQEz9BycIu">
+                        <li data-page-node-id="A0PIF09hxWkO1pZZcngrDI"><b data-page-node-id="SXKcDwhYh0moFrLyrDrDdu">PDF 转 Word</b>：批量上传 PDF，转换为可编辑的 Word（.docx），保留文本、图片、表格与排版；</li>
+                        <li data-page-node-id="YkLyea7h7SSK3JH1ptrzVI"><b data-page-node-id="44T3zKUEZ0iYNSvrC5vBRu">其他格式转 PDF</b>（可逆转换）：选择"其他格式转 PDF"方向后，可将图片 / Word / Excel / TXT 批量转为 PDF，支持选择<b data-page-node-id="VKX11B6hdHKPoe64p6EEdn">整个文件夹</b>递归解析；</li>
+                        <li data-page-node-id="K1OtPANwzuEFkhvQgs8xDV"><b data-page-node-id="jrAVceRYzpi6N2kKWyYBsr">合并模式</b>：按上传顺序将全部文件合并为单个 PDF；</li>
+                        <li data-page-node-id="Th7UQ2JUrXz4kWZQHjZaKB"><b data-page-node-id="0RHzDQHyedeVU6JCP9ddzv">独立模式</b>：每个文件生成独立 PDF，命名与源文件一致（重名自动加序号），一一对应可溯源；</li>
+                        <li data-page-node-id="NvELNWm7VfvqjdPOnHitif">不支持的格式、空文件或转换失败的文件会给出明确提示，单个文件失败不影响整体任务。</li>
+                    </ol>
+                </section>
+                <section class="about-section" data-page-node-id="Aqx0GxDA5ViensgPEvh2pA">
+                    <h4 data-page-node-id="nIQFa2VU3MkRtOk3Er8yp8">🏥 医保参保证明批量下载系统</h4>
+                    <ol data-page-node-id="BbJFuK9RhAmqbrEgxr9A6I">
+                        <li data-page-node-id="kZNsAn49bQCrcsndVuNeCu">上传<b data-page-node-id="e8KD8Jao9fRjsoGmuAahc4">员工花名册</b>；</li>
+                        <li data-page-node-id="XIx3wcBGrKM6EOkU4x9PKH">系统自动打开陕西医保网厅并完成登录；</li>
+                        <li data-page-node-id="XSBT8tAojaaMLSnyiGgmvb">逐人查询并批量下载<b data-page-node-id="NMN8ERSGl8DNG4PDTmioH2">职工参保证明 PDF</b>；</li>
+                        <li data-page-node-id="HYdh3BrBBAHfQuO4SCuoNf">文件以姓名命名，自动归档到日期文件夹。</li>
+                    </ol>
+                </section>
+                <section class="about-section" data-page-node-id="S9K2EdXqJhDO8YMYRhyiNj">
+                    <h4 data-page-node-id="OLRoBX7gPvLbAE3LkmOkjd">💡 使用提示</h4>
+                    <ul data-page-node-id="XN2wiwkM3KIG1nGemubofD">
+                        <li data-page-node-id="LYMC79MdrnoCrc14Hyh57t">标题栏右侧"账号管理"菜单中可进行账号、邀请码与密码管理；</li>
+                        <li data-page-node-id="dOazHdVl7GqDbcIU3PdBss">"关于系统"菜单中可查看本功能介绍，或通过"版本更新"检查并升级新版本；</li>
+                        <li data-page-node-id="sPo4eFUHO9OQaWC2sDFBEB">各模块页面右上角均提供"返回首页"入口。</li>
+                    </ul>
+                </section>
+            </div>
+            <div class="modal-actions" data-page-node-id="AMGbF0cKGC1YOIvdYGox9H">
+                <button class="btn-primary" onclick="closeAboutModal()" data-page-node-id="LR7V9InjTAEV0AOKtUqGUk">我知道了</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast提示 -->
-    <div class="toast" id="toast"></div>
+    <div class="toast" id="toast" data-page-node-id="Ou5yAxBQQBb5O8MNmjAh0E"></div>
 
     <!-- 更新提示弹窗 -->
-    <div class="modal-overlay" id="updateModal" style="display:none;">
-        <div class="modal-box modal-wide">
-            <h3 id="updateTitle">软件更新</h3>
-            <div class="modal-body">
-                <p style="margin-bottom:10px;">
-                    当前版本：<strong id="updateLocalVer"></strong><br>
-                    最新版本：<strong id="updateRemoteVer" style="color:#2E5C8A;"></strong>
+    <div class="modal-overlay" id="updateModal" style="display:none;" data-page-node-id="nnaC8mpZrYtARU1kjpVX2P">
+        <div class="modal-box modal-wide" data-page-node-id="gu1OQ24pmYalFRil6BMuBh">
+            <h3 id="updateTitle" data-page-node-id="HZTn8lSAaFYWfKFjiGEQ47">软件更新</h3>
+            <div class="modal-body" data-page-node-id="CMZEEFoDjMGZV2dX14TtsK">
+                <p style="margin-bottom:10px;" data-page-node-id="HwRg9OsbYE4mdYXrH3fMUJ">
+                    当前版本：<strong id="updateLocalVer" data-page-node-id="HE5KVLBcllzlqtDT8bqEEk"></strong><br data-page-node-id="riuV8ETh2qbwynnP1x5YXb">
+                    最新版本：<strong id="updateRemoteVer" style="color:#2E5C8A;" data-page-node-id="6z3IfRIjauLHBqChE4AiVD"></strong>
                 </p>
-                <div style="background:#F8FAFC;padding:14px;border-radius:8px;border:1px solid #E8ECF0;max-height:160px;overflow-y:auto;">
-                    <strong style="display:block;margin-bottom:6px;color:#555;">更新内容：</strong>
-                    <div id="updateChangelog" style="font-size:13px;color:#666;line-height:1.7;white-space:pre-wrap;"></div>
+                <div style="background:#F8FAFC;padding:14px;border-radius:8px;border:1px solid #E8ECF0;max-height:160px;overflow-y:auto;" data-page-node-id="tAeHm6bB8xmSkVXsUqQfic">
+                    <strong style="display:block;margin-bottom:6px;color:#555;" data-page-node-id="XMd5jxWmyRV5ODwNhKERLi">更新内容：</strong>
+                    <div id="updateChangelog" style="font-size:13px;color:#666;line-height:1.7;white-space:pre-wrap;" data-page-node-id="YZNaiA5bDaUzsvGC7ZXd1D"></div>
                 </div>
-                <div id="updateProgressWrap" style="display:none;margin-top:12px;">
-                    <div style="background:#E8ECF0;border-radius:6px;height:14px;overflow:hidden;">
-                        <div id="updateProgressBar" style="height:100%;width:0%;background:#2E5C8A;transition:width .3s;"></div>
+                <div id="updateProgressWrap" style="display:none;margin-top:12px;" data-page-node-id="eIJToJIMvEh9WvaqNQ5WVI">
+                    <div style="background:#E8ECF0;border-radius:6px;height:14px;overflow:hidden;" data-page-node-id="u5BGOKOFaB3FizxtIT2qjX">
+                        <div id="updateProgressBar" style="height:100%;width:0%;background:#2E5C8A;transition:width .3s;" data-page-node-id="UAWEDEeIRzsGdRT2dZj2dw"></div>
                     </div>
-                    <p id="updateProgressText" style="margin-top:8px;font-size:13px;color:#555;">准备下载...</p>
+                    <p id="updateProgressText" style="margin-top:8px;font-size:13px;color:#555;" data-page-node-id="KFuohsVQSwmoXgAg7aOzM7">准备下载...</p>
                 </div>
-                <p id="updateHintText" style="margin-top:10px;font-size:12px;color:#999;">
+                <p id="updateHintText" style="margin-top:10px;font-size:12px;color:#999;" data-page-node-id="d1fol74oN5VJLmVDfpCqN7">
                     点击"立即升级"将自动下载并安装新版本，全程无需手动操作，安装完成后程序会自动重启。
                 </p>
             </div>
-            <div class="modal-actions">
-                <button class="btn-ghost" onclick="closeUpdateModal()">稍后再说</button>
-                <button class="btn-primary" id="btnDownloadUpdate">立即升级</button>
+            <div class="modal-actions" data-page-node-id="JO8NJJNdEVhpnEs3lPIxsD">
+                <button class="btn-ghost" onclick="closeUpdateModal()" data-page-node-id="zgB19ruXp3kN7YsAQPmRc7">稍后再说</button>
+                <button class="btn-primary" id="btnDownloadUpdate" data-page-node-id="SOweYkX6fAP83tJBUgtEqA">立即升级</button>
             </div>
         </div>
     </div>
 
     <script>
+    // ======== 标题栏下拉菜单（账号管理 / 关于系统） ========
+    function toggleDropdown(id, e) {
+        if (e) { e.stopPropagation(); }
+        closeAllDropdowns(id);
+        var dd = document.getElementById(id);
+        if (!dd) return;
+        var open = dd.classList.toggle('open');
+        var btn = dd.querySelector('.btn-dropdown-toggle');
+        if (btn) { btn.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+    }
+
+    function closeAllDropdowns(exceptId) {
+        var dds = document.querySelectorAll('.nav-dropdown.open');
+        for (var i = 0; i < dds.length; i++) {
+            if (dds[i].id !== exceptId) {
+                dds[i].classList.remove('open');
+                var b = dds[i].querySelector('.btn-dropdown-toggle');
+                if (b) { b.setAttribute('aria-expanded', 'false'); }
+            }
+        }
+    }
+
+    function dropdownAction(id, fn) {
+        closeAllDropdowns();
+        if (typeof fn === 'function') { fn(); }
+    }
+
+    // 点击菜单外任意位置关闭全部下拉
+    document.addEventListener('click', function() {
+        closeAllDropdowns();
+    });
+
+    // Esc 键关闭全部下拉
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' || e.keyCode === 27) {
+            closeAllDropdowns();
+        }
+    });
+
+    // ======== 功能介绍（关于系统 → 功能介绍） ========
+    function openAboutModal() {
+        document.getElementById('aboutModal').style.display = 'flex';
+    }
+
+    function closeAboutModal() {
+        document.getElementById('aboutModal').style.display = 'none';
+    }
+
     // ======== 修改密码 ========
     function openPwdModal() {
         document.getElementById('pwdModal').style.display = 'flex';
@@ -417,6 +553,12 @@
             if (e.target === this) closeUpdateModal();
         });
     }
+    var aboutModalEl = document.getElementById('aboutModal');
+    if (aboutModalEl) {
+        aboutModalEl.addEventListener('click', function(e) {
+            if (e.target === this) closeAboutModal();
+        });
+    }
 
     // ======== 远程更新（自动下载 + 静默安装） ========
     var _pendingDownloadUrl = '';
@@ -429,7 +571,7 @@
         fetch('/api/app/check_update')
             .then(function(res) { return res.json(); })
             .then(function(data) {
-                if (btn) { btn.disabled = false; btn.textContent = '🔄 检查更新'; }
+                if (btn) { btn.disabled = false; btn.textContent = '🔄 版本更新'; }
                 if (data.has_update) {
                     openUpdateModal(data);
                 } else if (manual) {
@@ -437,7 +579,7 @@
                 }
             })
             .catch(function(err) {
-                if (btn) { btn.disabled = false; btn.textContent = '🔄 检查更新'; }
+                if (btn) { btn.disabled = false; btn.textContent = '🔄 版本更新'; }
                 if (manual) {
                     showToast('检查更新失败: ' + err.message);
                 }

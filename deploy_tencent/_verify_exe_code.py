@@ -84,6 +84,27 @@ CHECKS = {
     'modules.insurance.core.stats_calculator': [
         '统计结果起点 = max(统计开始, 重叠起点)',
     ],
+    # v2.0.0 可逆转换：反向引擎 + blueprint 分流 + 模块版本
+    'modules.pdf2word.core.to_pdf': [
+        '批量转 PDF 主入口',
+        '独立模式命名：与源文件同名仅换扩展名',
+        '合并模式：按传入顺序把全部文件合并为单个 PDF',
+    ],
+    'modules.pdf2word.blueprint': [
+        '与 _process_task 完全隔离',
+        'output_mode',
+        '该文件夹中没有可转换的文件',
+    ],
+    'modules.pdf2word': [
+        '可逆转换',
+        '2.0.0',
+    ],
+    # v2.0.0 多省份：模板引擎 + 省份必选端点
+    'modules.insurance.core.template_engine': [
+        '省份完全以用户手动选择为准',
+        '按用户所选省份路由模板并解析',
+        '该省份暂未支持',
+    ],
 }
 
 

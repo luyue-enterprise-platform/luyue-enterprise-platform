@@ -1,12 +1,23 @@
 /**
- * 批量PDF转WORD系统 — 前端交互逻辑
+ * 批量PDF转WORD系统 — 前端交互逻辑（v2.0.0 可逆转换）
+ *
+ * 新增：
+ * - 转换方向：pdf2word（原有）/ topdf（其他格式转PDF）
+ * - 输出模式（仅 topdf）：merge（合并单PDF）/ individual（独立PDF）
+ * - 文件夹递归选择（topdf 方向，复用 pick_id 模式）
  */
 
 // ===== 全局状态 =====
-var selectedFiles = [];     // [{file: File|null, name: String, size: Number, fromFolder: Boolean}, ...]
-var pickIds = [];           // 文件夹选择ID列表（支持多个文件夹累加）
+var selectedFiles = [];     // [File, ...] 按选择先后顺序
+var pickEntries = [];       // [{pick_id, folder, file_count, files:[...]}, ...] 按选择先后顺序
 var currentTaskId = null;
 var pollTimer = null;
+var currentDirection = 'pdf2word';  // 'pdf2word' | 'topdf'
+var lastResultData = null;
+
+// topdf 方向支持的扩展名（须与后端 to_pdf.SUPPORTED_EXTS 一致）
+var TOPDF_EXTS = ['png', 'jpg', 'jpeg', 'bmp', 'gif', 'tif', 'tiff', 'webp',
+                  'doc', 'docx', 'xls', 'xlsx', 'txt', 'md', 'pdf'];
 
 // ===== 页面元素引用 =====
 var fileInput = document.getElementById('fileInput');
@@ -34,6 +45,40 @@ function esc(str) {
         .replace(/"/g, '&quot;');
 }
 
+// ===== 转换方向切换 =====
+function onDirectionChange(dir) {
+    currentDirection = dir;
+    var isTopdf = (dir === 'topdf');
+
+    // 输出模式选项：仅转PDF方向显示（PDF转Word时隐藏，避免歧义）
+    document.getElementById('modeGroup').style.display = isTopdf ? 'block' : 'none';
+    // 文件夹选择入口：仅转PDF方向显示
+    document.getElementById('pickFolderEntry').style.display = isTopdf ? 'block' : 'none';
+
+    // 上传区文案与过滤
+    if (isTopdf) {
+        fileInput.accept = TOPDF_EXTS.map(function (e) { return '.' + e; }).join(',');
+        document.getElementById('uploadTitle').textContent = '上传待转换文件';
+        document.getElementById('uploadTip').textContent = '支持图片/Word/Excel/TXT/PDF，可批量上传或选择文件夹';
+        document.getElementById('dropzoneMainText').textContent = '拖拽文件到此处';
+        document.getElementById('dropzoneSubText').textContent = '支持图片 / Word / Excel / TXT / PDF，可批量上传';
+        document.getElementById('actionHint').textContent = '将选中的文件批量转换为 PDF';
+    } else {
+        fileInput.accept = '.pdf';
+        document.getElementById('uploadTitle').textContent = '上传 PDF 文件';
+        document.getElementById('uploadTip').textContent = '仅支持 .pdf 格式，可批量上传';
+        document.getElementById('dropzoneMainText').textContent = '拖拽 PDF 文件到此处';
+        document.getElementById('dropzoneSubText').textContent = '支持批量上传多个 PDF 文件';
+        document.getElementById('actionHint').textContent = '将选中的 PDF 文件批量转换为 Word (.docx) 格式';
+    }
+
+    // 切换方向后清掉不符合当前方向的已选文件，避免误传
+    if (selectedFiles.length > 0 || pickEntries.length > 0) {
+        clearFiles();
+        showToast('已切换转换方向，请重新选择文件', 'info');
+    }
+}
+
 // ===== 文件上传 =====
 dropzone.addEventListener('dragover', function (e) {
     e.preventDefault();
@@ -48,7 +93,7 @@ dropzone.addEventListener('dragleave', function (e) {
 dropzone.addEventListener('drop', function (e) {
     e.preventDefault();
     dropzone.classList.remove('dragover');
-    // 真正的 drop 处理在底部"支持文件夹拖拽"区域统一处理
+    addFiles(e.dataTransfer.files);
 });
 
 fileInput.addEventListener('change', function () {
@@ -56,29 +101,32 @@ fileInput.addEventListener('change', function () {
     this.value = '';
 });
 
+function extOk(name) {
+    var ext = name.split('.').pop().toLowerCase();
+    if (currentDirection === 'pdf2word') return ext === 'pdf';
+    return TOPDF_EXTS.indexOf(ext) >= 0;
+}
+
 function addFiles(fileList) {
     var added = 0;
-    var skipped = 0;
+    var skipped = [];
     for (var i = 0; i < fileList.length; i++) {
         var f = fileList[i];
-        var ext = f.name.split('.').pop().toLowerCase();
-        if (ext !== 'pdf') {
-            skipped++;
+        if (!extOk(f.name)) {
+            skipped.push(f.name);
             continue;
         }
         // 避免重复
         var dup = selectedFiles.some(function (sf) {
-            var sfn = sf.file ? sf.file.name : sf.name;
-            var sfs = sf.file ? sf.file.size : sf.size;
-            return sfn === f.name && sfs === f.size;
+            return sf.name === f.name && sf.size === f.size;
         });
         if (dup) continue;
 
-        selectedFiles.push({file: f, name: f.name, size: f.size, fromFolder: false});
+        selectedFiles.push(f);
         added++;
     }
-    if (skipped > 0) {
-        showToast('跳过了 ' + skipped + ' 个非PDF文件', 'info');
+    if (skipped.length > 0) {
+        showToast('跳过 ' + skipped.length + ' 个不支持格式的文件：' + esc(skipped.slice(0, 3).join('、')) + (skipped.length > 3 ? ' 等' : ''), 'info');
     }
     if (added > 0) {
         renderFileList();
@@ -86,10 +134,9 @@ function addFiles(fileList) {
     }
 }
 
-// ===== 通过系统原生对话框选择文件夹（累加模式） =====
+// ===== 选择文件夹（转PDF方向，递归解析） =====
 function pickFolder() {
     showToast('正在打开文件夹选择对话框...', 'info');
-
     fetch('/pdf2word/api/pick_folder', { method: 'POST' })
         .then(function (r) { return r.json(); })
         .then(function (data) {
@@ -98,49 +145,67 @@ function pickFolder() {
                 showToast(data.error, 'error');
                 return;
             }
-            if (data.ok) {
-                pickIds.push(data.pick_id);
-                var added = 0;
-                for (var i = 0; i < data.files.length; i++) {
-                    var f = data.files[i];
-                    var dup = selectedFiles.some(function (sf) {
-                        var sfn = sf.file ? sf.file.name : sf.name;
-                        var sfs = sf.file ? sf.file.size : sf.size;
-                        return sfn === f.name && sfs === (f.size || 0);
-                    });
-                    if (dup) continue;
-                    selectedFiles.push({
-                        file: null,
-                        name: f.name,
-                        size: f.size || 0,
-                        fromFolder: true
-                    });
-                    added++;
-                }
-                renderFileList();
-                checkReady();
-                showToast('已添加文件夹: ' + data.folder_name + '，新增 ' + added + ' 个PDF（共 ' + selectedFiles.length + ' 个）', 'success');
+            pickEntries.push({
+                pick_id: data.pick_id,
+                folder: data.folder,
+                file_count: data.file_count,
+                files: data.files || []
+            });
+            if (data.unsupported_count > 0) {
+                showToast('已添加文件夹（' + data.file_count + ' 个文件），另有 ' + data.unsupported_count + ' 个不支持格式的文件将被忽略', 'info');
+            } else {
+                showToast('已添加文件夹（' + data.file_count + ' 个文件）', 'success');
             }
+            renderFileList();
+            checkReady();
         })
         .catch(function (err) {
-            showToast('文件夹选择失败: ' + err.message, 'error');
+            showToast('选择文件夹失败: ' + err.message, 'error');
         });
 }
 
+function removePick(idx) {
+    pickEntries.splice(idx, 1);
+    renderFileList();
+    checkReady();
+}
+
+// ===== 文件列表渲染（独立文件 + 文件夹组） =====
 function renderFileList() {
-    document.getElementById('fileList').style.display = 'block';
-    document.getElementById('fileCount').textContent = '共 ' + selectedFiles.length + ' 个 PDF 文件';
-    document.getElementById('fileItems').innerHTML = selectedFiles.map(function (item, idx) {
-        var folderBadge = item.fromFolder
-            ? '<span class="folder-badge" title="来自文件夹选择">📁</span>'
-            : '';
-        return '<span class="file-tag">' + folderBadge +
+    var list = document.getElementById('fileList');
+    var total = selectedFiles.length;
+    pickEntries.forEach(function (p) { total += p.file_count; });
+
+    if (total === 0) {
+        list.style.display = 'none';
+        return;
+    }
+    list.style.display = 'block';
+
+    var label = currentDirection === 'pdf2word' ? 'PDF 文件' : '待转换文件';
+    document.getElementById('fileCount').textContent = '共 ' + total + ' 个' + label;
+
+    var html = selectedFiles.map(function (f, idx) {
+        return '<span class="file-tag">' +
             '<span>📄</span>' +
-            '<span class="file-name" title="' + esc(item.name) + '">' + esc(item.name) + '</span>' +
-            '<span style="color:#999;font-size:11px;">(' + formatSize(item.size) + ')</span>' +
+            '<span class="file-name" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
+            '<span style="color:#999;font-size:11px;">(' + formatSize(f.size) + ')</span>' +
             '<span class="file-remove" onclick="removeFile(' + idx + ')">✕</span>' +
             '</span>';
     }).join('');
+
+    html += pickEntries.map(function (p, idx) {
+        var filesPreview = (p.files || []).slice(0, 5).join('、');
+        if (p.file_count > 5) filesPreview += ' 等共 ' + p.file_count + ' 个文件';
+        return '<span class="file-tag folder-tag" title="' + esc(filesPreview) + '">' +
+            '<span>📂</span>' +
+            '<span class="file-name">' + esc(p.folder) + '</span>' +
+            '<span style="color:#999;font-size:11px;">(' + p.file_count + ' 个文件，递归)</span>' +
+            '<span class="file-remove" onclick="removePick(' + idx + ')">✕</span>' +
+            '</span>';
+    }).join('');
+
+    document.getElementById('fileItems').innerHTML = html;
 }
 
 function formatSize(bytes) {
@@ -156,11 +221,8 @@ function removeFile(idx) {
 }
 
 function clearFiles() {
-    if (selectedFiles.length > 0 && !confirm('确定要清空所有已选文件吗？共 ' + selectedFiles.length + ' 个')) {
-        return;
-    }
     selectedFiles = [];
-    pickIds = [];
+    pickEntries = [];
     document.getElementById('fileList').style.display = 'none';
     hideActionAndResult();
 }
@@ -168,17 +230,15 @@ function clearFiles() {
 // ===== 检查是否可开始 =====
 function checkReady() {
     var actionSection = document.getElementById('actionSection');
-    if (selectedFiles.length > 0) {
-        actionSection.style.display = 'block';
-    } else {
-        actionSection.style.display = 'none';
-    }
+    var hasAny = selectedFiles.length > 0 || pickEntries.length > 0;
+    actionSection.style.display = hasAny ? 'block' : 'none';
 }
 
 // ===== 开始转换 =====
 function startConvert() {
-    if (selectedFiles.length === 0) {
-        showToast('请先上传 PDF 文件', 'error');
+    var hasAny = selectedFiles.length > 0 || pickEntries.length > 0;
+    if (!hasAny) {
+        showToast('请先上传文件', 'error');
         return;
     }
 
@@ -187,17 +247,20 @@ function startConvert() {
     startBtn.textContent = '转换中...';
 
     var formData = new FormData();
-
-    // 发送文件夹选择ID（支持多个）
-    if (pickIds.length > 0) {
-        formData.append('pick_ids', pickIds.join(','));
-    }
-
-    // 添加上传的File对象
-    selectedFiles.forEach(function (item) {
-        if (item.file) {
-            formData.append('files', item.file);
+    formData.append('direction', currentDirection);
+    var outputMode = 'merge';
+    if (currentDirection === 'topdf') {
+        var modeRadios = document.getElementsByName('output_mode');
+        for (var i = 0; i < modeRadios.length; i++) {
+            if (modeRadios[i].checked) outputMode = modeRadios[i].value;
         }
+        formData.append('output_mode', outputMode);
+    }
+    selectedFiles.forEach(function (f) {
+        formData.append('files', f);
+    });
+    pickEntries.forEach(function (p) {
+        formData.append('pick_ids', p.pick_id);
     });
 
     // 显示进度区
@@ -276,31 +339,72 @@ function fetchResult() {
                 showToast(data.error, 'error');
                 return;
             }
-            renderResult(data.results, data.skipped || []);
+            lastResultData = data;
+            renderResult(data);
         })
         .catch(function (err) {
             showToast('获取结果失败: ' + err.message, 'error');
         });
 }
 
-// ===== 渲染结果 =====
-function renderResult(results, skipped) {
+// ===== 渲染结果（方向自适应） =====
+function renderResult(data) {
     document.getElementById('resultSection').style.display = 'block';
 
-    var successCount = 0;
-    var failCount = 0;
-    var totalPages = 0;
+    var direction = data.direction || 'pdf2word';
+    var isTopdf = (direction === 'topdf');
+    var rows = [];   // 统一为 {src, dst, pages, ok, err}
+    var successCount = 0, failCount = 0, totalPages = 0;
 
-    for (var i = 0; i < results.length; i++) {
-        if (results[i].ok) {
+    if (isTopdf) {
+        (data.results || []).forEach(function (item) {
+            rows.push({
+                src: item.name,
+                dst: item.out_name,
+                pages: item.pages,
+                ok: true,
+                err: '',
+                action: item.action
+            });
             successCount++;
-            totalPages += results[i].pages || 0;
-        } else {
+            totalPages += item.pages || 0;
+        });
+        (data.skipped || []).forEach(function (item) {
+            rows.push({ src: item.name, dst: '-', pages: '-', ok: false,
+                        err: item.reason || '转换失败', action: null });
             failCount++;
-        }
+        });
+    } else {
+        (data.results || []).forEach(function (item) {
+            var ok = !!item.ok;
+            rows.push({
+                src: item.pdf_name,
+                dst: ok ? item.docx_name : '-',
+                pages: ok ? item.pages : '-',
+                ok: ok,
+                err: item.error || '',
+                action: null
+            });
+            if (ok) {
+                successCount++;
+                totalPages += item.pages || 0;
+            } else {
+                failCount++;
+            }
+        });
     }
 
-    // 统计卡片
+    // 表头按方向自适应
+    document.getElementById('thSrc').textContent = isTopdf ? '原文件名' : '原PDF文件名';
+    document.getElementById('thDst').textContent = isTopdf ? 'PDF文件名' : 'Word文件名';
+
+    // 统计卡片（成功/失败清单及数量统计）
+    var modeText = '';
+    if (isTopdf) {
+        modeText = '<div class="stat-card"><div class="stat-value" style="font-size:16px;line-height:44px;">' +
+            (data.output_mode === 'merge' ? '合并模式' : '独立模式') + '</div>' +
+            '<div class="stat-label">输出模式</div></div>';
+    }
     document.getElementById('statsGrid').innerHTML =
         '<div class="stat-card success">' +
             '<div class="stat-value">' + successCount + '</div>' +
@@ -315,30 +419,34 @@ function renderResult(results, skipped) {
             '<div class="stat-label">总页数</div>' +
         '</div>' +
         '<div class="stat-card">' +
-            '<div class="stat-value">' + results.length + '</div>' +
+            '<div class="stat-value">' + rows.length + '</div>' +
             '<div class="stat-label">文件总数</div>' +
-        '</div>';
+        '</div>' +
+        modeText;
 
     // 转换详情表格
     var tbody = document.getElementById('resultTableBody');
-    if (results.length > 0) {
-        tbody.innerHTML = results.map(function (item, idx) {
-            var statusHtml = item.ok
+    if (rows.length > 0) {
+        tbody.innerHTML = rows.map(function (row, idx) {
+            var statusHtml = row.ok
                 ? '<span class="col-status-ok">✓ 成功</span>'
                 : '<span class="col-status-fail">✗ 失败</span>';
-            var actionHtml = '';
-            if (item.ok) {
-                actionHtml = '<button class="btn-download" onclick="downloadSingle(this,\'' + esc(item.docx_name) + '\')">下载</button>';
-            } else if (item.error) {
-                actionHtml = '<span style="color:#E74C3C;font-size:12px;" title="' + esc(item.error) + '">' + esc(item.error.substring(0, 20)) + (item.error.length > 20 ? '...' : '') + '</span>';
+            var lastHtml = '';
+            if (row.ok) {
+                lastHtml = '<button class="btn-download" onclick="downloadSingle(this,\'' + esc(row.dst) + '\')">保存</button>';
+                if (isTopdf && row.action === 'merged') {
+                    lastHtml += ' <span style="color:#999;font-size:11px;">已并入合并PDF</span>';
+                }
+            } else if (row.err) {
+                lastHtml = '<span style="color:#E74C3C;font-size:12px;" title="' + esc(row.err) + '">' + esc(row.err.substring(0, 30)) + (row.err.length > 30 ? '...' : '') + '</span>';
             }
             return '<tr>' +
                 '<td class="col-seq">' + (idx + 1) + '</td>' +
-                '<td class="col-name" title="' + esc(item.pdf_name) + '">' + esc(item.pdf_name) + '</td>' +
-                '<td class="col-name">' + (item.ok ? esc(item.docx_name) : '-') + '</td>' +
-                '<td>' + (item.ok ? item.pages : '-') + '</td>' +
+                '<td class="col-name" title="' + esc(row.src) + '">' + esc(row.src) + '</td>' +
+                '<td class="col-name">' + esc(row.dst) + '</td>' +
+                '<td>' + row.pages + '</td>' +
                 '<td>' + statusHtml + '</td>' +
-                '<td>' + actionHtml + '</td>' +
+                '<td>' + lastHtml + '</td>' +
                 '</tr>';
         }).join('');
     } else {
@@ -429,12 +537,12 @@ function hideActionAndResult() {
     document.getElementById('resultSection').style.display = 'none';
     document.getElementById('progressSection').style.display = 'none';
     currentTaskId = null;
+    lastResultData = null;
 }
 
 // ===== 全部重置 =====
 function resetAll() {
     clearFiles();
-    pickIds = [];
     hideActionAndResult();
     document.getElementById('startBtn').disabled = false;
     document.getElementById('startBtn').textContent = '🚀 开始转换';
@@ -446,23 +554,24 @@ dropzone.addEventListener('drop', function (e) {
     dropzone.classList.remove('dragover');
 
     var items = e.dataTransfer.items;
-    if (!items || !items[0] || typeof items[0].webkitGetAsEntry !== 'function') {
+    if (!items) {
         addFiles(e.dataTransfer.files);
         return;
     }
 
-    var entries = [];
+    var pending = [];
     for (var i = 0; i < items.length; i++) {
-        var entry = items[i].webkitGetAsEntry();
-        if (entry) entries.push(entry);
+        var entry = items[i].webkitGetAsEntry ? items[i].webkitGetAsEntry() : null;
+        if (entry) {
+            pending.push(entry);
+        }
     }
 
-    if (entries.length === 0) {
+    if (pending.length === 0) {
         addFiles(e.dataTransfer.files);
         return;
     }
 
-    // 递归读取文件夹
     var allFiles = [];
     function processEntry(entry) {
         if (entry.isFile) {
@@ -470,33 +579,24 @@ dropzone.addEventListener('drop', function (e) {
                 entry.file(function (file) {
                     allFiles.push(file);
                     resolve();
-                }, function () { resolve(); });
+                });
             });
         } else if (entry.isDirectory) {
             return new Promise(function (resolve) {
                 var dirReader = entry.createReader();
-                function readBatch() {
-                    dirReader.readEntries(function (entries) {
-                        if (entries.length === 0) {
-                            resolve();
-                            return;
-                        }
-                        var promises = entries.map(function (e) { return processEntry(e); });
-                        Promise.all(promises).then(readBatch);
-                    }, function () { resolve(); });
-                }
-                readBatch();
+                dirReader.readEntries(function (entries) {
+                    var promises = entries.map(function (e) { return processEntry(e); });
+                    Promise.all(promises).then(resolve);
+                });
             });
         }
         return Promise.resolve();
     }
 
-    Promise.all(entries.map(function (entry) { return processEntry(entry); }))
+    Promise.all(pending.map(function (entry) { return processEntry(entry); }))
         .then(function () {
             if (allFiles.length > 0) {
                 addFiles(allFiles);
-            } else {
-                addFiles(e.dataTransfer.files);
             }
         });
 });

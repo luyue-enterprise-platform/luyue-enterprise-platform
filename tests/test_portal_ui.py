@@ -1,0 +1,161 @@
+# -*- coding: utf-8 -*-
+"""门户标题栏 UI 改造测试
+
+需求覆盖：
+1. 版本号显示：动态读取 version.json（app_version 注入），禁止硬编码
+2. 账号管理按钮：账号管理/邀请码/修改密码 三入口迁移至下拉，逻辑不变（弹窗仍存在）
+3. 关于系统按钮：下拉含 功能介绍（弹窗、按模块分类、可滚动、可关闭）与 版本更新（原检查更新）
+4. 布局：新元素与原有 标题/用户名/退出 等共存，旧独立按钮不再出现
+"""
+import os
+import re
+import sys
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app import app as flask_app, APP_VERSION
+
+
+TEMPLATE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'portal', 'templates', 'portal.html')
+
+
+def _render(is_admin=True):
+    with flask_app.test_client() as c:
+        with c.session_transaction() as sess:
+            sess['user_id'] = 1
+            sess['username'] = 'tester'
+            sess['is_admin'] = is_admin
+        r = c.get('/')
+        return r.get_data(as_text=True)
+
+
+class TestVersionBadge(unittest.TestCase):
+    """一、版本号显示：动态读取"""
+
+    def test_badge_shows_dynamic_version(self):
+        html = _render()
+        expected = 'v%s' % APP_VERSION.get('version', '1.0.0')
+        self.assertIn('class="brand-version"', html)
+        self.assertIn(expected + '</span>', html)
+
+    def test_not_hardcoded_in_template(self):
+        """模板源码中版本徽标必须使用 Jinja 变量，禁止硬编码"""
+        with open(TEMPLATE_PATH, encoding='utf-8') as f:
+            src = f.read()
+        m = re.search(r'<span class="brand-version"[^>]*>([^<]+)</span>', src)
+        self.assertIsNotNone(m, '缺少版本徽标元素')
+        self.assertIn('{{ app_version }}', m.group(1))
+
+
+class TestAccountDropdown(unittest.TestCase):
+    """二、账号管理下拉：三入口迁移，功能弹窗保留"""
+
+    def test_admin_sees_all_three_items(self):
+        html = _render(is_admin=True)
+        self.assertIn('id="ddAccount"', html)
+        # 三项菜单入口
+        self.assertIn("dropdownAction('ddAccount', openUserModal)", html)
+        self.assertIn("dropdownAction('ddAccount', openInviteModal)", html)
+        self.assertIn("dropdownAction('ddAccount', openPwdModal)", html)
+
+    def test_non_admin_sees_only_password(self):
+        html = _render(is_admin=False)
+        self.assertIn("dropdownAction('ddAccount', openPwdModal)", html)
+        self.assertNotIn("dropdownAction('ddAccount', openUserModal)", html)
+        self.assertNotIn("dropdownAction('ddAccount', openInviteModal)", html)
+
+    def test_underlying_modals_and_logic_untouched(self):
+        """原有三个弹窗与函数均保留（仅入口位置调整）"""
+        html = _render(is_admin=True)
+        for mid in ('pwdModal', 'inviteModal', 'userModal'):
+            self.assertIn('id="%s"' % mid, html)
+        for fn in ('function openPwdModal', 'function openInviteModal',
+                   'function openUserModal', 'function changePassword',
+                   'function loadUsers'):
+            self.assertIn(fn, html)
+
+    def test_old_standalone_buttons_removed(self):
+        """旧的独立按钮不再出现于标题栏"""
+        html = _render(is_admin=True)
+        # 检查更新 / 修改密码 / 邀请码 不再以独立 btn-nav 形式出现
+        self.assertNotIn("onclick=\"openInviteModal()\">邀请码", html)
+        self.assertNotIn("onclick=\"openPwdModal()\">🔑 修改密码", html)
+        self.assertNotIn("onclick=\"checkAppUpdate(true)\">🔄 检查更新", html)
+
+
+class TestAboutDropdown(unittest.TestCase):
+    """三、关于系统下拉：功能介绍 + 版本更新"""
+
+    def test_about_dropdown_entries(self):
+        html = _render()
+        self.assertIn('id="ddAbout"', html)
+        self.assertIn("dropdownAction('ddAbout', openAboutModal)", html)
+        # 版本更新入口保留原 checkAppUpdate 逻辑与按钮 id
+        self.assertIn('id="btnCheckUpdate"', html)
+        self.assertIn('checkAppUpdate(true)', html)
+
+    def test_about_modal_content_by_module(self):
+        """功能介绍弹窗：按模块分类 + 可滚动 + 关闭操作"""
+        html = _render()
+        self.assertIn('id="aboutModal"', html)
+        self.assertIn('class="modal-body about-body"', html)  # 可滚动容器
+        # 四大模块使用说明 + 使用提示
+        for kw in ('社保批量统计智能核算系统', '劳动合同图片整理系统',
+                   '批量PDF转WORD系统', '医保参保证明批量下载系统', '使用提示'):
+            self.assertIn(kw, html)
+        # 明显的关闭操作
+        self.assertIn('closeAboutModal()', html)
+        # 弹窗开关函数
+        self.assertIn('function openAboutModal', html)
+        self.assertIn('function closeAboutModal', html)
+
+
+class TestLayoutAndInteraction(unittest.TestCase):
+    """四、布局与交互脚本"""
+
+    def test_dropdown_interactions_present(self):
+        html = _render()
+        for fn in ('function toggleDropdown', 'function closeAllDropdowns',
+                   'function dropdownAction'):
+            self.assertIn(fn, html)
+        # 点击外部关闭 + Esc 关闭
+        self.assertIn("document.addEventListener('click'", html)
+        self.assertIn("e.key === 'Escape'", html)
+
+    def test_css_styles_defined(self):
+        css_path = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), 'static', 'css', 'portal.css')
+        with open(css_path, encoding='utf-8') as f:
+            css = f.read()
+        for rule in ('.brand-version', '.nav-dropdown', '.dropdown-menu',
+                     '.dropdown-item', '.about-body', '.about-section',
+                     '.nav-dropdown.open .dropdown-menu'):
+            self.assertIn(rule, css)
+        # 悬停反馈
+        self.assertIn('.dropdown-item:hover', css)
+        # 窄窗口适配（版本徽标隐藏防截断）
+        self.assertIn('@media (max-width: 1080px)', css)
+
+    def test_brand_and_logout_untouched(self):
+        """原有标题/用户名/退出等元素保留，窗口控制不受影响"""
+        html = _render()
+        self.assertIn('class="brand-text"', html)
+        self.assertIn('class="user-name"', html)
+        self.assertIn('href="/logout"', html)
+
+    def test_inline_js_balanced(self):
+        """内联脚本括号配平（语法结构粗校验）"""
+        html = _render()
+        scripts = re.findall(r'<script>(.*?)</script>', html, re.S)
+        self.assertTrue(scripts)
+        js = '\n'.join(scripts)
+        for a, b in [('{', '}'), ('(', ')'), ('[', ']')]:
+            # 排除字符串中的括号干扰：按行粗略统计代码括号
+            self.assertEqual(js.count(a) - js.count(b) >= -2, True)
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

@@ -997,7 +997,7 @@ def parse_ocr_result(text):
     return result
 
 
-def parse_ocr_result_from_image(image_path):
+def parse_ocr_result_from_image(image_path, province_code=None):
     """
     对图片进行OCR并解析（使用 items + x/y 坐标，更稳健）
 
@@ -1008,9 +1008,12 @@ def parse_ocr_result_from_image(image_path):
 
     Args:
         image_path: 图片文件路径
+        province_code: 省份码（多省份模板路由）。None = 兼容模式，
+                       不做锚点校验直接按原有陕西逻辑解析（存量调用零变化）
 
     Returns:
-        dict: 与 parse_ocr_result 相同结构
+        dict: 与 parse_ocr_result 相同结构；省份路由模式下额外携带
+              template_id / anchor_score，锚点校验不过时带 error
     """
     from modules.insurance.core.ocr_engine import ocr_image
 
@@ -1037,6 +1040,12 @@ def parse_ocr_result_from_image(image_path):
         sorted_items = sorted(line_groups[bucket], key=lambda it: it['x'])
         lines.append(' '.join(it['text'] for it in sorted_items))
     raw_text = '\n'.join(lines)
+
+    # 省份路由模式：锚点防呆 + 模板择优（template_engine 内部对陕西
+    # 内置模板委托本模块现有函数，行为等价）
+    if province_code is not None:
+        from modules.insurance.core import template_engine
+        return template_engine.parse_with_province(raw_text, province_code, items=items)
 
     # 用 items 提取时间表（更稳健）
     period = get_full_period_from_items(items)

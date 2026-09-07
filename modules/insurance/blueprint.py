@@ -111,6 +111,7 @@ def _get_contract_display(person, roster_index):
 # ============ 导入保险系统核心模块 ============
 from modules.insurance.core.ocr_engine import pdf_to_images
 from modules.insurance.core.data_parser import parse_ocr_result, parse_ocr_result_from_image, group_by_person, extract_company_name
+from modules.insurance.core import template_engine
 from modules.insurance.core.stats_calculator import calc_all_stats, get_overlap_years, apply_stat_range_clamp
 from modules.insurance.core.contract_overlap import apply_contract_to_stats, contract_display_text
 from modules.insurance.core.excel_generator import generate_excel
@@ -293,6 +294,7 @@ def _rebuild_result(task_id):
       _period_overrides  {(name, idcard): {险种: (start, end)}} 手动覆盖层
       _manual_log        操作记录（手动补录/修改时间段/恢复识别值）
       _tax_mode          退税/抵税模式（v1.1.57，默认退税；抵税仅改展示文案并跳过年度台账）
+      _province_code     省份码（多省份模板路由，默认 610000 陕西）
     重建完成后返回过滤内部字段后的公开 result dict；任务不存在返回 None。
     """
     with tasks_lock:
@@ -320,6 +322,8 @@ def _rebuild_result(task_id):
     tax_mode = inner.get('_tax_mode', '退税')
     if tax_mode not in ('退税', '抵税'):
         tax_mode = '退税'
+    # 多省份：省份码透传（默认陕西）
+    province_code = inner.get('_province_code', '610000')
 
     # 1) 按人员分组 + 花名册补全
     persons = group_by_person(success_results)
@@ -413,6 +417,7 @@ def _rebuild_result(task_id):
         ],
         'year_cols': year_cols,
         'tax_mode': tax_mode,
+        'province_code': province_code,
         'excel_path': excel_path,
         'excel_filename': excel_filename,
         'yearly_ledger_files': yearly_ledger_files,
@@ -502,10 +507,11 @@ def _split_ocr_results(task_id, ocr_results, roster):
 
 
 def process_task(task_id, file_paths, roster, roster_company='', roster_source_path='', year_range=None,
-                 tax_mode='退税'):
+                 tax_mode='退税', province_code=None):
     """后台线程：PDF转图片 -> 逐张OCR识别 -> 解析 -> 分组 -> 统计 -> 文件整理 -> 生成Excel
 
     v1.1.57：tax_mode（退税/抵税）存入内部状态，影响 Excel 展示文案与年度台账生成。
+    多省份：province_code 路由到对应省份模板（None = 兼容模式，走原有陕西逻辑）。
     """
     try:
         with tasks_lock:
@@ -594,10 +600,12 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                 tasks[task_id]['message'] = f'正在识别 ({i+1}/{len(all_items)}): {display_name}'
 
             try:
-                parsed = parse_ocr_result_from_image(fp)
+                parsed = parse_ocr_result_from_image(fp, province_code=province_code)
                 parsed['filename'] = display_name
                 parsed['_source_path'] = fp  # 保留源文件路径供整理使用
                 parsed['_source_origin'] = source_origin  # 原始源文件名，用于PDF多页去重
+                # 省份关联：逐条记录盖章用户所选省份（含异常兜底记录）
+                parsed['province_code'] = province_code
                 ocr_results.append(parsed)
                 # 记录OCR解析详情，便于排查问题
                 logger.info(
@@ -726,6 +734,7 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                 '_period_overrides': {},
                 '_manual_log': [],
                 '_tax_mode': tax_mode if tax_mode in ('退税', '抵税') else '退税',
+                '_province_code': province_code or '610000',
             }
 
         _rebuild_result(task_id)
@@ -971,6 +980,16 @@ def api_pick_folder():
 
 
 # ============ 上传社保图片 ============
+@insurance_bp.route('/api/provinces')
+@login_required
+def api_provinces():
+    """可用省份列表（数据驱动：由已加载模板动态生成，无模板的省份不出现）"""
+    return jsonify({
+        'provinces': template_engine.get_provinces(),
+        'default': template_engine.DEFAULT_PROVINCE,
+    })
+
+
 @insurance_bp.route('/api/upload', methods=['POST'])
 @login_required
 def upload():
@@ -1023,6 +1042,18 @@ def upload():
     if tax_mode not in ('退税', '抵税'):
         tax_mode = '退税'
     logger.info(f'[upload] 税种模式: {tax_mode}')
+
+    # 省份（必选项，完全以用户手动选择为准，不从文件内容推断）：
+    # 未选择直接拒绝；未支持省份同样拒绝并列出当前可用省份
+    province_code = (request.form.get('province', '') or '').strip()
+    if not province_code:
+        return jsonify({'error': '请先选择参保证明所属省份（必选项）'}), 400
+    available = template_engine.get_provinces()
+    available_codes = {p['province_code'] for p in available}
+    if province_code not in available_codes:
+        available_names = '、'.join(p['province_name'] for p in available)
+        return jsonify({'error': f'该省份暂未支持（当前可用：{available_names}）'}), 400
+    logger.info(f'[upload] 省份(用户手动选择): {province_code}')
 
     task_id = str(uuid.uuid4())[:8]
     task_dir = os.path.join(UPLOAD_DIR, task_id)
@@ -1090,11 +1121,13 @@ def upload():
 
     t = threading.Thread(target=process_task,
                          args=(task_id, file_paths, roster,
-                               roster_company, roster_source_path, year_range, tax_mode),
+                               roster_company, roster_source_path, year_range, tax_mode,
+                               province_code),
                          daemon=True)
     t.start()
 
-    return jsonify({'task_id': task_id, 'file_count': len(file_paths)})
+    return jsonify({'task_id': task_id, 'file_count': len(file_paths),
+                    'province': province_code})
 
 
 @insurance_bp.route('/api/task/<task_id>/pause', methods=['POST'])
@@ -1721,12 +1754,16 @@ def retry_task(task_id):
             img_basename = os.path.basename(fp)
             all_items.append((img_basename, fp, img_basename))
 
+    # 重试沿用任务内部省份码（用户手动选择结果；旧任务缺省回退默认省份）
+    retry_province = old_result.get('_province_code', template_engine.DEFAULT_PROVINCE)
     for display_name, fp, source_origin in all_items:
         try:
-            parsed = parse_ocr_result_from_image(fp)
+            parsed = parse_ocr_result_from_image(fp, province_code=retry_province)
             parsed['filename'] = display_name
             parsed['_source_path'] = fp
             parsed['_source_origin'] = source_origin
+            # 省份关联：逐条记录盖章任务所选省份
+            parsed['province_code'] = retry_province
             new_results.append(parsed)
         except Exception as e:
             new_failed.append({

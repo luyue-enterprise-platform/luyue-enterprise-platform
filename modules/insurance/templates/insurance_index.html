@@ -73,6 +73,13 @@
             </h2>
             <p class="card-desc">按文件夹批量上传社保权益记录单（图片或PDF），系统将自动识别并统计四险重叠信息</p>
 
+            <!-- 省份选择（必选项：完全以用户手动选择为准，系统不从文件内容推断省份） -->
+            <div class="year-range-selector province-selector">
+                <label class="year-range-label">参保证明省份：<em class="province-required-mark">*</em></label>
+                <select id="provinceSelect" class="year-select" title="必选项：选择参保证明所属省份，系统将调用对应省份的识别模板"></select>
+                <span class="year-range-hint" id="provinceHint">请先选择省份（必选），再上传文件；系统将按所选省份调用对应识别模板</span>
+            </div>
+
             <!-- 统计年月范围选择 -->
             <div class="year-range-selector">
                 <label class="year-range-label">统计年月范围：</label>

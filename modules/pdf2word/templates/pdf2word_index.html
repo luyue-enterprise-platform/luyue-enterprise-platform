@@ -11,7 +11,7 @@
     <nav class="navbar">
         <div class="nav-brand">
             <span class="brand-icon">📄</span>
-            <span class="brand-text">批量PDF转WORD系统</span>
+            <span class="brand-text">批量PDF转WORD系统 <span style="font-size:11px;color:#999;">v2.0.0 可逆转换</span></span>
         </div>
         <div class="nav-actions">
             <a class="btn-nav" href="/" title="返回首页">🏠 返回首页</a>
@@ -20,35 +20,66 @@
     </nav>
 
     <main class="main-content">
-        <!-- 第一步：上传PDF文件 -->
+        <!-- 第一步：选择转换方向 -->
         <section class="card">
             <div class="card-header">
                 <span class="step-badge">1</span>
-                <h2>上传 PDF 文件</h2>
-                <span class="card-tip">仅支持 .pdf 格式，可批量上传</span>
+                <h2>选择转换方向</h2>
+            </div>
+            <div class="card-body">
+                <div class="direction-group" id="directionGroup">
+                    <label class="direction-option">
+                        <input type="radio" name="direction" value="pdf2word" checked
+                               onchange="onDirectionChange('pdf2word')">
+                        <span class="direction-label">📄 PDF 转 Word</span>
+                        <span class="direction-desc">原有功能：批量将 PDF 转换为 Word (.docx)</span>
+                    </label>
+                    <label class="direction-option">
+                        <input type="radio" name="direction" value="topdf"
+                               onchange="onDirectionChange('topdf')">
+                        <span class="direction-label">📑 其他格式转 PDF</span>
+                        <span class="direction-desc">可逆转换：图片 / Word / Excel / TXT / PDF 批量转为 PDF，支持文件夹递归</span>
+                    </label>
+                </div>
+                <!-- 输出模式（仅"转PDF"方向可见） -->
+                <div class="mode-group" id="modeGroup" style="display:none;">
+                    <div class="mode-title">输出模式：</div>
+                    <label class="mode-option">
+                        <input type="radio" name="output_mode" value="merge" checked>
+                        <span>合并模式 — 按上传顺序合并为单个 PDF</span>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="output_mode" value="individual">
+                        <span>独立模式 — 每个文件独立 PDF，一一对应可溯源</span>
+                    </label>
+                </div>
+            </div>
+        </section>
+
+        <!-- 第二步：上传文件 -->
+        <section class="card">
+            <div class="card-header">
+                <span class="step-badge">2</span>
+                <h2 id="uploadTitle">上传 PDF 文件</h2>
+                <span class="card-tip" id="uploadTip">仅支持 .pdf 格式，可批量上传</span>
             </div>
             <div class="card-body">
                 <div class="dropzone" id="dropzone">
                     <input type="file" id="fileInput" accept=".pdf" multiple hidden>
                     <div class="dropzone-content">
                         <span class="upload-icon">📄</span>
-                        <p>拖拽 PDF 文件到此处</p>
-                        <p class="upload-hint">或
-                            <a href="#" onclick="document.getElementById('fileInput').click();return false;">选择文件</a>
-                            <span style="margin:0 6px;color:#ccc;">|</span>
-                            <a href="#" onclick="pickFolder();return false;">选择文件夹</a>
+                        <p id="dropzoneMainText">拖拽 PDF 文件到此处</p>
+                        <p class="upload-hint">或 <a href="#" onclick="document.getElementById('fileInput').click();return false;">点击选择文件</a></p>
+                        <p class="upload-hint" id="dropzoneSubText">支持批量上传多个 PDF 文件</p>
+                        <p class="upload-hint" id="pickFolderEntry" style="display:none;">
+                            也可以 <a href="#" onclick="pickFolder();return false;">📂 选择整个文件夹</a>（递归解析其中所有可转换文件）
                         </p>
-                        <p class="upload-hint">支持批量上传多个 PDF 文件，可混合添加文件和文件夹</p>
                     </div>
                 </div>
                 <div class="file-list" id="fileList" style="display:none;">
                     <div class="file-list-header">
                         <span id="fileCount"></span>
-                        <div>
-                            <button class="btn-ghost btn-sm" onclick="document.getElementById('fileInput').click();">+ 添加文件</button>
-                            <button class="btn-ghost btn-sm" onclick="pickFolder();">+ 添加文件夹</button>
-                            <button class="btn-ghost btn-sm" onclick="clearFiles()">清空全部</button>
-                        </div>
+                        <button class="btn-ghost btn-sm" onclick="clearFiles()">清空</button>
                     </div>
                     <div class="file-items" id="fileItems"></div>
                 </div>
@@ -61,7 +92,7 @@
                 <button class="btn-primary btn-lg" id="startBtn" onclick="startConvert()">
                     🚀 开始转换
                 </button>
-                <p class="action-hint">将选中的 PDF 文件批量转换为 Word (.docx) 格式</p>
+                <p class="action-hint" id="actionHint">将选中的 PDF 文件批量转换为 Word (.docx) 格式</p>
             </div>
         </section>
 
@@ -96,11 +127,11 @@
                             <thead>
                                 <tr>
                                     <th>序号</th>
-                                    <th>原PDF文件名</th>
-                                    <th>Word文件名</th>
+                                    <th id="thSrc">原PDF文件名</th>
+                                    <th id="thDst">Word文件名</th>
                                     <th>页数</th>
                                     <th>状态</th>
-                                    <th>操作</th>
+                                    <th>失败原因</th>
                                 </tr>
                             </thead>
                             <tbody id="resultTableBody"></tbody>

@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-批量 PDF 转 WORD 模块 — Flask Blueprint
+批量 PDF 转 WORD 模块 — Flask Blueprint（v2.0.0 可逆转换）
+
+v2.0.0 新增：
+- 转换方向 direction: 'pdf2word'（原有，逻辑不变）| 'topdf'（新增，独立隔离）
+- 输出模式 output_mode（仅 topdf 生效）: 'merge'（合并单 PDF）| 'individual'（独立 PDF）
+- 文件夹递归上传：/api/pick_folder + pick_ids 上传复用
 """
 
 import os
@@ -19,6 +24,8 @@ from flask import (
 )
 
 from .core.converter import batch_convert
+from .core import to_pdf
+from . import __version__ as MODULE_VERSION
 from core.auth import login_required
 
 # ===== 路径设置 =====
@@ -53,8 +60,10 @@ logger = logging.getLogger('pdf2word')
 tasks = {}
 tasks_lock = threading.Lock()
 
-# ===== 文件夹选择临时存储 =====
-picked_folders = {}  # {pick_id: {'file_paths': [path, ...], 'files': [...]}}
+# ===== 文件夹选择暂存（v2.0.0，转PDF方向文件夹递归上传） =====
+# pick_id -> {'folder': 原始文件夹路径, 'files': [递归解析出的文件绝对路径, 按顺序]}
+picked_folders = {}
+picked_folders_lock = threading.Lock()
 
 
 # ===== 路由 =====
@@ -66,144 +75,86 @@ def index():
     return render_template('pdf2word_index.html')
 
 
-# ---------- 文件夹选择（原生对话框） ----------
-
-@pdf2word_bp.route('/api/pick_folder', methods=['POST'])
-@login_required
-def api_pick_folder():
-    """弹出系统原生文件夹选择对话框，递归扫描文件夹中的PDF文件"""
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes('-topmost', True)
-
-        folder_path = filedialog.askdirectory(
-            title='选择包含PDF文件的文件夹',
-            initialdir=os.path.expanduser('~')
-        )
-        root.destroy()
-    except Exception as e:
-        logger.error(f'文件夹选择对话框异常: {e}')
-        return jsonify({'error': f'无法打开文件夹选择对话框: {e}'}), 500
-
-    if not folder_path:
-        return jsonify({'cancelled': True})
-
-    # 递归遍历文件夹，查找所有PDF文件
-    file_list = []
-    file_paths = []
-
-    picked_folder_name = os.path.basename(folder_path)
-
-    for dirpath, dirnames, filenames in os.walk(folder_path):
-        for fname in sorted(filenames):
-            ext = os.path.splitext(fname)[1].lower()
-            if ext != '.pdf':
-                continue
-            full_path = os.path.join(dirpath, fname)
-            try:
-                file_size = os.path.getsize(full_path)
-            except Exception:
-                continue
-            file_paths.append(full_path)
-            file_list.append({
-                'name': fname,
-                'size': file_size,
-            })
-
-    if not file_list:
-        return jsonify({'error': '所选文件夹中没有找到PDF文件'})
-
-    # 存储选中文件信息
-    pick_id = uuid.uuid4().hex[:8]
-    with tasks_lock:
-        picked_folders[pick_id] = {
-            'file_paths': file_paths,
-            'files': file_list,
-        }
-
-    logger.info(f'[pick:{pick_id}] 用户选择文件夹: {folder_path}, 找到 {len(file_list)} 个PDF文件')
-
-    return jsonify({
-        'ok': True,
-        'pick_id': pick_id,
-        'folder_name': picked_folder_name,
-        'files': file_list,
-        'count': len(file_list),
-    })
-
-
 # ---------- 上传并转换 ----------
 
 @pdf2word_bp.route('/api/upload', methods=['POST'])
-@login_required
 def api_upload():
-    """上传 PDF 文件并启动后台转换任务
-    支持混合模式：同时上传文件 + 多个文件夹选择(pick_ids)
+    """上传文件并启动后台转换任务
+
+    v2.0.0：按 direction 分流
+    - direction=pdf2word（默认/原有）：仅收 .pdf，走 batch_convert（逻辑不变）
+    - direction=topdf（新增）：收全部支持格式，可走 pick_ids 复用文件夹选择，
+      output_mode=merge|individual
     """
-    # 获取上传的文件
+    direction = request.form.get('direction', 'pdf2word')
+    if direction not in ('pdf2word', 'topdf'):
+        return jsonify({'error': '未知的转换方向: %s' % direction}), 400
+    output_mode = request.form.get('output_mode', 'merge')
+    if output_mode not in ('merge', 'individual'):
+        output_mode = 'merge'
+
     files = request.files.getlist('files')
-    has_uploaded_files = files and not (len(files) == 1 and files[0].filename == '')
+    pick_ids = [p for p in request.form.get('pick_ids', '').split(',') if p]
 
-    # 获取文件夹选择的 pick_ids（逗号分隔，支持多个文件夹）
-    pick_ids_str = request.form.get('pick_ids', '')
-    pick_ids = [pid.strip() for pid in pick_ids_str.split(',') if pid.strip()] if pick_ids_str else []
-
-    if not has_uploaded_files and not pick_ids:
-        return jsonify({'error': '请选择 PDF 文件'}), 400
+    has_files = files and not (len(files) == 1 and files[0].filename == '')
+    if not has_files and not pick_ids:
+        return jsonify({'error': '请选择 PDF 文件' if direction == 'pdf2word' else '请选择文件或文件夹'}), 400
 
     task_id = uuid.uuid4().hex[:8]
     task_dir = os.path.join(UPLOAD_DIR, task_id)
     os.makedirs(task_dir, exist_ok=True)
 
-    # 保存所有 PDF 文件
+    # 保存上传文件（保持上传先后顺序；重名自动加序号防覆盖）
     saved_paths = []
     skipped = []
+    used_names = set()
 
-    # 1. 保存上传的文件
-    if has_uploaded_files:
+    def _save_into(task_dir_, src_name, save_fn):
+        base, ext = os.path.splitext(os.path.basename(src_name))
+        name = base + ext
+        n = 1
+        while name in used_names:
+            name = '%s(%d)%s' % (base, n, ext)
+            n += 1
+        used_names.add(name)
+        fp = os.path.join(task_dir_, name)
+        save_fn(fp)
+        return fp
+
+    if has_files:
         for f in files:
             if not f.filename:
                 continue
             ext = os.path.splitext(f.filename)[1].lower()
-            if ext != '.pdf':
-                skipped.append(f.filename)
-                continue
-            safe_name = os.path.basename(f.filename)
-            fp = os.path.join(task_dir, safe_name)
-            f.save(fp)
-            saved_paths.append(fp)
+            if direction == 'pdf2word':
+                if ext != '.pdf':
+                    skipped.append({'name': f.filename, 'reason': '仅支持 PDF 文件'})
+                    continue
+            else:
+                if not to_pdf.is_supported(f.filename):
+                    skipped.append({'name': f.filename,
+                                    'reason': '不支持的格式 "%s"（支持：图片/Word/Excel/TXT/PDF）' % ext})
+                    continue
+            saved_paths.append(_save_into(task_dir, f.filename, f.save))
 
-    # 2. 从 picked_folders 复制文件（支持多个 pick_id）
-    for pick_id in pick_ids:
-        with tasks_lock:
-            picked = picked_folders.get(pick_id)
-
-        if not picked:
-            logger.warning(f'[upload] pick_id {pick_id} 已过期，跳过')
+    # 文件夹选择（pick_ids）：按递归解析顺序追加
+    with picked_folders_lock:
+        picks = [picked_folders.pop(pid, None) for pid in pick_ids]
+    for pick in picks:
+        if not pick:
             continue
-
-        for idx, src_path in enumerate(picked['file_paths']):
-            safe_name = os.path.basename(src_path)
-            dest_path = os.path.join(task_dir, safe_name)
-            if os.path.exists(dest_path):
-                dest_path = os.path.join(task_dir, f'p{pick_id[:4]}_{idx}_{safe_name}')
+        for src_path in pick['files']:
             try:
-                shutil.copy2(src_path, dest_path)
+                saved_paths.append(
+                    _save_into(task_dir, src_path,
+                               lambda fp, sp=src_path: shutil.copy2(sp, fp)))
             except Exception as e:
-                logger.error(f'复制文件失败: {src_path} -> {dest_path}: {e}')
-                continue
-            saved_paths.append(dest_path)
-
-        # 清理 picked_folders 中的临时数据
-        with tasks_lock:
-            picked_folders.pop(pick_id, None)
+                skipped.append({'name': os.path.basename(src_path),
+                                'reason': '复制失败: %s' % e})
 
     if not saved_paths:
-        return jsonify({'error': '没有找到有效的 PDF 文件' + (f'，跳过了: {", ".join(skipped)}' if skipped else '')}), 400
+        hint = '没有找到有效的 PDF 文件' if direction == 'pdf2word' else '没有找到可转换的文件'
+        return jsonify({'error': hint, 'skipped': skipped}), 400
 
     # 初始化任务状态
     with tasks_lock:
@@ -211,20 +162,29 @@ def api_upload():
             'status': 'processing',
             'current': 0,
             'total': len(saved_paths),
-            'message': '正在转换 PDF...',
+            'message': '正在转换 PDF...' if direction == 'pdf2word' else '正在转换为 PDF...',
             'results': None,
             'skipped': skipped,
+            'direction': direction,
+            'output_mode': output_mode if direction == 'topdf' else None,
         }
 
     # 启动后台转换线程
     output_task_dir = os.path.join(OUTPUT_DIR, task_id)
     os.makedirs(output_task_dir, exist_ok=True)
 
-    thread = threading.Thread(
-        target=_process_task,
-        args=(task_id, saved_paths, output_task_dir),
-        daemon=True
-    )
+    if direction == 'topdf':
+        thread = threading.Thread(
+            target=_process_task_topdf,
+            args=(task_id, saved_paths, output_task_dir, output_mode),
+            daemon=True
+        )
+    else:
+        thread = threading.Thread(
+            target=_process_task,
+            args=(task_id, saved_paths, output_task_dir),
+            daemon=True
+        )
     thread.start()
 
     return jsonify({
@@ -232,6 +192,62 @@ def api_upload():
         'task_id': task_id,
         'total_files': len(saved_paths),
         'skipped': skipped,
+        'direction': direction,
+        'output_mode': tasks[task_id]['output_mode'],
+    })
+
+
+# ---------- 文件夹递归选择（v2.0.0 新增，仅转PDF方向使用） ----------
+
+@pdf2word_bp.route('/api/pick_folder', methods=['POST'])
+@login_required
+def api_pick_folder():
+    """弹出系统原生文件夹选择对话框，递归解析其中所有支持格式的文件"""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        folder = filedialog.askdirectory(
+            title='选择文件夹（将递归解析其中所有可转换文件）',
+            initialdir=os.path.expanduser('~')
+        )
+        root.destroy()
+    except Exception as e:
+        logger.error('选择文件夹对话框异常: %s' % e)
+        return jsonify({'error': '无法打开文件夹选择对话框: %s' % e}), 500
+
+    if not folder:
+        return jsonify({'cancelled': True})
+
+    # 递归解析：按目录遍历顺序收集所有支持格式的文件
+    found = []
+    unsupported = 0
+    for dirpath, dirnames, filenames in os.walk(folder):
+        dirnames.sort()
+        for fn in sorted(filenames):
+            fp = os.path.join(dirpath, fn)
+            if to_pdf.is_supported(fn):
+                found.append(fp)
+            else:
+                unsupported += 1
+
+    if not found:
+        return jsonify({'error': '该文件夹中没有可转换的文件（支持：图片/Word/Excel/TXT/PDF）'}), 400
+
+    pick_id = uuid.uuid4().hex[:8]
+    with picked_folders_lock:
+        picked_folders[pick_id] = {'folder': folder, 'files': found}
+
+    return jsonify({
+        'ok': True,
+        'pick_id': pick_id,
+        'folder': folder,
+        'file_count': len(found),
+        'unsupported_count': unsupported,
+        'files': [os.path.basename(p) for p in found],
     })
 
 
@@ -263,6 +279,50 @@ def _process_task(task_id, pdf_paths, output_dir):
         with tasks_lock:
             tasks[task_id]['status'] = 'error'
             tasks[task_id]['message'] = f'转换失败: {str(e)}'
+
+
+def _process_task_topdf(task_id, file_paths, output_dir, output_mode):
+    """后台"转PDF"任务（v2.0.0 新增，与 _process_task 完全隔离）
+
+    output_mode: 'merge' 合并为单个 PDF | 'individual' 每文件独立 PDF
+    单文件失败不中断；结束时产出成功/失败清单与数量统计。
+    """
+    try:
+        def progress_callback(current, total):
+            with tasks_lock:
+                tasks[task_id]['current'] = current
+                tasks[task_id]['message'] = '正在转换为 PDF (%d/%d)' % (current, total)
+
+        merged_name = '合并结果.pdf'
+        results, failed = to_pdf.batch_to_pdf(
+            file_paths, output_dir,
+            output_mode=output_mode,
+            progress_callback=progress_callback,
+            merged_name=merged_name,
+        )
+
+        # 上传阶段剔除的 + 转换阶段失败的，合并为统一失败清单
+        with tasks_lock:
+            upload_skipped = tasks[task_id].get('skipped') or []
+        all_failed = upload_skipped + failed
+        success_count = len(results)
+        fail_count = len(all_failed)
+
+        with tasks_lock:
+            tasks[task_id]['status'] = 'done'
+            tasks[task_id]['message'] = (
+                '转换完成！成功 %d 个，失败 %d 个' % (success_count, fail_count)
+            )
+            tasks[task_id]['results'] = results
+            tasks[task_id]['skipped'] = all_failed
+
+        logger.info('[task:%s] topdf %s', task_id, tasks[task_id]['message'])
+
+    except Exception as e:
+        logger.error('[task:%s] topdf 任务失败: %s\n%s', task_id, e, traceback.format_exc())
+        with tasks_lock:
+            tasks[task_id]['status'] = 'error'
+            tasks[task_id]['message'] = '转换失败: %s' % e
 
 
 # ---------- 进度查询 ----------
@@ -300,6 +360,8 @@ def api_result(task_id):
         'ok': True,
         'results': task['results'],
         'skipped': task.get('skipped', []),
+        'direction': task.get('direction', 'pdf2word'),
+        'output_mode': task.get('output_mode'),
     })
 
 
@@ -307,11 +369,16 @@ def api_result(task_id):
 
 @pdf2word_bp.route('/api/download/<task_id>')
 def api_download(task_id):
-    """下载所有转换后的 Word 文件（打包为 ZIP）"""
+    """下载所有转换结果（打包为 ZIP）"""
     output_task_dir = os.path.join(OUTPUT_DIR, task_id)
 
     if not os.path.exists(output_task_dir):
         return jsonify({'error': '输出目录不存在'}), 404
+
+    with tasks_lock:
+        task = tasks.get(task_id) or {}
+    zip_name = ('转PDF结果.zip' if task.get('direction') == 'topdf'
+                else 'PDF转Word结果.zip')
 
     zip_path = os.path.join(OUTPUT_DIR, f'{task_id}.zip')
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -325,7 +392,7 @@ def api_download(task_id):
         zip_path,
         mimetype='application/zip',
         as_attachment=True,
-        download_name='PDF转Word结果.zip'
+        download_name=zip_name
     )
 
 
@@ -351,7 +418,8 @@ def api_download_file(task_id, filename):
 
 @pdf2word_bp.route('/api/health')
 def api_health():
-    return jsonify({'ok': True, 'time': datetime.now().isoformat()})
+    return jsonify({'ok': True, 'version': MODULE_VERSION,
+                    'time': datetime.now().isoformat()})
 
 
 # ---------- 保存到指定位置（弹出系统原生文件夹选择对话框） ----------

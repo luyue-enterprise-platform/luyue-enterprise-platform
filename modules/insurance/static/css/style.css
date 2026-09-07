@@ -1544,3 +1544,26 @@ tr.org-search-empty td {
     min-height: 56px;
     font-family: inherit;
 }
+
+/* ===== 省份选择（必选项） ===== */
+.province-required-mark {
+    color: #E74C3C;
+    font-style: normal;
+    font-weight: bold;
+    margin-left: 2px;
+}
+
+#provinceSelect:required,
+#provinceSelect.province-required-flash {
+    border-color: #E74C3C;
+    box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.15);
+}
+
+#provinceSelect.province-required-flash {
+    animation: provinceFlash 0.4s ease 2;
+}
+
+@keyframes provinceFlash {
+    0%, 100% { background: #fff; }
+    50% { background: #FDEDEC; }
+}

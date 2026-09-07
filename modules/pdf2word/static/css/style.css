@@ -379,3 +379,89 @@ body {
     .navbar { padding: 0 16px; }
     .brand-text { font-size: 15px; }
 }
+
+/* ===== v2.0.0 转换方向选择 ===== */
+.direction-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.direction-option {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    border: 2px solid #E0E6ED;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: #FAFBFC;
+}
+
+.direction-option:hover { border-color: var(--primary); }
+
+.direction-option:has(input:checked) {
+    border-color: var(--primary);
+    background: #EFF6FF;
+    box-shadow: 0 2px 8px rgba(37,99,235,0.10);
+}
+
+.direction-option input[type="radio"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--primary);
+    cursor: pointer;
+}
+
+.direction-label {
+    font-weight: 600;
+    font-size: 15px;
+    color: #2C3E50;
+    white-space: nowrap;
+}
+
+.direction-desc {
+    font-size: 12px;
+    color: #7F8C8D;
+}
+
+/* ===== v2.0.0 输出模式选择（仅转PDF方向） ===== */
+.mode-group {
+    margin-top: 16px;
+    padding: 14px 16px;
+    border: 1px dashed #BDC3C7;
+    border-radius: 10px;
+    background: #FDFEFE;
+}
+
+.mode-title {
+    font-weight: 600;
+    font-size: 13px;
+    color: #34495E;
+    margin-bottom: 10px;
+}
+
+.mode-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    font-size: 14px;
+    color: #34495E;
+    cursor: pointer;
+}
+
+.mode-option input[type="radio"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary);
+    cursor: pointer;
+}
+
+/* ===== v2.0.0 文件夹条目标签 ===== */
+.file-tag.folder-tag {
+    background: #FFF8E7;
+    border: 1px solid #F1C40F;
+}

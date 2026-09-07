@@ -20,6 +20,8 @@ var currentPersonStats = [];
 var organizeSearchKeyword = '';
 // v1.1.57：退税/抵税模式（互斥单选，默认退税；仅影响展示文案与年度台账生成）
 var currentTaxMode = '退税';
+// 多省份：当前选择的省份码（必选项，用户手动选择后生效；空 = 尚未选择）
+var currentProvince = '';
 
 // ===== DOM元素 =====
 var dropzone = document.getElementById('dropzone');
@@ -174,6 +176,64 @@ function onTaxModeChange(mode) {
         })(radios[i]);
     }
 })();
+
+// ===== 省份选择（多省份模板路由，必选项） =====
+// 数据驱动：/api/provinces 返回有模板的省份，无模板的省份不出现。
+// 省份为必选项：必须由用户手动选择后才能上传，系统不从文件内容推断省份。
+(function initProvince() {
+    var select = document.getElementById('provinceSelect');
+    var hint = document.getElementById('provinceHint');
+    if (!select) return;
+
+    fetch('/insurance/api/provinces')
+        .then(apiJson)
+        .then(function(data) {
+            if (data.error || !data.provinces || data.provinces.length === 0) {
+                if (hint) hint.textContent = '省份模板加载失败，请刷新页面重试';
+                return;
+            }
+
+            select.innerHTML = '';
+            // 必选占位：未选择时值为空，上传将被拦截
+            var placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = '-- 请选择省份 --';
+            placeholder.disabled = true;
+            placeholder.selected = true;
+            select.appendChild(placeholder);
+
+            for (var i = 0; i < data.provinces.length; i++) {
+                var p = data.provinces[i];
+                var opt = document.createElement('option');
+                opt.value = p.province_code;
+                opt.textContent = p.province_name +
+                    (p.template_count > 1 ? '（' + p.template_count + ' 套模板）' : '');
+                select.appendChild(opt);
+            }
+
+            select.addEventListener('change', function() {
+                currentProvince = select.value;
+            });
+        })
+        .catch(function() {
+            if (hint) hint.textContent = '省份模板加载失败，请刷新页面重试';
+        });
+})();
+
+// 省份必选校验（上传前调用；未选择时提示并拦截）
+function validateProvinceSelected() {
+    if (!currentProvince) {
+        showToast('请先选择参保证明所属省份（必选项）');
+        var select = document.getElementById('provinceSelect');
+        if (select) {
+            select.focus();
+            select.classList.add('province-required-flash');
+            setTimeout(function() { select.classList.remove('province-required-flash'); }, 1200);
+        }
+        return false;
+    }
+    return true;
+}
 
 // ===== 刷新页面 =====
 if (btnRefresh) {
@@ -466,6 +526,9 @@ btnClear.addEventListener('click', function() {
 
 // ===== 上传并处理 =====
 btnUpload.addEventListener('click', function() {
+    if (!validateProvinceSelected()) {
+        return;
+    }
     if (selectedFiles.length === 0) {
         showToast('请先选择图片文件');
         return;
@@ -530,6 +593,12 @@ async function compressAllFiles(entries) {
 }
 
 function uploadFiles() {
+    // 省份必选双重保险（按钮入口已校验，此处兜底）
+    if (!validateProvinceSelected()) {
+        btnUpload.disabled = false;
+        btnUpload.textContent = '开始识别统计';
+        return;
+    }
     btnUpload.disabled = true;
     btnUpload.textContent = '准备上传...';
     navStatus.querySelector('span:last-child').textContent = '准备中';
@@ -576,6 +645,9 @@ function uploadFiles() {
 
         // v1.1.57：退税/抵税模式（互斥单选）
         formData.append('tax_mode', currentTaxMode);
+
+        // 多省份：省份码（模板路由）
+        formData.append('province', currentProvince);
 
         // 用 XMLHttpRequest 获取上传进度
         var xhr = new XMLHttpRequest();
