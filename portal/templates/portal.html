@@ -586,6 +586,14 @@
             });
     }
 
+    // 启动自动检测：WebView2 持久化 cookie 会使用户免登录直达本页，
+    // 登录页升级横幅看不到——门户页必须在加载后自动检查（发现新版自动弹升级弹窗），
+    // 并每 4 小时轮询一次覆盖长时间不重启的场景
+    window.addEventListener('load', function() {
+        setTimeout(function() { checkAppUpdate(false); }, 1200);
+        setInterval(function() { checkAppUpdate(false); }, 4 * 60 * 60 * 1000);
+    });
+
     function openUpdateModal(data) {
         document.getElementById('updateLocalVer').textContent = 'v' + data.local_version;
         document.getElementById('updateRemoteVer').textContent = 'v' + data.remote_version;

@@ -157,5 +157,30 @@ class TestLayoutAndInteraction(unittest.TestCase):
             self.assertEqual(js.count(a) - js.count(b) >= -2, True)
 
 
+class TestAutoUpdateCheck(unittest.TestCase):
+    """五、门户页自动检测更新（v2.0.2 修复：WebView2 持久化 cookie 使免登录用户
+    直达门户页，登录页横幅看不到，门户页必须自动检查）"""
+
+    def test_auto_check_on_page_load(self):
+        html = _render()
+        # 页面加载后自动调用 checkAppUpdate(false)（非手动，静默检查）
+        self.assertIn("window.addEventListener('load'", html)
+        self.assertIn('checkAppUpdate(false)', html)
+
+    def test_periodic_recheck_for_long_running_sessions(self):
+        """长时间不重启的场景：定时轮询覆盖"""
+        html = _render()
+        m = re.search(r'setInterval\(function\(\) \{ checkAppUpdate\(false\); \},\s*([\d\s*+]+)\)', html)
+        self.assertIsNotNone(m, '缺少定时轮询检查')
+        # 轮询间隔可为算术表达式（如 4 * 60 * 60 * 1000），求值后应在 1~12 小时之间
+        interval_ms = int(eval(m.group(1), {'__builtins__': {}}, {}))
+        self.assertTrue(3600000 <= interval_ms <= 43200000)
+
+    def test_manual_check_still_available(self):
+        """手动入口（关于系统 → 版本更新）不受影响"""
+        html = _render()
+        self.assertIn('checkAppUpdate(true)', html)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
