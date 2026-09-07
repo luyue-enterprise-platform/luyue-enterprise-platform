@@ -171,7 +171,8 @@ def _get_year_overlap_period(overlap_start, overlap_end, year):
     return start_ym, end_ym
 
 
-def _generate_yearly_ledger(year, classified, roster_index, company_name, output_dir, timestamp):
+def _generate_yearly_ledger(year, classified, roster_index, company_name, output_dir, timestamp,
+                            tax_label='退税'):
     """为指定年份生成年度台账（独立Excel文件）
 
     列结构（动态，v1.1.54 起含劳动合同起止时间列）：
@@ -183,6 +184,7 @@ def _generate_yearly_ledger(year, classified, roster_index, company_name, output
     汇总行：金额在月数正下方（同一列），与总台账逻辑一致
     合计总金额行：下一列也是金额（不是月数）
     v1.1.55 需求4：工作簿设置打开即重算（fullCalcOnLoad），确保公式在本地打开时正常显示
+    v1.1.57：tax_label 控制"退税/抵税"展示文案（仅展示层，字段标识不变）
     """
     # 筛选当年有重叠月数的人员
     year_persons = []
@@ -209,7 +211,7 @@ def _generate_yearly_ledger(year, classified, roster_index, company_name, output
     if has_tuiwu_year:
         total_cols = 10
         # 列：1序号 2姓名 3身份证号 4人员身份类型 5退役证编号 6退役时间
-        #     7劳动合同起止时间 8本年度参保证明时间段 9申请退税月数 10申请退税金额
+        #     7劳动合同起止时间 8本年度参保证明时间段 9申请退(抵)税月数 10申请退(抵)税金额
         period_col = 8
         months_col = 9
         amount_col = 10
@@ -218,13 +220,13 @@ def _generate_yearly_ledger(year, classified, roster_index, company_name, output
             '退役证编号/就业创业证编号', '退役时间/登记失业时间',
             '劳动合同起止时间',
             '本年度参保证明时间段\n（养老+医疗+工伤+失业）',
-            '申请退税月数', '申请退税金额',
+            f'申请{tax_label}月数', f'申请{tax_label}金额',
         ]
         widths = [6, 10, 22, 18, 22, 20, 24, 28, 14, 16]
     else:
         total_cols = 8
         # 列：1序号 2姓名 3身份证号 4人员身份类型 5劳动合同起止时间
-        #     6本年度参保证明时间段 7申请退税月数 8申请退税金额
+        #     6本年度参保证明时间段 7申请退(抵)税月数 8申请退(抵)税金额
         period_col = 6
         months_col = 7
         amount_col = 8
@@ -232,7 +234,7 @@ def _generate_yearly_ledger(year, classified, roster_index, company_name, output
             '序号', '姓名', '身份证号', '人员身份类型',
             '劳动合同起止时间',
             '本年度参保证明时间段\n（养老+医疗+工伤+失业）',
-            '申请退税月数', '申请退税金额',
+            f'申请{tax_label}月数', f'申请{tax_label}金额',
         ]
         widths = [6, 10, 22, 18, 24, 28, 14, 16]
 
@@ -383,14 +385,19 @@ def _generate_yearly_ledger(year, classified, roster_index, company_name, output
 
 
 def generate_excel(persons, output_path, roster=None, company_name='', year_range=None,
-                   stats=None):
+                   stats=None, tax_mode='退税'):
     """生成申报重点群体税收优惠政策总台账（含年度台账子文件）
 
     v1.1.53：外部可传入已做合同叠加裁剪的统计结果（stats），保证 Excel 与页面
     JSON 一致；未传入时保持原行为（内部自行统计）。
     v1.1.55 需求4：工作簿设置打开即重算（fullCalcOnLoad），确保公式在本地
     打开时不丢失、不失效、计算结果显示正常。
+    v1.1.57：tax_mode（退税/抵税）——仅改展示文案（"退税"→"抵税"，底层数据
+    结构与字段标识不变）；抵税模式跳过年度台账生成（不产出年度台账文件）。
     """
+    # 展示文案标签：仅允许 退税/抵税，其余一律按默认退税处理（防御异常输入）
+    tax_label = '抵税' if tax_mode == '抵税' else '退税'
+
     # 外部可传入已做合同叠加裁剪的统计结果，保证 Excel 与页面 JSON 一致；
     # 未传入时保持原行为（内部自行统计）
     person_stats, year_cols = stats if stats else calc_all_stats(persons, year_range=year_range)
@@ -421,8 +428,8 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
             '工伤保险参保证明时间段',
             '失业保险参保证明时间段',
             '参保证明时间段（养老+医疗+工伤+失业）',
-            '申请退税总月数',
-        ] + [f'{y}年申请退税月数' for y in year_cols] + ['合计申请退税总额']
+            f'申请{tax_label}总月数',
+        ] + [f'{y}年申请{tax_label}月数' for y in year_cols] + [f'合计申请{tax_label}总额']
         col_identity = 'D'
         col_overlap_months = 'M'
         col_year_start = 14
@@ -443,8 +450,8 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
             '工伤保险参保证明时间段',
             '失业保险参保证明时间段',
             '参保证明时间段（养老+医疗+工伤+失业）',
-            '申请退税总月数',
-        ] + [f'{y}年申请退税月数' for y in year_cols] + ['合计申请退税总额']
+            f'申请{tax_label}总月数',
+        ] + [f'{y}年申请{tax_label}月数' for y in year_cols] + [f'合计申请{tax_label}总额']
         col_identity = 'D'
         col_overlap_months = 'K'
         col_year_start = 12
@@ -536,7 +543,7 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
         for y in year_cols:
             row.append(ps['yearly_months'].get(y, 0))
 
-        # 退税总额公式（使用动态列号）
+        # 退(抵)税总额公式（使用动态列号）
         formula = (
             f'=IF(OR(D{row_num}="脱贫人口",D{row_num}="防止返贫监测对象"),'
             f'{col_overlap_months}{row_num}*650,'
@@ -733,17 +740,20 @@ def generate_excel(persons, output_path, roster=None, company_name='', year_rang
     wb.save(output_path)
 
     # ========== 生成年度台账（每张独立Excel文件） ==========
+    # v1.1.57：抵税模式跳过年度台账生成（退税模式保持原流程不变）
     output_dir = os.path.dirname(output_path)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     yearly_ledgers = []
     yearly_ledger_files = []
-    for year in year_cols:
-        result = _generate_yearly_ledger(
-            year, classified, roster_index, company_name, output_dir, timestamp
-        )
-        if result:
-            yearly_ledgers.append(result['filename'])
-            yearly_ledger_files.append(result)
+    if tax_label == '退税':
+        for year in year_cols:
+            result = _generate_yearly_ledger(
+                year, classified, roster_index, company_name, output_dir, timestamp,
+                tax_label=tax_label
+            )
+            if result:
+                yearly_ledgers.append(result['filename'])
+                yearly_ledger_files.append(result)
 
     return {
         'output_path': output_path,

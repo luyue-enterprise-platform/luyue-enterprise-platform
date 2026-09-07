@@ -18,6 +18,8 @@ var currentImageDetails = [];
 var currentPersonStats = [];
 // v1.1.55 需求3：文件整理结果搜索关键字（重渲染时保留）
 var organizeSearchKeyword = '';
+// v1.1.57：退税/抵税模式（互斥单选，默认退税；仅影响展示文案与年度台账生成）
+var currentTaxMode = '退税';
 
 // ===== DOM元素 =====
 var dropzone = document.getElementById('dropzone');
@@ -117,6 +119,60 @@ var monthEndSelect = document.getElementById('monthEnd');
         validateRange();
     });
     monthEndSelect.addEventListener('change', validateRange);
+})();
+
+// ===== v1.1.57: 退税/抵税模式（互斥单选，默认退税） =====
+var TAX_MODE_HINTS = {
+    '退税': '选择需要统计退税的年月区间，系统将按此范围裁剪重叠时间段并生成年度统计',
+    '抵税': '选择需要统计抵税的年月区间，重叠部分归入所选统计区间（不重复不遗漏），抵税模式不生成年度台账'
+};
+
+// 同步模式到界面状态（radio 勾选 + 提示文案），仅允许两值，异常按退税处理
+function setTaxModeUI(mode) {
+    currentTaxMode = (mode === '抵税') ? '抵税' : '退税';
+    var radios = document.querySelectorAll('input[name="taxMode"]');
+    for (var i = 0; i < radios.length; i++) {
+        radios[i].checked = (radios[i].value === currentTaxMode);
+    }
+    var hint = document.getElementById('yearRangeHint');
+    if (hint) hint.textContent = TAX_MODE_HINTS[currentTaxMode];
+}
+
+// 切换模式：先更新界面；若已有完成结果则通知后端重建（Excel文案 + 年度台账跳过/恢复）
+function onTaxModeChange(mode) {
+    var prev = currentTaxMode;
+    setTaxModeUI(mode);
+    if (prev === currentTaxMode) return;
+    if (currentTaskId && resultSection.style.display === 'block') {
+        fetch('/insurance/api/tax_mode/' + currentTaskId, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tax_mode: currentTaxMode })
+        })
+        .then(apiJson)
+        .then(function(data) {
+            if (data.error) {
+                showToast(data.error);
+                return;
+            }
+            showToast('已切换为' + currentTaxMode + '模式，统计结果已更新');
+            renderResult(data);
+        })
+        .catch(function(err) {
+            showToast('切换失败: ' + err.message);
+        });
+    }
+}
+
+(function initTaxMode() {
+    var radios = document.querySelectorAll('input[name="taxMode"]');
+    for (var i = 0; i < radios.length; i++) {
+        (function(r) {
+            r.addEventListener('change', function() {
+                if (r.checked) onTaxModeChange(r.value);
+            });
+        })(radios[i]);
+    }
 })();
 
 // ===== 刷新页面 =====
@@ -518,6 +574,9 @@ function uploadFiles() {
         formData.append('year_end', yearEndSelect.value);
         formData.append('month_end', monthEndSelect.value);
 
+        // v1.1.57：退税/抵税模式（互斥单选）
+        formData.append('tax_mode', currentTaxMode);
+
         // 用 XMLHttpRequest 获取上传进度
         var xhr = new XMLHttpRequest();
         xhr.open('POST', '/insurance/api/upload');
@@ -751,14 +810,20 @@ function renderResult(data, opts) {
     currentImageDetails = [];
     currentPersonStats = data.person_stats || [];
 
+    // v1.1.57：以后端返回的模式为准同步界面（radio/hint/表头联动，避免两模式残留状态）
+    if (data.tax_mode) {
+        setTaxModeUI(data.tax_mode);
+    }
+
     // 汇总信息
     summaryBar.innerHTML = '';
+    var yearlyCount = (data.yearly_ledger_files && data.yearly_ledger_files.length) || 0;
     var summaries = [
         { label: '识别图片', value: data.ocr_count },
         { label: '参保人员', value: data.person_count },
         { label: '统计区间', value: yearStartSelect.value + '年' + monthStartSelect.value + '月<br>至' + yearEndSelect.value + '年' + monthEndSelect.value + '月' },
         { label: '年度列数', value: data.year_cols.length },
-        { label: '年度台账', value: data.year_cols.length + '张' },
+        { label: '年度台账', value: currentTaxMode === '抵税' ? '不生成（抵税模式）' : yearlyCount + '张' },
     ];
     for (var i = 0; i < summaries.length; i++) {
         var div = document.createElement('div');
@@ -1066,12 +1131,12 @@ function renderPersonTable() {
         '劳动合同起止时间',
         '养老保险参保证明时间段', '医疗保险参保证明时间段',
         '工伤保险参保证明时间段', '失业保险参保证明时间段',
-        '参保证明时间段（养老+医疗+工伤+失业）', '申请退税总月数'
+        '参保证明时间段（养老+医疗+工伤+失业）', '申请' + currentTaxMode + '总月数'
     ];
     for (var j = 0; j < currentYearCols.length; j++) {
-        headers.push(currentYearCols[j] + '年申请退税月数');
+        headers.push(currentYearCols[j] + '年申请' + currentTaxMode + '月数');
     }
-    headers.push('合计申请退税总额');
+    headers.push('合计申请' + currentTaxMode + '总额');
     for (var h = 0; h < headers.length; h++) {
         html += '<th>' + headers[h] + '</th>';
     }

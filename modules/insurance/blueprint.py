@@ -292,6 +292,7 @@ def _rebuild_result(task_id):
       _failed_results    识别失败记录（含 _source_path，供手动补录定位原文件）
       _period_overrides  {(name, idcard): {险种: (start, end)}} 手动覆盖层
       _manual_log        操作记录（手动补录/修改时间段/恢复识别值）
+      _tax_mode          退税/抵税模式（v1.1.57，默认退税；抵税仅改展示文案并跳过年度台账）
     重建完成后返回过滤内部字段后的公开 result dict；任务不存在返回 None。
     """
     with tasks_lock:
@@ -315,6 +316,10 @@ def _rebuild_result(task_id):
     roster_source_path = inner.get('_roster_source_path', '')
     overrides = inner.get('_period_overrides', {})
     manual_log = inner.get('_manual_log', [])
+    # v1.1.57：退税/抵税模式（仅允许两值，异常输入按默认退税处理）
+    tax_mode = inner.get('_tax_mode', '退税')
+    if tax_mode not in ('退税', '抵税'):
+        tax_mode = '退税'
 
     # 1) 按人员分组 + 花名册补全
     persons = group_by_person(success_results)
@@ -343,7 +348,7 @@ def _rebuild_result(task_id):
     excel_path = os.path.join(OUTPUT_DIR, excel_filename)
     gen_result = generate_excel(persons, excel_path, roster=roster,
                                 company_name=company_name, year_range=year_range,
-                                stats=(person_stats, year_cols))
+                                stats=(person_stats, year_cols), tax_mode=tax_mode)
     yearly_ledger_files = gen_result.get('yearly_ledger_files', [])
     logger.info(f'[task:{task_id}] Excel重建完成: {excel_path}')
 
@@ -407,6 +412,7 @@ def _rebuild_result(task_id):
             for ps in person_stats
         ],
         'year_cols': year_cols,
+        'tax_mode': tax_mode,
         'excel_path': excel_path,
         'excel_filename': excel_filename,
         'yearly_ledger_files': yearly_ledger_files,
@@ -455,6 +461,7 @@ def _rebuild_result(task_id):
         '_company_mismatch_files': company_mismatch_files,
         '_period_overrides': overrides,
         '_manual_log': manual_log,
+        '_tax_mode': tax_mode,
     }
 
     with tasks_lock:
@@ -494,8 +501,12 @@ def _split_ocr_results(task_id, ocr_results, roster):
     return success_results, failed_results, all_files
 
 
-def process_task(task_id, file_paths, roster, roster_company='', roster_source_path='', year_range=None):
-    """后台线程：PDF转图片 -> 逐张OCR识别 -> 解析 -> 分组 -> 统计 -> 文件整理 -> 生成Excel"""
+def process_task(task_id, file_paths, roster, roster_company='', roster_source_path='', year_range=None,
+                 tax_mode='退税'):
+    """后台线程：PDF转图片 -> 逐张OCR识别 -> 解析 -> 分组 -> 统计 -> 文件整理 -> 生成Excel
+
+    v1.1.57：tax_mode（退税/抵税）存入内部状态，影响 Excel 展示文案与年度台账生成。
+    """
     try:
         with tasks_lock:
             tasks[task_id]['status'] = 'processing'
@@ -714,6 +725,7 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                 '_company_mismatch_files': company_mismatch_files,
                 '_period_overrides': {},
                 '_manual_log': [],
+                '_tax_mode': tax_mode if tax_mode in ('退税', '抵税') else '退税',
             }
 
         _rebuild_result(task_id)
@@ -1006,6 +1018,12 @@ def upload():
         except (ValueError, TypeError):
             pass
 
+    # v1.1.57：获取退税/抵税模式（互斥单选，默认退税；异常值按退税处理）
+    tax_mode = request.form.get('tax_mode', '退税')
+    if tax_mode not in ('退税', '抵税'):
+        tax_mode = '退税'
+    logger.info(f'[upload] 税种模式: {tax_mode}')
+
     task_id = str(uuid.uuid4())[:8]
     task_dir = os.path.join(UPLOAD_DIR, task_id)
     os.makedirs(task_dir, exist_ok=True)
@@ -1072,7 +1090,7 @@ def upload():
 
     t = threading.Thread(target=process_task,
                          args=(task_id, file_paths, roster,
-                               roster_company, roster_source_path, year_range),
+                               roster_company, roster_source_path, year_range, tax_mode),
                          daemon=True)
     t.start()
 
@@ -1374,6 +1392,62 @@ def api_update_period(task_id):
     res = _rebuild_result(task_id)
     if res is None:
         return jsonify({'error': '重建结果失败'}), 500
+    if 'yearly_ledger_files' in res:
+        res['yearly_ledger_files'] = [f['filename'] for f in res['yearly_ledger_files']]
+    return jsonify(res)
+
+
+# ============ v1.1.57: 退税/抵税模式切换 ============
+@insurance_bp.route('/api/tax_mode/<task_id>', methods=['POST'])
+@login_required
+def api_tax_mode(task_id):
+    """切换退税/抵税模式（互斥单选），即时重建统计结果与Excel
+
+    入参 JSON: {tax_mode: '退税' | '抵税'}
+    - 退税：完整保留现有全部逻辑（字段名、统计规则、年度台账生成）
+    - 抵税：仅改展示文案（"退税"→"抵税"，底层数据结构与字段标识不变），
+      并跳过年度台账生成；统计规则不变（重叠归入所选统计时间段，不重复不遗漏）
+    切换写入操作记录（operation_log），重建后返回完整公开 result。
+    """
+    with tasks_lock:
+        task = tasks.get(task_id)
+    if not task:
+        return jsonify({'error': '任务不存在'}), 404
+    if task['status'] != 'done':
+        return jsonify({'error': '任务尚未完成'}), 400
+
+    data = request.get_json(silent=True) or {}
+    tax_mode = (data.get('tax_mode') or '').strip()
+    if tax_mode not in ('退税', '抵税'):
+        return jsonify({'error': 'tax_mode 必须为 退税 或 抵税'}), 400
+
+    with tasks_lock:
+        result_inner = tasks[task_id]['result']
+        old_mode = result_inner.get('_tax_mode', '退税')
+
+    if old_mode == tax_mode:
+        # 模式未变化：直接返回当前结果，避免无谓重建
+        res = {k: v for k, v in result_inner.items() if not k.startswith('_')}
+    else:
+        with tasks_lock:
+            result_inner['_tax_mode'] = tax_mode
+            now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            result_inner.setdefault('_manual_log', []).append({
+                'time': now_str,
+                'action': '切换税种模式',
+                'name': '',
+                'idcard': '',
+                'insurance_type': '',
+                'old': old_mode,
+                'new': tax_mode,
+                'operator': session.get('username', ''),
+            })
+        logger.info(f'[task:{task_id}] 税种模式切换: {old_mode} → {tax_mode}')
+        # 统一重建（文案/年度台账按新模式重新生成，统计规则不变）
+        res = _rebuild_result(task_id)
+        if res is None:
+            return jsonify({'error': '重建结果失败'}), 500
+
     if 'yearly_ledger_files' in res:
         res['yearly_ledger_files'] = [f['filename'] for f in res['yearly_ledger_files']]
     return jsonify(res)

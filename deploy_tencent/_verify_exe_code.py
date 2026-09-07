@@ -65,12 +65,20 @@ CHECKS = {
         '合同比对提示',
         # v1.1.54 公开 person_stats 合同展示字段
         '劳动合同起止时间展示文本',
+        # v1.1.57 退税/抵税模式切换端点（路由常量 + 操作记录动作 + docstring 针刺）
+        '/api/tax_mode/<task_id>',
+        '切换税种模式',
+        '切换退税/抵税模式（互斥单选）',
     ],
     # v1.1.54 统计表/预览列表新增劳动合同起止时间列
     # v1.1.55 需求4 打开即重算（docstring 针刺）
     'modules.insurance.core.excel_generator': [
         '劳动合同起止时间',
         '打开即重算',
+        # v1.1.57 tax_mode 展示文案标签（字面量常量 + docstring 针刺）
+        '抵税',
+        'tax_mode（退税/抵税）',
+        '抵税模式跳过年度台账生成',
     ],
     # v1.1.55 需求1 统计结果起点与统计时间段对齐（apply_stat_range_clamp docstring 针刺）
     'modules.insurance.core.stats_calculator': [

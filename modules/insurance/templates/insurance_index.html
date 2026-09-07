@@ -81,7 +81,20 @@
                 <span class="year-range-separator">至</span>
                 <select id="yearEnd" class="year-select"></select>
                 <select id="monthEnd" class="month-select"></select>
-                <span class="year-range-hint">选择需要统计退税的年月区间，系统将按此范围裁剪重叠时间段并生成年度统计</span>
+                <span class="year-range-hint" id="yearRangeHint">选择需要统计退税的年月区间，系统将按此范围裁剪重叠时间段并生成年度统计</span>
+            </div>
+
+            <!-- 退税/抵税模式选择（互斥单选，默认退税） -->
+            <div class="year-range-selector tax-mode-selector">
+                <label class="year-range-label">税种模式：</label>
+                <label class="tax-mode-option">
+                    <input type="radio" name="taxMode" value="退税" checked>
+                    <span>退税<em class="tax-mode-note">（默认，生成年度台账）</em></span>
+                </label>
+                <label class="tax-mode-option">
+                    <input type="radio" name="taxMode" value="抵税">
+                    <span>抵税<em class="tax-mode-note">（字段名替换为抵税，跳过年度台账）</em></span>
+                </label>
             </div>
 
             <div class="dropzone" id="dropzone">

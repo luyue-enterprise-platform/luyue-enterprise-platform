@@ -1173,6 +1173,37 @@ tr.org-search-empty td {
     margin-left: 8px;
 }
 
+/* ===== 退税/抵税模式选择（互斥单选） ===== */
+.tax-mode-selector {
+    margin-top: -8px;
+}
+
+.tax-mode-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    color: #333;
+    cursor: pointer;
+    padding: 4px 10px;
+    border-radius: 6px;
+}
+
+.tax-mode-option:hover {
+    background: #EDF2F7;
+}
+
+.tax-mode-option input[type="radio"] {
+    accent-color: #4A90D9;
+    cursor: pointer;
+}
+
+.tax-mode-note {
+    font-style: normal;
+    font-size: 12px;
+    color: #999;
+}
+
 /* ===== 文件列表项（带删除按钮） ===== */
 .file-list-item {
     display: flex;
