@@ -322,8 +322,6 @@ def _rebuild_result(task_id):
     tax_mode = inner.get('_tax_mode', '退税')
     if tax_mode not in ('退税', '抵税'):
         tax_mode = '退税'
-    # 多省份：省份码透传（默认陕西）
-    province_code = inner.get('_province_code', '610000')
 
     # 1) 按人员分组 + 花名册补全
     persons = group_by_person(success_results)
@@ -417,7 +415,6 @@ def _rebuild_result(task_id):
         ],
         'year_cols': year_cols,
         'tax_mode': tax_mode,
-        'province_code': province_code,
         'excel_path': excel_path,
         'excel_filename': excel_filename,
         'yearly_ledger_files': yearly_ledger_files,
@@ -604,8 +601,6 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                 parsed['filename'] = display_name
                 parsed['_source_path'] = fp  # 保留源文件路径供整理使用
                 parsed['_source_origin'] = source_origin  # 原始源文件名，用于PDF多页去重
-                # 省份关联：逐条记录盖章用户所选省份（含异常兜底记录）
-                parsed['province_code'] = province_code
                 ocr_results.append(parsed)
                 # 记录OCR解析详情，便于排查问题
                 logger.info(
@@ -1126,8 +1121,7 @@ def upload():
                          daemon=True)
     t.start()
 
-    return jsonify({'task_id': task_id, 'file_count': len(file_paths),
-                    'province': province_code})
+    return jsonify({'task_id': task_id, 'file_count': len(file_paths)})
 
 
 @insurance_bp.route('/api/task/<task_id>/pause', methods=['POST'])
@@ -1762,8 +1756,6 @@ def retry_task(task_id):
             parsed['filename'] = display_name
             parsed['_source_path'] = fp
             parsed['_source_origin'] = source_origin
-            # 省份关联：逐条记录盖章任务所选省份
-            parsed['province_code'] = retry_province
             new_results.append(parsed)
         except Exception as e:
             new_failed.append({
@@ -1831,6 +1823,9 @@ def retry_task(task_id):
             '_company_mismatch_files': company_mismatch_files,
             '_period_overrides': old_result.get('_period_overrides', {}),
             '_manual_log': old_result.get('_manual_log', []),
+            '_tax_mode': old_result.get('_tax_mode', '退税'),
+            # 省份仅用于读取规则匹配：内部记住路由省份，供后续补充上传沿用
+            '_province_code': retry_province,
         }
 
     res = _rebuild_result(task_id)

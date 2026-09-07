@@ -79,13 +79,16 @@ class TestTemplateEngine(unittest.TestCase):
         self.assertEqual(tpl.parser, 'builtin_shaanxi')
 
     def test_parse_with_province_equivalent_to_legacy(self):
-        """省份路由模式解析结果 = 兼容模式（陕西行为零变化）+ 省份盖章"""
+        """省份路由模式解析结果 = 兼容模式（陕西行为零变化），键集合完全一致（无额外字段）"""
         routed = te.parse_with_province(SN_UNEMPLOY_TEXT, '610000')
         legacy = dp.parse_ocr_result(SN_UNEMPLOY_TEXT)
         for key in ('insurance_type', 'name', 'idcard', 'company_name', 'period'):
             self.assertEqual(routed[key], legacy[key], key)
-        self.assertEqual(routed['template_id'], '610000_si_builtin')
-        self.assertEqual(routed['province_code'], '610000')  # 省份关联到文件数据
+        # 仅读取规则匹配：不添加任何额外键（template_id/anchor_score/province_code 均无）
+        self.assertEqual(set(routed.keys()), set(legacy.keys()))
+        self.assertNotIn('template_id', routed)
+        self.assertNotIn('anchor_score', routed)
+        self.assertNotIn('province_code', routed)
 
     def test_parse_with_province_medical_no_shaanxi_word(self):
         """医保版式无"陕西"字样 → 正常解析（省份不做内容校验）"""
@@ -97,8 +100,7 @@ class TestTemplateEngine(unittest.TestCase):
         """非参保证明内容：不拦截省份路由，按原有规则解析（后续自然进失败桶）"""
         routed = te.parse_with_province('甲方乙方经协商一致签订本合同，货款两清', '610000')
         self.assertNotIn('error', routed)          # 省份不做内容校验
-        self.assertEqual(routed['template_id'], '610000_si_builtin')
-        self.assertEqual(routed['province_code'], '610000')
+        self.assertNotIn('province_code', routed)  # 仅读取规则匹配，无额外字段
         self.assertEqual(routed['name'], '')        # 原有规则解析（无姓名）
 
     def test_parse_with_province_unknown_province(self):
@@ -179,7 +181,7 @@ class TestExternalTemplates(unittest.TestCase):
         self.assertEqual(routed['idcard'], '410102199001011234')
         self.assertEqual(routed['insurance_type'], '养老保险')
         self.assertEqual(routed['period'], ('2019-01', '2025-06'))
-        self.assertEqual(routed['template_id'], '410000_si_2026')
+        self.assertNotIn('template_id', routed)  # 仅读取规则匹配，无额外字段
 
     def test_external_template_no_content_blocking(self):
         """省份以用户选择为准：陕西文件选河南 → 不拦截，按河南模板尽力解析"""
@@ -197,8 +199,7 @@ class TestExternalTemplates(unittest.TestCase):
         # 陕西文本选河南：不做内容校验，仍用河南模板解析（姓名可提取）
         routed = te.parse_with_province(SN_UNEMPLOY_TEXT, '410000')
         self.assertNotIn('error', routed)
-        self.assertEqual(routed['template_id'], '410000_si_2026')
-        self.assertEqual(routed['province_code'], '410000')
+        self.assertNotIn('province_code', routed)  # 仅读取规则匹配，无额外字段
         self.assertEqual(routed['name'], '薛宇行')
 
     def test_broken_external_file_ignored(self):
@@ -275,7 +276,10 @@ class TestProvinceEndpoints(unittest.TestCase):
             'files': [(_io.BytesIO(self._png_bytes()), 'white.png')],
         }, content_type='multipart/form-data')
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.get_json()['province'], '610000')
+        data = r.get_json()
+        self.assertIn('task_id', data)
+        # 仅读取规则匹配：上传响应不回显省份
+        self.assertNotIn('province', data)
 
 
 # ==================== 4. 前端接入 ====================

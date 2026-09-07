@@ -10,8 +10,9 @@
    不产生任何拦截。
 3. 陕西为第一份内置模板：解析实现直接委托 data_parser 现有函数，
    对外行为与改造前完全一致（选陕西 = 原有识别逻辑）。
-4. 省份关联与传递：解析记录逐条携带 province_code（关联到具体文件数据），
-   任务内部状态 _province_code 与公开 result 均透传，保证传递至后续统计环节。
+4. 省份仅用于读取规则匹配：路由到该省模板解析后返回 data_parser 原有结构，
+   不向解析记录/任务结果添加任何额外字段（province_code 等），
+   任务内部仅以 _province_code 记住路由省份供补充上传沿用。
 
 外置模板格式（JSON，放 DATA_DIR/insurance_templates/*.json）：
 {
@@ -301,9 +302,10 @@ def match_template(text, province_code):
 def parse_with_province(text, province_code, items=None):
     """按用户所选省份路由模板并解析（对外主入口）
 
-    省份信息以用户手动选择为准：不从内容推断、不做省份校验拦截，
-    按原有规则识别读取。返回与 data_parser.parse_ocr_result 相同结构的 dict，
-    额外携带 province_code（关联文件数据）、template_id 与 anchor_score（日志用）。
+    省份仅用于读取规则匹配：选定省份即路由到该省模板，按原有规则识别读取，
+    不从内容推断、不做省份校验拦截。返回与 data_parser.parse_ocr_result
+    完全相同的结构——不添加任何额外字段（template_id/anchor_score/province_code
+    等均不出现在返回值中）。
     """
     tpl, score, err = match_template(text, province_code)
     if tpl is None:
@@ -311,12 +313,5 @@ def parse_with_province(text, province_code, items=None):
             'insurance_type': None, 'name': '', 'idcard': '',
             'company_name': '', 'period': None, 'raw_text': text,
             'error': err,
-            'template_id': None, 'anchor_score': score,
-            'province_code': str(province_code or DEFAULT_PROVINCE),
         }
-    result = tpl.parse(text, items)
-    result['template_id'] = tpl.template_id
-    result['anchor_score'] = score
-    # 省份关联：逐条记录用户所选省份（以手动选择为准，不从内容推断）
-    result['province_code'] = str(province_code or DEFAULT_PROVINCE)
-    return result
+    return tpl.parse(text, items)
