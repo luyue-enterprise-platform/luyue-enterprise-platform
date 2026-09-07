@@ -19,6 +19,7 @@ v1.1.52 加固：
 import functools
 import http.server
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -129,7 +130,12 @@ class _UpdateTestBase(unittest.TestCase):
         self.fail(f'后台升级线程未在 {timeout}s 内结束，当前: {st}')
 
     def _launched_path(self):
-        return self.popen_mock.call_args[0][0][0]
+        # v1.1.56：Popen 收到的是整条 cmd /c 延时命令串，从中抽出真正被
+        # 启动的临时安装包绝对路径
+        cmdline = self.popen_mock.call_args[0][0]
+        m = re.search(r'"([^"]*ly_update_[^"]*\.exe)"', cmdline)
+        self.assertIsNotNone(m, f'命令串中找不到安装包路径: {cmdline}')
+        return m.group(1)
 
 
 class TestInstallerEarlyExitNoSuicide(_UpdateTestBase):
@@ -186,11 +192,18 @@ class TestInstallerAliveProceeds(_UpdateTestBase):
         self._wait_done()
         self.exit_mock.assert_called_once_with(0)
         self.popen_mock.assert_called_once()
-        args = self.popen_mock.call_args[0][0]
-        for flag in ('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS'):
-            self.assertIn(flag, args)
+        cmdline = self.popen_mock.call_args[0][0]
+        self.assertIsInstance(cmdline, str)
+        # v1.1.56 最终方案：cmd /c + ping 延时（~10s）后才启动安装器，先让本
+        # 进程退出释放 EXE 锁；观察窗口内 cmd 启动器一直 ping → poll 恒为 None
+        self.assertIn('cmd', cmdline)
+        self.assertIn('ping -n', cmdline)
+        for flag in ('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'):
+            self.assertIn(flag, cmdline)
+        # v1.1.56 修订：不传 /CLOSEAPPLICATIONS（RM 关不掉运行中应用→rc=5 阻断升级）
+        self.assertNotIn('/CLOSEAPPLICATIONS', cmdline)
         try:
-            os.remove(args[0])
+            os.remove(self._launched_path())
         except OSError:
             pass
 
@@ -211,8 +224,18 @@ class TestInstallerAliveProceeds(_UpdateTestBase):
 class TestGraceConfigAndSource(unittest.TestCase):
     """3. 静态检查：加固逻辑真实存在于 app.py"""
 
-    def test_grace_constant_default_8s(self):
-        self.assertEqual(app_module._UPDATE_INSTALL_GRACE_SEC, 8)
+    def test_grace_constant_default(self):
+        # v1.1.56：8s → 2.5s——观察窗口必须远小于安装器开始写主 EXE 的时间，
+        # 否则主进程迟迟不退、EXE 锁不释放，安装器静默覆盖失败（需手动再装）
+        self.assertEqual(app_module._UPDATE_INSTALL_GRACE_SEC, 2.5)
+
+    def test_grace_guard_comment_explains_timing(self):
+        # 源码注释需说明“先退出释放锁”的时序依据，防止后人改回长观察窗口
+        src_path = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), 'app.py')
+        with open(src_path, 'r', encoding='utf-8') as f:
+            src = f.read()
+        self.assertIn('运行中的 PE 映像被系统锁定', src)
 
     def test_source_contains_grace_guard(self):
         src_path = os.path.join(os.path.dirname(os.path.dirname(

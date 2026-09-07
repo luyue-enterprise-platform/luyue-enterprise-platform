@@ -385,13 +385,33 @@ _UPDATE_ALLOWED_PREFIXES = (
 )
 # 安装包最小体积（防错误页/截断文件被当成安装包执行）
 _UPDATE_MIN_SIZE = 5 * 1024 * 1024
-# 安装器启动后的存活观察窗口（秒）。v1.1.52：窗口内安装器“早退”且退出码非零
-# → 判定安装失败（安装包损坏/不兼容），报错但保持当前进程存活，绝不可自杀。
-_UPDATE_INSTALL_GRACE_SEC = 8
+# cmd 启动器的存活观察窗口（秒）。背景：Windows 运行中的 PE 映像被系统锁定、
+# 不可覆盖（v1.1.55 自动升级失败的根因）。v1.1.52：窗口内直接观察安装器“早退”
+# 且退出码非零 → 判安装失败，报错但保持当前进程存活。v1.1.56 最终方案改为经
+# cmd 延时启动安装器（见 _do_update），窗口内观察的是 cmd 启动器存活；坏包
+# “启动即崩”无法在窗口内识别，该防护由发布链强制冒烟测试（v1.1.52 起 Step 6.5）
+# + 下载三重校验（MZ/最小体积/Content-Length）承担。
+_UPDATE_INSTALL_GRACE_SEC = 2.5
+# 安装器真实启动前的延时（秒）。直接 Popen 安装器不可行：Inno 流式解压、主 exe
+# 是 [Files] 首项，安装器启动 ~0.1s 即尝试覆盖仍被锁定的运行中主 exe，DeleteFile
+# 撞锁重试 ~5s 后静默 Abort(rc=5)。延时必须显著大于 观察窗口(2.5s)+进程退出耗时，
+# 确保安装器真正开始写文件时本进程已退出、锁已释放。
+_UPDATE_LAUNCH_DELAY_SEC = 10
 
 
 def _do_update(download_url, version):
-    """后台线程：下载安装包 → 校验 → 静默安装 → 退出当前进程释放 EXE 锁"""
+    """后台线程：下载安装包 → 校验 → 延时启动静默安装器 → 退出本进程释放 EXE 锁
+
+    v1.1.56 无人值守升级时序：Popen 一个 cmd 启动器（内部 ping 延时
+    _UPDATE_LAUNCH_DELAY_SEC 秒后才真正 start 安装器），只做 2.5s 存活观察，
+    随即 os._exit(0) 释放被锁定的运行中 EXE。延时保证安装器真正写文件时本进程
+    早已退出、锁已释放 → 覆盖成功并由 [Run] postinstall 自动重启新版本。
+    为什么必须延时：Inno 流式解压、主 exe 是 [Files] 首项，安装器一启动 ~0.1s
+    就会尝试覆盖仍被锁定的主 exe，撞锁重试 ~5s 后静默 Abort(rc=5)——直接
+    Popen 必然失败（实测 X6）。installer.iss 配套无 AppMutex、显式
+    CloseApplications=no（AppMutex→rc=1；CloseApplications 的 Restart Manager
+    关不掉运行中进程→rc=5，均实测复现）。
+    """
     import urllib.request as _ur
     tmp_path = None
     try:
@@ -422,25 +442,39 @@ def _do_update(download_url, version):
             _update_state['status'] = 'installing'
             _update_state['percent'] = 100
         logger.info(f'升级包下载完成({fsize}字节)，开始静默安装: {tmp_path}')
-        proc = subprocess.Popen([
-            tmp_path, '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS'
-        ], close_fds=True)
-        # v1.1.52 加固：安装器启动后宽限观察其存活。
-        # 教训（v1.1.51 事故）：损坏的安装包启动后数秒内以非零码退出，而旧逻辑
-        # 不看存活直接 os._exit → 用户端表现为“下载完成→程序消失→什么都没装上”，
-        # 且程序已自杀无法再次自动升级，只能手动救。
-        # 现在：观察窗口内安装器早退（非零退出码）→ 抛错进入 error 状态，
-        # 当前进程保持存活，前端提示失败并自动回退浏览器下载。
+        # v1.1.56 最终修订：经 cmd /c + ping 延时 ~_UPDATE_LAUNCH_DELAY_SEC 秒
+        # 后才真正启动安装器，绕开“流式解压撞锁”。直接 Popen 安装器必然失败：
+        # Inno 流式解压、主 exe 是 [Files] 首项，安装器启动 ~0.1s 即尝试覆盖仍
+        # 被锁定的运行中主 exe，DeleteFile 撞锁重试 ~5s 后静默 Abort(rc=5)
+        # （实测 X6）。延时必须显著大于观察窗口(2.5s)+进程退出耗时，保证安装器
+        # 真正开始写文件时本进程已退出、锁已释放 → 覆盖成功 → [Run] 自动重启。
+        # 另：不传 /CLOSEAPPLICATIONS——Inno 6 默认开启 CloseApplications，用
+        # Restart Manager 在安装起始即尝试关闭占用文件的运行中进程，RM 关不掉
+        # 时静默 Abort(rc=5)（实测 X2/X3）；AppMutex 同理会让静默安装器在升级方
+        # 仍持互斥量时直接取消(rc=1)。installer.iss 已配套：无 AppMutex +
+        # 显式 CloseApplications=no。
+        cmd_exe = os.environ.get('ComSpec') or 'cmd.exe'
+        # ping -n N 127.0.0.1 实耗约 N-1 秒，故 +1 凑足 _UPDATE_LAUNCH_DELAY_SEC
+        delay_pings = int(_UPDATE_LAUNCH_DELAY_SEC) + 1
+        proc = subprocess.Popen(
+            f'"{cmd_exe}" /c ping -n {delay_pings} 127.0.0.1 > nul & '
+            f'"{tmp_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART',
+            close_fds=True,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+        )
+        # v1.1.52 加固（保留语义）：观察窗口内 cmd 启动器早退（非零退出码）→
+        # 抛错进入 error 状态，当前进程保持存活，前端提示失败并自动回退浏览器
+        # 下载。正常路径 cmd 启动器在 ping 延时期间必然存活 → 窗口走完即退出。
         deadline = time.time() + _UPDATE_INSTALL_GRACE_SEC
         while time.time() < deadline:
             rc = proc.poll()
             if rc is not None:
                 if rc != 0:
-                    raise RuntimeError(f'安装程序异常退出（代码 {rc}），请重试或改用浏览器下载')
+                    raise RuntimeError(f'安装程序异常退出（启动器，代码 {rc}），请重试或改用浏览器下载')
                 break  # 正常快速完成（罕见，多为测试桩）
-            time.sleep(0.5)
-        # 安装器存活（或已正常完成）→ 退出当前进程，释放 EXE 文件锁（安装器负责重启程序）
-        time.sleep(5)
+            time.sleep(0.2)
+        # cmd 启动器存活 → 立即退出当前进程释放 EXE 文件锁。约延时结束后 cmd
+        # 才真正 start 安装器，届时锁已释放，安装器负责完成覆盖并重启程序。
         os._exit(0)
     except Exception as e:
         logger.error(f'自动升级失败: {e}')

@@ -5,6 +5,9 @@
 """
 import os
 import sys
+import glob
+import ctypes
+import tempfile
 import threading
 import time
 import socket
@@ -105,6 +108,40 @@ def _check_webview2_runtime():
 
 
 def main():
+    # v1.1.56 单实例守护：检测到已有实例在运行则直接退出。
+    # 为什么必要：自动升级要求"升级方退出 → 释放主 EXE 文件锁 → 安装器覆盖"。
+    # 若用户重复双击启动第二个实例（launcher 端口顺延会让它跑起来），两个进程
+    # 同时锁定主 EXE，升级时安装器永远无法覆盖（实测双实例下升级失败）。单实例
+    # 守护同时避免双窗口/双端口困惑。互斥量句柄随进程退出由内核自动释放，不会
+    # 残留陈旧锁。
+    # 注意：此互斥量只作单实例守护，installer.iss 绝不引用它（不配 AppMutex）
+    # 且显式 CloseApplications=no——AppMutex 让静默安装器检测到升级方仍存活即
+    # 取消(rc=1)；CloseApplications 在 Inno 6 默认开启，其 Restart Manager 关
+    # 不掉运行中进程即静默 Abort(rc=5)，两者都会阻断无人值守升级。升级靠
+    # app.py 2.5s 内自行退出释放 EXE 锁完成（v1.1.56 修订教训，详见 installer.iss
+    # 与 _do_update 注释）。
+    try:
+        ctypes.windll.kernel32.CreateMutexW(None, False, 'LuyuePlatform_SingletonMutex')
+        if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            _show_error_box('程序已在运行', '鲁岳企业服务·综合智能平台 已在运行。\n请勿重复启动。')
+            return
+    except Exception:
+        pass
+
+    # v1.1.56：清理历史自动升级残留的临时安装包（%TEMP%\ly_update_*.exe，
+    # 每个约 324MB）。此刻本进程是新版本，说明上一轮安装器已结束，残留可安全删除；
+    # 只删 10 分钟前创建的，避免误删另一实例正在下载/安装中的升级包。
+    try:
+        _stale_threshold = time.time() - 600
+        for _name in glob.glob(os.path.join(tempfile.gettempdir(), 'ly_update_*.exe')):
+            try:
+                if os.path.getmtime(_name) < _stale_threshold:
+                    os.remove(_name)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     # 确保必要目录存在
     for d in ['data', 'uploads', 'outputs', 'logs']:
         os.makedirs(os.path.join(BASE_DIR, d), exist_ok=True)

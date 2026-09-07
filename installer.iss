@@ -9,7 +9,7 @@
 
 #define MyAppName "鲁岳企业服务·综合智能平台"
 #define MyAppShortName "LY重点群体涉税申报综合智能平台"
-#define MyAppVersion "1.1.55"
+#define MyAppVersion "1.1.56"
 #define MyAppPublisher "鲁岳企业服务"
 #define MyAppURL "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform"
 #define MyAppExeName "鲁岳企业服务_综合智能平台.exe"
@@ -22,6 +22,22 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
+; v1.1.56 自动升级（最终修订：显式 CloseApplications=no；绝不能配 AppMutex）
+; 1. AppMutex=LuyuePlatform_SingletonMutex 绝不能配：自动升级时启动安装器的是
+;    "升级方"实例本身，它在安装器启动瞬间仍存活并持有互斥量 → 安装器启动即判
+;    "程序正在运行"，静默模式(/SUPPRESSMSGBOXES)默认取消，rc=1 退出（实测）。
+; 2. CloseApplications 必须显式 =no：Inno 6.x 默认开启 CloseApplications（用
+;    Restart Manager 在安装起始阶段即尝试关闭占用目标文件的运行中进程）；本机
+;    RM 关不掉运行中的升级方实例（"Some applications could not be shut down"）
+;    → 静默模式默认 Abort，rc=5 退出（实测 X2/X3 均复现 rc=5）。=no 后安装器
+;    不再调用 RM，也不在启动阶段检测运行中进程。
+; 3. 正确机制（纯时序，不依赖安装器关应用）：升级方 app.py _do_update 在
+;    Popen 启动静默安装器后仅做 2.5s 坏包早退观察，随即 os._exit(0) 自行退出
+;    释放被锁定的运行中 EXE；安装器此时仍在解压 ~340MB lzma2 包（需数十秒），
+;    待其覆盖主 exe 时文件锁早已释放 → 覆盖成功 → 本段 [Run] postinstall
+;    自动重启新版本，全程无人值守。安装器自身不检测/不关闭任何运行中进程。
+CloseApplications=no
+
 ; 默认安装到用户目录（无需管理员权限，避免 Program Files 写入权限问题）
 DefaultDirName={localappdata}\Programs\{#MyAppShortName}
 DefaultGroupName={#MyAppShortName}

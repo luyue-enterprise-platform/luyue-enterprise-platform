@@ -28,7 +28,15 @@ CHECKS = {
         'https://luyue-1466112667.cos.ap-shanghai.myqcloud.com/',
         # v1.1.52 安装器存活观察（f-string 片段，需子串匹配）
         '安装程序异常退出',
+        # v1.1.56 无人值守升级：cmd 延时启动器 + 短观察后退出释放 EXE 锁
+        # （docstring 针刺——区分“最终 cmd 延时版”与仅 CloseApplications=no 的中间版）
+        '释放被锁定的运行中 EXE',
+        '_UPDATE_LAUNCH_DELAY_SEC 秒后才真正 start 安装器',
+        # v1.1.56 cmd 启动器代码常量（ComSpec 兜底字面量）
+        'cmd.exe',
     ],
+    # 注：launcher.py 是 PyInstaller 入口脚本，编入 bootloader 而非 PYZ，
+    # 无法用 PYZ 提取针刺——其 v1.1.56 互斥/清理逻辑由 tests/test_v1_1_56.py 静态断言
     # v1.1.50 缴费单位误解析修复（序号/经办机构拒判 + 公司后缀投票兜底）
     # v1.1.51 中断信息明细剔除（'中断' 关键字 + 中断数据行日期正则）
     'modules.insurance.core.data_parser': [

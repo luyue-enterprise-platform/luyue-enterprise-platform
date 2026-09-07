@@ -14,6 +14,7 @@
 import functools
 import http.server
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -176,16 +177,22 @@ class TestDoUpdateEndToEnd(unittest.TestCase):
             self.assertEqual(app_module._update_state['downloaded'], 4098)
             self.assertEqual(app_module._update_state['version'], '1.1.49')
 
-        # 安装器以静默参数拉起
+        # 安装器以静默参数拉起（v1.1.56 起改为 cmd /c + ping 延时启动器，且不传
+        # /CLOSEAPPLICATIONS——RM 关不掉运行中应用时静默模式默认 Abort(rc=5) 阻断升级）
         self.exit_mock.assert_called_once_with(0)
         self.popen_mock.assert_called_once()
-        args = self.popen_mock.call_args[0][0]
-        self.assertTrue(args[0].endswith('.exe'))
-        for flag in ('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS'):
-            self.assertIn(flag, args)
-        # 清理下载的临时文件
+        cmdline = self.popen_mock.call_args[0][0]
+        self.assertIsInstance(cmdline, str)
+        self.assertIn('cmd', cmdline)
+        self.assertIn('ping -n', cmdline)
+        for flag in ('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'):
+            self.assertIn(flag, cmdline)
+        self.assertNotIn('/CLOSEAPPLICATIONS', cmdline)
+        # 清理下载的临时安装包
+        m = re.search(r'"([^"]*ly_update_[^"]*\.exe)"', cmdline)
+        self.assertIsNotNone(m, f'命令串中找不到安装包路径: {cmdline}')
         try:
-            os.remove(args[0])
+            os.remove(m.group(1))
         except OSError:
             pass
 
