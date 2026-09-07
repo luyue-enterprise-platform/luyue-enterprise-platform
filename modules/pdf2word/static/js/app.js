@@ -364,14 +364,15 @@ function renderResult(data) {
                 pages: item.pages,
                 ok: true,
                 err: '',
-                action: item.action
+                action: item.action,
+                validation: item.validation || null
             });
             successCount++;
             totalPages += item.pages || 0;
         });
         (data.skipped || []).forEach(function (item) {
             rows.push({ src: item.name, dst: '-', pages: '-', ok: false,
-                        err: item.reason || '转换失败', action: null });
+                        err: item.reason || '转换失败', action: null, validation: null });
             failCount++;
         });
     } else {
@@ -383,7 +384,8 @@ function renderResult(data) {
                 pages: ok ? item.pages : '-',
                 ok: ok,
                 err: item.error || '',
-                action: null
+                action: null,
+                validation: item.validation || null
             });
             if (ok) {
                 successCount++;
@@ -398,12 +400,31 @@ function renderResult(data) {
     document.getElementById('thSrc').textContent = isTopdf ? '原文件名' : '原PDF文件名';
     document.getElementById('thDst').textContent = isTopdf ? 'PDF文件名' : 'Word文件名';
 
+    // 校验统计（v2.1.0：转换报告汇总）
+    var valPass = 0, valFixed = 0, valFail = 0;
+    rows.forEach(function (r) {
+        if (!r.validation) return;
+        if (r.validation.overall === 'pass') valPass++;
+        else if (r.validation.overall === 'fixed') valFixed++;
+        else if (r.validation.overall === 'fail') valFail++;
+    });
+
     // 统计卡片（成功/失败清单及数量统计）
     var modeText = '';
     if (isTopdf) {
         modeText = '<div class="stat-card"><div class="stat-value" style="font-size:16px;line-height:44px;">' +
             (data.output_mode === 'merge' ? '合并模式' : '独立模式') + '</div>' +
             '<div class="stat-label">输出模式</div></div>';
+    }
+    var valCard = '';
+    if (valPass + valFixed + valFail > 0) {
+        var valColor = valFail > 0 ? 'danger' : (valFixed > 0 ? 'warn' : 'success');
+        var valText = valFail > 0
+            ? (valPass + valFixed) + '/' + (valPass + valFixed + valFail)
+            : (valPass + valFixed);
+        valCard = '<div class="stat-card ' + valColor + '">' +
+            '<div class="stat-value">' + valText + '</div>' +
+            '<div class="stat-label">校验通过' + (valFixed ? '（含修正' + valFixed + '）' : '') + '</div></div>';
     }
     document.getElementById('statsGrid').innerHTML =
         '<div class="stat-card success">' +
@@ -422,15 +443,25 @@ function renderResult(data) {
             '<div class="stat-value">' + rows.length + '</div>' +
             '<div class="stat-label">文件总数</div>' +
         '</div>' +
-        modeText;
+        modeText + valCard;
 
-    // 转换详情表格
+    // 转换详情表格（含校验列 + 可展开逐项明细）
     var tbody = document.getElementById('resultTableBody');
     if (rows.length > 0) {
-        tbody.innerHTML = rows.map(function (row, idx) {
+        var htmlParts = [];
+        rows.forEach(function (row, idx) {
             var statusHtml = row.ok
                 ? '<span class="col-status-ok">✓ 成功</span>'
                 : '<span class="col-status-fail">✗ 失败</span>';
+            // 校验徽标
+            var valHtml = '<span style="color:#bbb;">—</span>';
+            if (row.validation) {
+                var ov = row.validation.overall;
+                var badge = ov === 'pass' ? '<span class="val-badge val-pass">✓ 通过</span>'
+                    : ov === 'fixed' ? '<span class="val-badge val-fixed">⚠ 已修正</span>'
+                    : '<span class="val-badge val-fail">✗ 未通过</span>';
+                valHtml = '<a href="javascript:void(0)" onclick="toggleValDetail(' + idx + ')">' + badge + '</a>';
+            }
             var lastHtml = '';
             if (row.ok) {
                 lastHtml = '<button class="btn-download" onclick="downloadSingle(this,\'' + esc(row.dst) + '\')">保存</button>';
@@ -440,20 +471,93 @@ function renderResult(data) {
             } else if (row.err) {
                 lastHtml = '<span style="color:#E74C3C;font-size:12px;" title="' + esc(row.err) + '">' + esc(row.err.substring(0, 30)) + (row.err.length > 30 ? '...' : '') + '</span>';
             }
-            return '<tr>' +
+            htmlParts.push('<tr>' +
                 '<td class="col-seq">' + (idx + 1) + '</td>' +
                 '<td class="col-name" title="' + esc(row.src) + '">' + esc(row.src) + '</td>' +
                 '<td class="col-name">' + esc(row.dst) + '</td>' +
                 '<td>' + row.pages + '</td>' +
                 '<td>' + statusHtml + '</td>' +
+                '<td>' + valHtml + '</td>' +
                 '<td>' + lastHtml + '</td>' +
-                '</tr>';
-        }).join('');
+                '</tr>');
+            // 校验明细子行（默认隐藏）
+            if (row.validation) {
+                var items = (row.validation.items || []).map(function (it) {
+                    var icon = it.status === 'pass' ? '<span class="val-badge val-pass">✓</span>'
+                        : it.status === 'fixed' ? '<span class="val-badge val-fixed">⚠</span>'
+                        : '<span class="val-badge val-fail">✗</span>';
+                    return '<div class="val-item">' + icon +
+                        '<span class="val-item-label">' + esc(it.label) + '</span>' +
+                        '<span class="val-item-detail">' + esc(it.detail) + '</span></div>';
+                }).join('');
+                htmlParts.push('<tr class="val-detail-row" id="valDetail' + idx + '" style="display:none;">' +
+                    '<td colspan="7"><div class="val-detail-box">' +
+                    '<div class="val-detail-title">校验明细：' + esc(row.src) + ' → ' + esc(row.dst) + '</div>' +
+                    items + '</div></td></tr>');
+            }
+        });
+        tbody.innerHTML = htmlParts.join('');
     } else {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999;">无转换结果</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#999;">无转换结果</td></tr>';
     }
 
     document.getElementById('progressSection').style.display = 'none';
+}
+
+// ===== 校验明细展开/收起（v2.1.0） =====
+function toggleValDetail(idx) {
+    var el = document.getElementById('valDetail' + idx);
+    if (el) {
+        el.style.display = (el.style.display === 'none') ? 'table-row' : 'none';
+    }
+}
+
+// ===== 导出校验报告（v2.1.0：TXT 逐文件逐项汇总） =====
+function exportValidationReport(btn) {
+    if (!lastResultData) {
+        showToast('暂无校验结果', 'error');
+        return;
+    }
+    var data = lastResultData;
+    var direction = data.direction || 'pdf2word';
+    var lines = [];
+    lines.push('批量' + (direction === 'topdf' ? '转PDF' : 'PDF转Word') + ' 转换校验报告');
+    lines.push('生成时间：' + new Date().toLocaleString());
+    lines.push('校验项：页面方向 / 页面尺寸(A4) / 布局结构(文本·图片·表格) / 字体与格式');
+    lines.push(''.padEnd(60, '='));
+    var results = data.results || [];
+    var passN = 0, fixedN = 0, failN = 0;
+    results.forEach(function (item) {
+        var srcName = direction === 'topdf' ? item.name : item.pdf_name;
+        var dstName = direction === 'topdf' ? item.out_name : item.docx_name;
+        var v = item.validation;
+        if (!v) {
+            lines.push('【未校验】' + srcName + '（' + (item.error || '转换失败') + '）');
+            return;
+        }
+        var mark = v.overall === 'pass' ? '通过' : v.overall === 'fixed' ? '已修正' : '未通过';
+        if (v.overall === 'pass') passN++;
+        else if (v.overall === 'fixed') fixedN++;
+        else failN++;
+        lines.push('【' + mark + '】' + srcName + ' → ' + dstName);
+        (v.items || []).forEach(function (it) {
+            var icon = it.status === 'pass' ? '✓' : it.status === 'fixed' ? '⚠' : '✗';
+            lines.push('    ' + icon + ' ' + it.label + '：' + it.detail);
+        });
+    });
+    lines.push(''.padEnd(60, '='));
+    lines.push('汇总：通过 ' + passN + ' 个，已修正 ' + fixedN + ' 个，未通过 ' + failN + ' 个');
+    (data.skipped || []).forEach(function (s) {
+        lines.push('【失败】' + s.name + '：' + (s.reason || ''));
+    });
+    var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/plain;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '转换校验报告_' + new Date().toISOString().slice(0, 10) + '.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast('校验报告已导出', 'success');
 }
 
 // ===== 选择保存位置（弹出系统原生文件夹选择对话框） =====

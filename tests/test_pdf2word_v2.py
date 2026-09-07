@@ -53,7 +53,7 @@ def _make_txt(path, content):
 class TestVersionAndFormats(unittest.TestCase):
 
     def test_module_version(self):
-        self.assertEqual(MODULE_VERSION, '2.0.0')
+        self.assertEqual(MODULE_VERSION, '2.1.0')
 
     def test_health_reports_version(self):
         with flask_app.test_client() as c:
@@ -62,7 +62,7 @@ class TestVersionAndFormats(unittest.TestCase):
                 sess['username'] = 'tester'
             r = c.get('/pdf2word/api/health')
             self.assertEqual(r.status_code, 200)
-            self.assertEqual(r.get_json()['version'], '2.0.0')
+            self.assertEqual(r.get_json()['version'], '2.1.0')
 
     def test_supported_exts(self):
         for ext in ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tif',
@@ -93,7 +93,7 @@ class TestSingleConverters(unittest.TestCase):
         src = _make_txt(os.path.join(self.tmp, 't.txt'),
                         '第一行中文内容\n' + '长' * 4000 + '\nEND')
         dst = os.path.join(self.tmp, 't.pdf')
-        pages = to_pdf.convert_text_to_pdf(src, dst)
+        pages, _report = to_pdf.convert_text_to_pdf(src, dst)
         self.assertGreaterEqual(pages, 2)  # 长文本须分页
         import fitz
         with fitz.open(dst) as d:
@@ -104,7 +104,7 @@ class TestSingleConverters(unittest.TestCase):
     def test_pdf_passthrough(self):
         src = _make_pdf(os.path.join(self.tmp, 'a.pdf'), ['A1', 'A2'])
         dst = os.path.join(self.tmp, 'copy.pdf')
-        pages = to_pdf.convert_pdf_to_pdf(src, dst)
+        pages, _report = to_pdf.convert_pdf_to_pdf(src, dst)
         self.assertEqual(pages, 2)
 
     def test_empty_file_raises_with_reason(self):
@@ -147,7 +147,7 @@ class TestSingleConverters(unittest.TestCase):
         d.add_paragraph('Word COM 转换实测内容')
         d.save(docx_path)
         dst = os.path.join(self.tmp, '文档.pdf')
-        pages = to_pdf.convert_word_to_pdf(docx_path, dst)
+        pages, _report = to_pdf.convert_word_to_pdf(docx_path, dst)
         self.assertGreaterEqual(pages, 1)
         import fitz
         with fitz.open(dst) as pdf:
@@ -167,7 +167,7 @@ class TestSingleConverters(unittest.TestCase):
         wb.active['A1'] = 'ExcelCOM实测'
         wb.save(xlsx_path)
         dst = os.path.join(self.tmp, '表格.pdf')
-        pages = to_pdf.convert_excel_to_pdf(xlsx_path, dst)
+        pages, _report = to_pdf.convert_excel_to_pdf(xlsx_path, dst)
         self.assertGreaterEqual(pages, 1)
         import fitz
         with fitz.open(dst) as pdf:

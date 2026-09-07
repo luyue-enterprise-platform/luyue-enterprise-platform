@@ -465,3 +465,48 @@ body {
     background: #FFF8E7;
     border: 1px solid #F1C40F;
 }
+
+/* ===== v2.1.0 转换校验报告 ===== */
+.val-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.val-badge.val-pass  { background: #E8F8F0; color: #1E8449; border: 1px solid #A9DFBF; }
+.val-badge.val-fixed { background: #FEF9E7; color: #B9770E; border: 1px solid #F7DC6F; }
+.val-badge.val-fail  { background: #FDEDEC; color: #C0392B; border: 1px solid #F1948A; }
+
+.val-detail-row td { background: #FAFBFC; padding: 0 12px 10px 12px; }
+.val-detail-box {
+    border: 1px solid #E5EAF0;
+    border-radius: 8px;
+    background: #fff;
+    padding: 10px 14px;
+    margin-top: 2px;
+}
+.val-detail-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #2C3E50;
+    margin-bottom: 8px;
+}
+.val-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+}
+.val-item .val-badge { cursor: default; padding: 0 6px; }
+.val-item-label {
+    flex-shrink: 0;
+    color: #566573;
+    font-weight: 600;
+    min-width: 110px;
+}
+.val-item-detail { color: #7B8794; word-break: break-all; }

@@ -85,10 +85,12 @@ CHECKS = {
         '统计结果起点 = max(统计开始, 重叠起点)',
     ],
     # v2.0.0 可逆转换：反向引擎 + blueprint 分流 + 模块版本
+    # v2.1.0 全面保真（A4 规范化 + 逐项校验）针刺合并于此
     'modules.pdf2word.core.to_pdf': [
         '批量转 PDF 主入口',
         '独立模式命名：与源文件同名仅换扩展名',
-        '合并模式：按传入顺序把全部文件合并为单个 PDF',
+        'v2.1.0 全面保真',
+        '宽度适配一页防截断',
     ],
     'modules.pdf2word.blueprint': [
         '与 _process_task 完全隔离',
@@ -97,7 +99,18 @@ CHECKS = {
     ],
     'modules.pdf2word': [
         '可逆转换',
-        '2.0.0',
+        '2.1.0',
+        # v2.1.0 双向保真（模块 docstring 针刺）
+        'v2.1.0 双向保真',
+    ],
+    # v2.1.0 A4 规范化引擎 + 逐项校验器
+    'modules.pdf2word.core.page_norm': [
+        'A4 页面规范化引擎',
+        '方向绝不改变',
+    ],
+    'modules.pdf2word.core.validator': [
+        '转换校验器',
+        '自动修正后重新校验',
     ],
     # v2.0.0 多省份：模板引擎 + 省份必选端点
     'modules.insurance.core.template_engine': [

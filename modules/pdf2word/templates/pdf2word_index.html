@@ -131,6 +131,7 @@
                                     <th id="thDst">Word文件名</th>
                                     <th>页数</th>
                                     <th>状态</th>
+                                    <th>校验</th>
                                     <th>失败原因</th>
                                 </tr>
                             </thead>
@@ -143,6 +144,9 @@
                 <div class="action-buttons">
                     <button class="btn-primary btn-lg" id="btnSaveToLocation" onclick="saveToLocation(this)">
                         📁 选择保存位置
+                    </button>
+                    <button class="btn-ghost" onclick="exportValidationReport(this)">
+                        📋 导出校验报告
                     </button>
                     <button class="btn-ghost" onclick="downloadAll(this)">
                         📥 下载ZIP
