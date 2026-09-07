@@ -1,12 +1,12 @@
 {
-  "version": "2.1.1",
-  "version_code": 2101,
+  "version": "2.1.2",
+  "version_code": 2102,
   "release_date": "2026-09-07",
   "mandatory": false,
   "changelog": [
-    "v2.1.1 更新（重要修复）：",
-    "1. 修复：批量转PDF时同时选择多个文件夹，只有第一个文件夹的文件被转换，其余文件夹的文件被静默丢弃（表现为待转换文件数远多于实际转换数）。现在所有文件夹都会完整参与转换",
-    "2. 优化：文件夹选择失效（如程序重启后）时明确提示\"请重新选择文件夹\"，不再静默跳过"
+    "v2.1.2 更新（重要修复）：",
+    "1. 修复：图片转PDF时，部分竖版内容（如手机拍照的证件）被错误转成横版。现在按图片实际主体内容判断横竖版，并自动校正手机拍照方向，转换方向与原始内容一致",
+    "2. 优化：横竖版判断不再受图片右下角水印/印章位置影响"
   ],
-  "download_url": "https://luyue-1466112667.cos.ap-shanghai.myqcloud.com/LY_setup_v2.1.1.exe"
+  "download_url": "https://luyue-1466112667.cos.ap-shanghai.myqcloud.com/LY_setup_v2.1.2.exe"
 }

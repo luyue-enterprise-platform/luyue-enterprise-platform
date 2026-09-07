@@ -91,6 +91,13 @@ CHECKS = {
         '独立模式命名：与源文件同名仅换扩展名',
         'v2.1.0 全面保真',
         '宽度适配一页防截断',
+        # v2.1.2 图片横竖版主体内容判定（convert_image_to_pdf docstring 针刺）
+        '按主体内容判定横竖版',
+    ],
+    # v2.1.2 新增：图片主体内容方向判定模块（EXIF 归一化 + OCR 文字区域，水印鲁棒）
+    'modules.pdf2word.core.content_orient': [
+        '图片主体内容方向判定',
+        '依据图片实际主体内容',
     ],
     'modules.pdf2word.blueprint': [
         '与 _process_task 完全隔离',
@@ -114,6 +121,8 @@ CHECKS = {
     'modules.pdf2word.core.validator': [
         '转换校验器',
         '自动修正后重新校验',
+        # v2.1.2 图片校验方向按主体内容预期（validate_image_to_pdf docstring 针刺）
+        '方向符合主体内容预期',
     ],
     # v2.0.0 多省份：模板引擎 + 省份必选端点
     'modules.insurance.core.template_engine': [

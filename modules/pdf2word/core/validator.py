@@ -27,7 +27,7 @@ from collections import Counter
 
 import fitz  # PyMuPDF
 
-from . import page_norm
+from . import content_orient, page_norm
 
 # ---------------- 阈值常量 ----------------
 TEXT_COVERAGE_MIN = 0.95      # 文本覆盖率（防截断丢字）
@@ -532,14 +532,22 @@ def _check_pdf_pages_self(pdf_path, file_label):
     return _check_pdf_pages(pdf_path, orients, file_label)
 
 
-def validate_image_to_pdf(image_paths, pdf_path, file_name, out_name):
-    """图片→PDF：页数=图片数、A4、方向符合宽高比预期、每页含图"""
+def validate_image_to_pdf(image_paths, pdf_path, file_name, out_name,
+                          expected_orients=None):
+    """图片→PDF：页数=图片数、A4、方向符合主体内容预期、每页含图。
+
+    expected_orients：转换阶段已判定的逐图方向（v2.1.2，避免重复 OCR）；缺省时
+    按主体内容（EXIF 归一化 + OCR 文字区域，对右下角水印鲁棒）自行判定。
+    """
     from PIL import Image
-    expected = []
-    for p in image_paths:
-        with Image.open(p) as im:
-            w, h = im.size
-        expected.append(page_norm.page_orientation(w, h))
+    expected = list(expected_orients) if expected_orients else []
+    if not expected:
+        for p in image_paths:
+            with Image.open(p) as im:
+                if im.mode in ('RGBA', 'P', 'LA'):
+                    im = im.convert('RGB')
+                _n, o, _b = content_orient.decide_orientation(im)
+            expected.append(o)
     items, _ = _check_pdf_pages(pdf_path, expected, file_name)
     with fitz.open(pdf_path) as doc:
         cnt = doc.page_count

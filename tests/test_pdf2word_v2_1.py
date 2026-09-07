@@ -214,8 +214,9 @@ class TestToPdfValidation(unittest.TestCase):
         src = os.path.join(self.tmp, '横图.png')
         Image.new('RGB', (1600, 900), (200, 30, 30)).save(src)
         dst = os.path.join(self.tmp, '横图.pdf')
-        pages = to_pdf.convert_image_to_pdf(src, dst)
+        pages, orient = to_pdf.convert_image_to_pdf(src, dst)
         self.assertEqual(pages, 1)
+        self.assertEqual(orient, 'landscape')
         with fitz.open(dst) as doc:
             r = doc[0].rect
             self.assertTrue(page_norm.is_a4(r.width, r.height))

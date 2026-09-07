@@ -3,7 +3,7 @@
 v2.1.0 全面保真：A4 规范化 + 逐项校验，与 pdf2word 方向同规则）
 
 支持格式：
-- 图片: .png .jpg .jpeg .bmp .gif .tif .tiff .webp  （fitz A4 排版，按宽高比选方向）
+- 图片: .png .jpg .jpeg .bmp .gif .tif .tiff .webp  （fitz A4 排版，按主体内容选方向）
 - Word: .doc .docx                                   （Word COM，逐节 A4+方向保持）
 - Excel: .xls .xlsx                                  （Excel COM，逐表 A4+适配页宽防截断）
 - 文本: .txt .md                                     （fitz A4 文本排版）
@@ -23,7 +23,7 @@ import shutil
 
 import fitz  # PyMuPDF
 
-from . import page_norm, validator
+from . import content_orient, page_norm, validator
 
 # ---------------- 支持格式 ----------------
 IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tif', '.tiff', '.webp'}
@@ -53,16 +53,23 @@ def _unique_out_path(out_dir, base_name, used_names):
     return os.path.join(out_dir, name)
 
 
-# ---------------- 图片 -> PDF（v2.1.0：A4 排版，按宽高比选方向，等比缩放居中） ----------------
+# ---------------- 图片 -> PDF（v2.1.2：A4 排版，按主体内容选方向，等比缩放居中） ----------------
 
 def convert_image_to_pdf(src, dst):
-    """单张图片转一页 A4 PDF：宽图→A4横版，竖图→A4竖版，等比缩放居中不变形"""
+    """单张图片转一页 A4 PDF：按主体内容判定横竖版，等比缩放居中不变形。
+
+    v2.1.2：方向改由 content_orient.decide_orientation 判定——先 EXIF 归一化，
+    再以 OCR 主体文字区域宽高比为准（对右下角水印/印章鲁棒），无文字时按像素
+    宽高兜底；不再单纯按像素宽高比（避免竖版证件照被误判为横版）。
+
+    返回 (页数, 方向)；方向 'portrait'|'landscape' 供校验复用，避免重复 OCR。
+    """
     from PIL import Image
     with Image.open(src) as img:
+        img, orient, _basis = content_orient.decide_orientation(img)
         if img.mode in ('RGBA', 'P', 'LA'):
             img = img.convert('RGB')
         w, h = img.size
-        orient = page_norm.page_orientation(w, h)
         dst_w, dst_h = page_norm.a4_size_for(orient)
         doc = fitz.open()
         try:
@@ -79,7 +86,7 @@ def convert_image_to_pdf(src, dst):
         finally:
             doc.close()
     with fitz.open(dst) as d:
-        return d.page_count
+        return d.page_count, orient
 
 
 # ---------------- Word -> PDF（v2.1.0：逐节 A4 + 方向保持） ----------------
@@ -322,11 +329,12 @@ def convert_one(src, dst, word_app=None, excel_app=None, with_validation=True):
     if os.path.getsize(src) == 0:
         raise ValueError('空文件（0 字节）')
     if ext in IMAGE_EXTS:
-        pages = convert_image_to_pdf(src, dst)
+        pages, orient = convert_image_to_pdf(src, dst)
         report = None
         if with_validation:
             report = validator.validate_image_to_pdf(
-                [src], dst, os.path.basename(src), os.path.basename(dst))
+                [src], dst, os.path.basename(src), os.path.basename(dst),
+                expected_orients=[orient])
         return pages, report
     if ext in WORD_EXTS:
         return convert_word_to_pdf(src, dst, word_app=word_app,

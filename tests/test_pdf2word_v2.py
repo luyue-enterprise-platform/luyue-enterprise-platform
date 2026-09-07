@@ -85,7 +85,7 @@ class TestSingleConverters(unittest.TestCase):
     def test_image_to_pdf(self):
         src = _make_png(os.path.join(self.tmp, 'img.png'))
         dst = os.path.join(self.tmp, 'img.pdf')
-        pages = to_pdf.convert_image_to_pdf(src, dst)
+        pages, _orient = to_pdf.convert_image_to_pdf(src, dst)
         self.assertGreaterEqual(pages, 1)
         self.assertTrue(os.path.isfile(dst))
 
