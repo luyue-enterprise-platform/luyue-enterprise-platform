@@ -19,13 +19,35 @@ if getattr(sys, 'frozen', False):
 # 释放 GIL，多线程可真正并行。串行调用方（单线程）行为与原版完全一致。
 _engines = threading.local()
 
+# v2.3.3 线程数封顶：onnxruntime 会话默认 intra_op=物理核数（吃满全部核），
+# 并行 N 个引擎就是 N×核数 个线程 spin-wait 抢核——超订严重时比串行还慢。
+# 并行调度前由 blueprint 按 workers 数设置每引擎线程数（总量 ≈ 物理核数）。
+_intra_op_threads = None
+
+
+def set_intra_op_threads(n):
+    """设置后续创建引擎的每会话线程数（None = onnxruntime 默认，吃满全核）
+
+    仅影响设置之后创建的引擎实例；已存在的线程本地引擎保持原配置。
+    """
+    global _intra_op_threads
+    _intra_op_threads = n
+
 
 def get_engine():
     """懒加载OCR引擎（线程本地单例，避免重复加载模型）"""
     engine = getattr(_engines, 'engine', None)
     if engine is None:
         from rapidocr_onnxruntime import RapidOCR
-        engine = RapidOCR()
+        kwargs = {}
+        if _intra_op_threads:
+            # UpdateParameters 按 det_/cls_/rec_ 前缀分发到三个子模型会话
+            kwargs = {
+                'det_intra_op_num_threads': _intra_op_threads,
+                'cls_intra_op_num_threads': _intra_op_threads,
+                'rec_intra_op_num_threads': _intra_op_threads,
+            }
+        engine = RapidOCR(**kwargs)
         _engines.engine = engine
     return engine
 

@@ -103,8 +103,15 @@ class TestThreadLocalEngine(unittest.TestCase):
     def setUp(self):
         if hasattr(ocr_engine._engines, 'engine'):
             del ocr_engine._engines.engine
+        # v2.3.3：_ocr_all_items 会设置模块级限核值，测试间必须隔离，
+        # 否则 FakeRapidOCR（不收 kwargs）会被限核参数砸中
+        self._orig_threads = ocr_engine._intra_op_threads
+        ocr_engine._intra_op_threads = None
 
-    tearDown = setUp
+    def tearDown(self):
+        if hasattr(ocr_engine._engines, 'engine'):
+            del ocr_engine._engines.engine
+        ocr_engine._intra_op_threads = self._orig_threads
 
     def test_per_thread_instances(self):
         created = []
@@ -467,3 +474,73 @@ class TestEffectiveParamsEcho(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+# ==================== 4. v2.3.3 OCR 线程数封顶 ====================
+
+class TestIntraOpThreadCap(unittest.TestCase):
+    """onnxruntime 默认每会话吃满全核，并行 N 引擎 = N×核数 线程抢核；
+    set_intra_op_threads 后 get_engine 必须把 det/cls/rec 三路限核传下去"""
+
+    def setUp(self):
+        if hasattr(ocr_engine._engines, 'engine'):
+            del ocr_engine._engines.engine
+        self._orig = ocr_engine._intra_op_threads
+
+    def tearDown(self):
+        ocr_engine.set_intra_op_threads(self._orig)
+        if hasattr(ocr_engine._engines, 'engine'):
+            del ocr_engine._engines.engine
+
+    def _fake_rapidocr(self, holder):
+        class FakeRapidOCR:
+            def __init__(self, **kwargs):
+                holder.append(kwargs)
+        fake_mod = types.ModuleType('rapidocr_onnxruntime')
+        fake_mod.RapidOCR = FakeRapidOCR
+        return fake_mod
+
+    def test_cap_threads_passed_to_engine(self):
+        holder = []
+        ocr_engine.set_intra_op_threads(2)
+        with mock.patch.dict(sys.modules, {'rapidocr_onnxruntime': self._fake_rapidocr(holder)}):
+            ocr_engine.get_engine()
+        self.assertEqual(holder, [{'det_intra_op_num_threads': 2,
+                                   'cls_intra_op_num_threads': 2,
+                                   'rec_intra_op_num_threads': 2}])
+
+    def test_no_cap_means_no_kwargs(self):
+        holder = []
+        ocr_engine.set_intra_op_threads(None)
+        with mock.patch.dict(sys.modules, {'rapidocr_onnxruntime': self._fake_rapidocr(holder)}):
+            ocr_engine.get_engine()
+        self.assertEqual(holder, [{}])
+
+    def test_dispatch_sets_threads_from_cpu_and_workers(self):
+        """_ocr_all_items 起池前按 核数//workers 设置限核"""
+        recorded = []
+        orig_set = ocr_engine.set_intra_op_threads
+        ocr_engine.set_intra_op_threads = lambda n: recorded.append(n)
+
+        task_id = 'testv233cap'
+        with ins_bp.tasks_lock:
+            ins_bp.tasks[task_id] = {'status': 'processing', 'current': 0,
+                                     'total': 0, 'message': '',
+                                     'cancelled': False, 'paused': False}
+        orig_workers = ins_bp.OCR_MAX_WORKERS
+        ins_bp.OCR_MAX_WORKERS = 4
+        try:
+            fake_parse = lambda fp, province_code=None: {
+                'insurance_type': None, 'name': 'x', 'period': None,
+                'company_name': ''}
+            with mock.patch.object(ins_bp, 'parse_ocr_result_from_image', fake_parse):
+                ins_bp._ocr_all_items(task_id, [('a.jpg', 'p0', 'o0')], None)
+        finally:
+            ins_bp.OCR_MAX_WORKERS = orig_workers
+            ocr_engine.set_intra_op_threads = orig_set
+            with ins_bp.tasks_lock:
+                ins_bp.tasks.pop(task_id, None)
+
+        import os as _os
+        expect = max(1, (_os.cpu_count() or 4) // 4)
+        self.assertEqual(recorded, [expect])

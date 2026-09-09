@@ -590,10 +590,14 @@ def _split_ocr_results(task_id, ocr_results, roster):
     return success_results, failed_results, all_files
 
 
-# v2.3.2 并行 OCR 工作者数：onnxruntime 推理释放 GIL，多线程真正并行；
-# 引擎为线程本地实例（ocr_engine.get_engine），无跨线程共享。
-# 上限 4：参保证明单张推理约 1-3s，4 线程已能跑满常见 4-8 核 CPU。
-OCR_MAX_WORKERS = max(1, min(4, (os.cpu_count() or 4)))
+# OCR 并行工作者数。
+# v2.3.3 实测结论（16 核开发机、真实引擎基准）：onnxruntime 单会话已把核
+# 吃满，CPU 推理瓶颈在计算单元/内存带宽，多会话并行因缓存与带宽争抢
+# 全面劣化——串行 19.7s vs 并行 40~70s（6 张 2000x1400）、
+# 17.3s vs 35~42s（8 张 1200x900），与 v2.3.2 上线后"变慢"反馈吻合。
+# 故默认回退串行（workers=1，行为同 v2.3.1）；并行调度代码保留，
+# 可通过环境变量 LY_OCR_WORKERS 显式开启（小核数机器若验证有效可试用）。
+OCR_MAX_WORKERS = max(1, int(os.environ.get('LY_OCR_WORKERS', '1') or 1))
 
 
 def _ocr_one_image(fp, province_code, display_name, source_origin):
@@ -633,8 +637,19 @@ def _ocr_all_items(task_id, all_items, province_code):
     有界窗口提交：任一时刻最多 OCR_MAX_WORKERS 张在飞，补齐窗口前先检查
     取消/暂停——保留原串行版的控制语义（取消立即停、暂停不再派新活）。
     返回 None 表示任务已取消（状态已在函数内回写）。
+
+    v2.3.3：并行（workers>1）时才压每会话线程数（核数/workers）——
+    onnxruntime 默认每会话吃满全核，N workers 就是 N×核数 线程抢核；
+    默认串行（workers=1）显式复位为不限核，单会话吃满全核最优。
     """
     from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+
+    from modules.insurance.core import ocr_engine as _ocr_eng
+    if OCR_MAX_WORKERS > 1:
+        _ocr_eng.set_intra_op_threads(
+            max(1, (os.cpu_count() or 4) // OCR_MAX_WORKERS))
+    else:
+        _ocr_eng.set_intra_op_threads(None)
 
     total = len(all_items)
 

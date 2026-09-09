@@ -86,6 +86,9 @@ CHECKS = {
         '并行识别全部图片',
         '有界窗口提交',
         '异常绝不抛出线程外',
+        # v2.3.3 速度回归：默认回退串行（环境变量可开并行）+ 每会话限核开关
+        'LY_OCR_WORKERS',
+        '并行（workers>1）时才压每会话线程数',
     ],
     # v1.1.54 统计表/预览列表新增劳动合同起止时间列
     # v1.1.55 需求4 打开即重算（docstring 针刺）
@@ -212,6 +215,11 @@ CHECKS = {
     'modules.insurance.core.ocr_engine': [
         '线程本地单例',
         '将PDF每页渲染为PNG图片',
+        # v2.3.3 限核传参（rapidocr 按 det_/cls_/rec_ 前缀分发到三个子模型会话）
+        '设置后续创建引擎的每会话线程数',
+        'det_intra_op_num_threads',
+        'cls_intra_op_num_threads',
+        'rec_intra_op_num_threads',
     ],
     # v2.3.1 需求4：合同整理同一人多图全角编号（1）（2）（3），首张必带（1）
     # （⚠️ f-string 片段如 （{idx + 1}） 不可作针刺，须用 docstring/日志字面量）
