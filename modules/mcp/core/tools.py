@@ -12,17 +12,31 @@ is_error=True 时按 MCP 规范标记工具执行失败。
 - 未完成任务 / 失败任务：给出明确错误、当前状态、已运行时长与后续建议，
   失败同时落盘错误报告便于追溯
 
+**集中式缺参校验（v2.3.0 设计）**
+提交类工具入参不全时，一次性返回全部阻塞项（blocking：字段/问题/修正方法/候选值）
+与可选项默认值（optional_defaults），不逐项报错，AI 据此发起一轮集中式询问。
+
+**Server 端等待（v2.3.0 设计）**
+提交类工具支持 wait_seconds 参数（默认 0 立即返回 task_id）：
+大批量长耗时任务可让 Server 在内部轮询等待至完成，一次性返回全部结果，
+避免 AI 反复调用"好了吗"。超时未完成则返回明确降级信息（任务仍在后台运行）。
+
 批量能力均为长耗时操作，统一返回 task_id，由 get_task_status / get_task_result
 完成后续轮询与取结果。
 """
 import json
 import os
+import time
 from datetime import datetime
 
 from . import adapters, artifacts, tasks
 
 # 判定为"疑似卡死"的运行时长阈值（秒）：仅用于给出提示，不主动结束任务
 STALE_AFTER_SEC = 30 * 60
+# Server 端内部等待上限（秒）：大批量 OCR 任务十几分钟，给足 20 分钟
+MAX_WAIT_SEC = 20 * 60
+# Server 端内部轮询间隔（秒）
+POLL_INTERVAL_SEC = 0.8
 
 INSURANCE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.pdf'}
 PDF_EXTS = {'.pdf'}
@@ -171,6 +185,240 @@ def _sync_insurance(task):
     return task
 
 
+def _missing_payload(issues, optional_defaults):
+    """集中式缺参响应：一次性列出全部阻塞项与可选项默认值，任务不提交。
+
+    blocking 项 = 缺失后任务无法执行的必填项（含问题、修正方法、候选值）；
+    optional_defaults = 可不填的项及其默认值。AI 据此向用户发起一轮集中式询问，
+    而非逐项追问。
+    """
+    payload = {
+        'error': '必填项缺失或非法，任务未提交。请一次性补齐下列全部 blocking 项后重新调用本工具',
+        'blocking': issues,
+        'optional_defaults': optional_defaults,
+        'suggestion': '请参照每项的 how_to_fix 与 candidates，在一条指令中一次性补齐全部 '
+                      'blocking 项；optional_defaults 所列项可不填，将按默认值执行',
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2), True
+
+
+def _province_candidates():
+    """社保核算省份候选列表（用于缺参响应中的候选值提示）"""
+    try:
+        from modules.insurance.core import template_engine
+        return [{'value': p.get('province_code'), 'label': p.get('province_name')}
+                for p in template_engine.get_provinces()]
+    except Exception:
+        return None
+
+
+def _check_wait(args):
+    """校验并解析 wait_seconds（Server 端内部等待秒数）。
+
+    返回 (issue, value)：issue 非 None 时为集中式缺参响应的阻塞项，
+    value 为钳制后的等待秒数（默认 0 = 立即返回 task_id）。
+    """
+    raw = args.get('wait_seconds', 0)
+    if raw in (None, ''):
+        return None, 0
+    try:
+        sec = int(raw)
+    except (TypeError, ValueError):
+        return ({
+            'field': 'wait_seconds',
+            'issue': 'wait_seconds 必须为 0-%d 的整数（秒），当前为: %s' % (MAX_WAIT_SEC, raw),
+            'how_to_fix': '不填或传 0 立即返回 task_id；大批量任务传 600-1200 由 '
+                          'Server 内部等待并一次性返回全部结果',
+        }, 0)
+    if sec < 0 or sec > MAX_WAIT_SEC:
+        return ({
+            'field': 'wait_seconds',
+            'issue': 'wait_seconds 须在 0-%d 范围内，当前为: %s' % (MAX_WAIT_SEC, sec),
+            'how_to_fix': '不填或传 0 立即返回 task_id；大批量任务建议 600-1200',
+        }, 0)
+    return None, sec
+
+
+def _wait_and_fetch(task_id, wait_seconds):
+    """Server 端内部等待：轮询至终态或期限，完成即一次性返回瘦结果。
+
+    避免外部 AI 反复轮询"好了吗"；超时未完成返回明确降级信息
+    （任务未失败、仍在后台运行、结果照常落盘）。
+    """
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        task = tasks.get(task_id)
+        if not task:
+            return _err('任务不存在: %s' % task_id)
+        task = _sync_insurance(task)
+        status = task.get('status')
+        if status == 'error':
+            return _err_payload(
+                task.get('error') or '任务执行失败', task,
+                suggestion='错误报告已落盘（见 artifacts）；请核对入参与文件后重新提交')
+        if status == 'success':
+            return _ok(_thin_payload(
+                task, hint='任务已完成，Server 已内部等待并一次性返回全部结果（耗时 %s）；'
+                           '完整明细已落盘，见 artifacts 文件卡片'
+                           % _elapsed_human(_elapsed(task))))
+        if time.monotonic() >= deadline:
+            return _err_payload(
+                'Server 已内部等待 %d 秒，任务仍在处理中'
+                '（任务未失败，仍在后台运行，结果完成后照常落盘）' % wait_seconds, task,
+                suggestion='可稍后调用 get_task_status 轮询进度，完成后调用 '
+                           'get_task_result 一次性取精简摘要与文件卡片；'
+                           '大批量任务建议提交时携带 wait_seconds=600-1200')
+        time.sleep(POLL_INTERVAL_SEC)
+
+
+def _immediate_payload(task_id, capability, file_count, message):
+    """wait_seconds=0 时的立即返回体：只给 task_id 与去向，不等待"""
+    return _ok({
+        'task_id': task_id,
+        'file_count': file_count,
+        'status': 'processing',
+        'message': message,
+        'result_dir': artifacts.artifact_dir(capability, task_id),
+        'hint': '任务已提交；大批量长耗时任务可在提交时携带 wait_seconds（0-%d 秒）'
+                '由 Server 内部等待并一次性返回全部结果；完成后调用 get_task_result '
+                '取精简摘要与文件卡片，完整明细一律落盘' % MAX_WAIT_SEC,
+    })
+
+
+YEAR_KEYS = ('year_start', 'month_start', 'year_end', 'month_end')
+
+
+def _issue_file_paths(args, exts):
+    """集中校验 file_paths：返回 (issues, file_paths)"""
+    issues = []
+    file_paths = None
+    try:
+        file_paths = _expand(args.get('file_paths'), exts)
+    except Exception as e:
+        issues.append({
+            'field': 'file_paths',
+            'issue': str(e),
+            'how_to_fix': '提供本机存在的文件或目录路径数组（支持 %s），目录将自动递归收集'
+                          % '/'.join(sorted(exts)),
+        })
+    return issues, file_paths
+
+
+def _validate_insurance(args):
+    """社保核算集中校验：一次性收集全部问题与可选项默认值"""
+    issues, file_paths = _issue_file_paths(args, INSURANCE_EXTS)
+
+    province = (args.get('province') or '').strip()
+    if not province:
+        item = {
+            'field': 'province',
+            'issue': 'province 为必填项，当前缺失，任务无法执行',
+            'how_to_fix': '从 candidates 中选择省份代码（value 字段），'
+                          '或先调用 insurance_provinces 查询完整列表',
+        }
+        candidates = _province_candidates()
+        if candidates:
+            item['candidates'] = candidates
+        issues.append(item)
+
+    tax_mode = args.get('tax_mode', '退税')
+    if tax_mode not in ('退税', '抵税'):
+        issues.append({
+            'field': 'tax_mode',
+            'issue': "tax_mode 只能是 '退税' 或 '抵税'，当前为: %s" % tax_mode,
+            'how_to_fix': "不填默认 '退税'；需要抵税时显式传 '抵税'",
+        })
+
+    year_range = None
+    present = [k for k in YEAR_KEYS if args.get(k) not in (None, '')]
+    if present and len(present) != len(YEAR_KEYS):
+        missing = [k for k in YEAR_KEYS if k not in present]
+        issues.append({
+            'field': '/'.join(YEAR_KEYS),
+            'issue': '统计时间段须四项同时提供，当前缺失: %s' % ', '.join(missing),
+            'how_to_fix': '同时提供 %s（均为整数），或四项全部省略（按参保数据全区间统计）'
+                          % ', '.join(YEAR_KEYS),
+        })
+    elif present:
+        try:
+            year_range = _year_range(args)
+        except Exception as e:
+            issues.append({
+                'field': '/'.join(YEAR_KEYS),
+                'issue': str(e),
+                'how_to_fix': '年月均为整数，且起始不得晚于截止（如 2023-01 至 2025-12）',
+            })
+
+    wait_issue, wait_seconds = _check_wait(args)
+    if wait_issue:
+        issues.append(wait_issue)
+
+    optional = [
+        {'field': 'tax_mode', 'default': '退税', 'note': '税种模式，可选 退税/抵税'},
+        {'field': 'roster_path', 'default': '不使用',
+         'note': '花名册文件路径（用于人员比对），可不填'},
+        {'field': '/'.join(YEAR_KEYS), 'default': '参保数据全区间',
+         'note': '统计时间段，四项整体可选'},
+        {'field': 'wait_seconds', 'default': 0,
+         'note': 'Server 内部等待秒数（0-%d），大批量建议 600-1200，等待完成一次性返回结果'
+                 % MAX_WAIT_SEC},
+    ]
+    return issues, optional, file_paths, province, tax_mode, year_range, wait_seconds
+
+
+def _validate_pdf2word(args, exts, direction):
+    """PDF 双向转换集中校验：一次性收集全部问题与可选项默认值"""
+    issues, file_paths = _issue_file_paths(args, exts)
+    output_mode = None
+    optional = []
+    if direction == 'topdf':
+        output_mode = args.get('output_mode') or 'individual'
+        if output_mode not in ('individual', 'merge'):
+            issues.append({
+                'field': 'output_mode',
+                'issue': "output_mode 只能是 'individual' 或 'merge'，当前为: %s" % output_mode,
+                'how_to_fix': "不填默认 'individual'（逐个输出）；需合并为单个 PDF 时传 'merge'",
+            })
+        optional.append({'field': 'output_mode', 'default': 'individual',
+                         'note': '输出方式，可选 individual（逐个）/merge（合并单PDF）'})
+    wait_issue, wait_seconds = _check_wait(args)
+    if wait_issue:
+        issues.append(wait_issue)
+    optional.append({'field': 'wait_seconds', 'default': 0,
+                     'note': 'Server 内部等待秒数（0-%d），大批量建议 600-1200，'
+                             '等待完成一次性返回结果' % MAX_WAIT_SEC})
+    return issues, optional, file_paths, output_mode, wait_seconds
+
+
+def _validate_contract(args):
+    """合同整理集中校验：一次性收集全部问题与可选项默认值"""
+    issues, file_paths = _issue_file_paths(args, CONTRACT_EXTS)
+    roster_path = args.get('roster_path')
+    if not roster_path or not str(roster_path).strip():
+        issues.append({
+            'field': 'roster_path',
+            'issue': 'roster_path 为必填项（合同按花名册匹配重命名），当前缺失，任务无法执行',
+            'how_to_fix': '提供花名册文件路径（Excel/CSV，含姓名列，姓名须与影像内容一致）',
+        })
+    elif not os.path.isfile(str(roster_path).strip()):
+        issues.append({
+            'field': 'roster_path',
+            'issue': '花名册文件不存在: %s' % roster_path,
+            'how_to_fix': '核对本机路径是否正确；须为已存在的 Excel/CSV 文件',
+        })
+    else:
+        roster_path = str(roster_path).strip()
+    wait_issue, wait_seconds = _check_wait(args)
+    if wait_issue:
+        issues.append(wait_issue)
+    optional = [
+        {'field': 'wait_seconds', 'default': 0,
+         'note': 'Server 内部等待秒数（0-%d），大批量建议 600-1200，等待完成一次性返回结果'
+                 % MAX_WAIT_SEC},
+    ]
+    return issues, optional, file_paths, roster_path, wait_seconds
+
+
 # ---------------- 工具实现 ----------------
 
 def tool_insurance_provinces(args):
@@ -182,79 +430,64 @@ def tool_insurance_provinces(args):
 
 
 def tool_insurance_calculate(args):
-    file_paths = _expand(args.get('file_paths'), INSURANCE_EXTS)
-    province = (args.get('province') or '').strip()
-    if not province:
-        raise ValueError('province 为必填项（可先调用 insurance_provinces 查询）')
-    year_range = _year_range(args)
+    issues, optional, file_paths, province, tax_mode, year_range, wait_seconds = \
+        _validate_insurance(args)
+    if issues:
+        return _missing_payload(issues, optional)
     task_id = tasks.create('insurance', {
-        'file_count': len(file_paths), 'province': province,
-        'tax_mode': args.get('tax_mode', '退税'),
+        'file_count': len(file_paths), 'province': province, 'tax_mode': tax_mode,
     })
     adapters.start_insurance(task_id, file_paths, province,
-                             tax_mode=args.get('tax_mode', '退税'),
+                             tax_mode=tax_mode,
                              roster_path=args.get('roster_path'),
                              year_range=year_range)
-    return _ok({
-        'task_id': task_id,
-        'file_count': len(file_paths),
-        'status': 'processing',
-        'message': '社保核算任务已提交，用 get_task_status 查询进度',
-        'result_dir': artifacts.artifact_dir('insurance', task_id),
-        'hint': '完成后调用 get_task_result 取精简摘要与文件卡片；完整明细不随响应返回，一律落盘',
-    })
+    if wait_seconds > 0:
+        return _wait_and_fetch(task_id, wait_seconds)
+    return _immediate_payload(task_id, 'insurance', len(file_paths),
+                              '社保核算任务已提交（%d 份文件）' % len(file_paths))
 
 
 def tool_convert_pdf_to_word(args):
-    file_paths = _expand(args.get('file_paths'), PDF_EXTS)
+    issues, optional, file_paths, _, wait_seconds = \
+        _validate_pdf2word(args, PDF_EXTS, 'pdf2word')
+    if issues:
+        return _missing_payload(issues, optional)
     task_id = tasks.create('pdf2word', {'file_count': len(file_paths),
                                         'direction': 'pdf2word'})
     adapters.start_pdf2word(task_id, file_paths, direction='pdf2word')
-    return _ok({
-        'task_id': task_id,
-        'file_count': len(file_paths),
-        'status': 'processing',
-        'message': 'PDF转Word任务已提交，用 get_task_status 查询进度',
-        'result_dir': artifacts.artifact_dir('pdf2word', task_id),
-        'hint': '完成后调用 get_task_result 取精简摘要与文件卡片；完整明细不随响应返回，一律落盘',
-    })
+    if wait_seconds > 0:
+        return _wait_and_fetch(task_id, wait_seconds)
+    return _immediate_payload(task_id, 'pdf2word', len(file_paths),
+                              'PDF转Word任务已提交（%d 份文件）' % len(file_paths))
 
 
 def tool_convert_to_pdf(args):
-    file_paths = _expand(args.get('file_paths'), TOPDF_EXTS)
-    output_mode = args.get('output_mode') or 'individual'
-    if output_mode not in ('individual', 'merge'):
-        raise ValueError("output_mode 只能是 'individual' 或 'merge'")
+    issues, optional, file_paths, output_mode, wait_seconds = \
+        _validate_pdf2word(args, TOPDF_EXTS, 'topdf')
+    if issues:
+        return _missing_payload(issues, optional)
     task_id = tasks.create('pdf2word', {'file_count': len(file_paths),
                                         'direction': 'topdf',
                                         'output_mode': output_mode})
     adapters.start_pdf2word(task_id, file_paths, direction='topdf',
                             output_mode=output_mode)
-    return _ok({
-        'task_id': task_id,
-        'file_count': len(file_paths),
-        'status': 'processing',
-        'message': '转PDF任务已提交，用 get_task_status 查询进度',
-        'result_dir': artifacts.artifact_dir('pdf2word', task_id),
-        'hint': '完成后调用 get_task_result 取精简摘要与文件卡片；完整明细不随响应返回，一律落盘',
-    })
+    if wait_seconds > 0:
+        return _wait_and_fetch(task_id, wait_seconds)
+    return _immediate_payload(task_id, 'pdf2word', len(file_paths),
+                              '转PDF任务已提交（%d 份文件）' % len(file_paths))
 
 
 def tool_contract_organize(args):
-    file_paths = _expand(args.get('file_paths'), CONTRACT_EXTS)
-    roster_path = args.get('roster_path')
-    if roster_path and not os.path.isfile(roster_path):
-        raise ValueError('花名册文件不存在: %s' % roster_path)
+    issues, optional, file_paths, roster_path, wait_seconds = \
+        _validate_contract(args)
+    if issues:
+        return _missing_payload(issues, optional)
     task_id = tasks.create('contract', {'file_count': len(file_paths)})
     adapters.start_contract(task_id, file_paths, roster_path=roster_path)
-    return _ok({
-        'task_id': task_id,
-        'file_count': len(file_paths),
-        'status': 'processing',
-        'message': '合同整理任务已提交，用 get_task_status 查询进度',
-        'result_dir': artifacts.artifact_dir('contract', task_id),
-        'hint': '完成后调用 get_task_result 取精简摘要与文件卡片；完整明细不随响应返回，一律落盘',
-    })
+    if wait_seconds > 0:
+        return _wait_and_fetch(task_id, wait_seconds)
+    return _immediate_payload(task_id, 'contract', len(file_paths),
+                              '合同整理任务已提交（%d 份文件）' % len(file_paths))
 
 
 def tool_get_task_status(args):
@@ -319,8 +552,10 @@ TOOLS = {
     },
     'insurance_calculate': {
         'description': '社保智能核算：批量识别参保证明（图片/PDF），生成重点群体参保统计与台账Excel。'
-                       '长耗时任务，返回 task_id，需用 get_task_status 轮询、get_task_result 取结果。'
-                       '结果与Excel均落盘，响应只回精简摘要与文件卡片（逐人参保明细含身份证号，不随响应返回）。',
+                       '长耗时任务；默认立即返回 task_id，可传 wait_seconds 由 Server 内部等待并一次性返回全部结果'
+                       '（数百份以上建议 600-1200，避免反复轮询）。'
+                       '结果与Excel均落盘，响应只回精简摘要与文件卡片（逐人参保明细含身份证号，不随响应返回）。'
+                       '入参缺失时一次性返回全部 blocking 项与可选项默认值。',
         'inputSchema': {
             'type': 'object',
             'properties': {
@@ -335,6 +570,9 @@ TOOLS = {
                 'month_start': {'type': 'integer', 'description': '统计起始月'},
                 'year_end': {'type': 'integer', 'description': '统计截止年'},
                 'month_end': {'type': 'integer', 'description': '统计截止月'},
+                'wait_seconds': {'type': 'integer',
+                                 'description': 'Server 内部等待并一次性返回结果的秒数（0-%d，默认 0 立即返回 task_id）。'
+                                                '大批量任务建议 600-1200' % MAX_WAIT_SEC},
             },
             'required': ['file_paths', 'province'],
         },
@@ -342,12 +580,16 @@ TOOLS = {
     },
     'convert_pdf_to_word': {
         'description': 'PDF 转 Word：批量将 PDF 转换为可编辑 docx，保持原排版（A4规范化+逐页方向保持+逐项校验）。'
-                       '长耗时任务，返回 task_id。结果落盘，响应只回精简摘要与文件卡片。',
+                       '长耗时任务；默认立即返回 task_id，可传 wait_seconds 由 Server 内部等待并一次性返回全部结果。'
+                       '结果落盘，响应只回精简摘要与文件卡片。',
         'inputSchema': {
             'type': 'object',
             'properties': {
                 'file_paths': {'type': 'array', 'items': {'type': 'string'},
                                'description': 'PDF 文件路径数组，可填目录（自动递归）'},
+                'wait_seconds': {'type': 'integer',
+                                 'description': 'Server 内部等待并一次性返回结果的秒数（0-%d，默认 0 立即返回 task_id）。'
+                                                '大批量任务建议 600-1200' % MAX_WAIT_SEC},
             },
             'required': ['file_paths'],
         },
@@ -355,7 +597,8 @@ TOOLS = {
     },
     'convert_to_pdf': {
         'description': '其他格式转 PDF：支持 Word/Excel/图片/文本/PDF，统一输出 A4 并按主体内容判定横竖版。'
-                       '长耗时任务，返回 task_id。结果落盘，响应只回精简摘要与文件卡片。',
+                       '长耗时任务；默认立即返回 task_id，可传 wait_seconds 由 Server 内部等待并一次性返回全部结果。'
+                       '结果落盘，响应只回精简摘要与文件卡片。',
         'inputSchema': {
             'type': 'object',
             'properties': {
@@ -363,6 +606,9 @@ TOOLS = {
                                'description': '待转换文件路径数组（docx/doc/xlsx/xls/图片/txt/md/pdf），可填目录'},
                 'output_mode': {'type': 'string', 'enum': ['individual', 'merge'],
                                 'description': "individual=逐个输出（默认），merge=合并为单个PDF"},
+                'wait_seconds': {'type': 'integer',
+                                 'description': 'Server 内部等待并一次性返回结果的秒数（0-%d，默认 0 立即返回 task_id）。'
+                                                '大批量任务建议 600-1200' % MAX_WAIT_SEC},
             },
             'required': ['file_paths'],
         },
@@ -371,7 +617,8 @@ TOOLS = {
     'contract_organize': {
         'description': '劳动合同整理：按花名册智能匹配合同影像并批量重命名归档；'
                        '自动匹配的直接重命名，未匹配与重名待确认的移入「待处理」目录。'
-                       '长耗时任务，返回 task_id。结果落盘，响应只回精简摘要与文件卡片。',
+                       '长耗时任务；默认立即返回 task_id，可传 wait_seconds 由 Server 内部等待并一次性返回全部结果。'
+                       '结果落盘，响应只回精简摘要与文件卡片。',
         'inputSchema': {
             'type': 'object',
             'properties': {
@@ -379,6 +626,9 @@ TOOLS = {
                                'description': '合同影像文件路径数组（图片/PDF），可填目录（自动递归）'},
                 'roster_path': {'type': 'string',
                                 'description': '花名册文件路径（Excel/CSV），用于姓名匹配'},
+                'wait_seconds': {'type': 'integer',
+                                 'description': 'Server 内部等待并一次性返回结果的秒数（0-%d，默认 0 立即返回 task_id）。'
+                                                '大批量任务建议 600-1200' % MAX_WAIT_SEC},
             },
             'required': ['file_paths', 'roster_path'],
         },

@@ -138,16 +138,6 @@ CHECKS = {
         '以 JSON-RPC 2.0 实现 MCP 服务端所需方法',
         'luyue-enterprise-platform',
     ],
-    'modules.mcp.core.tools': [
-        'MCP 工具定义',
-        'insurance_provinces',
-        '社保智能核算：批量识别参保证明',
-    ],
-    'modules.mcp.core.adapters': [
-        'MCP 业务能力适配器',
-        '省份不支持或未提供',
-        '花名册解析为空',
-    ],
     'modules.mcp.core.security': [
         'MCP 访问令牌与总开关',
         'mcp_config.json',
@@ -160,7 +150,8 @@ CHECKS = {
         '未授权：需要有效的 Bearer Token',
         '本服务仅支持 POST JSON-RPC（不提供 SSE 流）',
     ],
-    # v2.2.1 瘦返回交付：结果落盘 + 文件卡片（docstring 针刺 + 命名/URI 常量）
+    # v2.2.1 瘦返回交付 + v2.3.0 集中式缺参/服务端等待
+    # （⚠️ 同名键合并——此前 tools/adapters 各有重复键，后者覆盖前者致 v2.2.0 针刺未生效）
     'modules.mcp.core.artifacts': [
         'MCP 结果落盘与文件卡片',
         '不覆盖历史结果',
@@ -168,11 +159,22 @@ CHECKS = {
         'file://',
     ],
     'modules.mcp.core.tools': [
+        'MCP 工具定义',
+        'insurance_provinces',
+        '社保智能核算：批量识别参保证明',
         '瘦返回交付模式（v2.2.1）',
         '完整明细已落盘',
         '任务尚未完成：状态=',
+        # v2.3.0 集中式缺参校验 + Server 端等待（docstring/纯字面量针刺，
+        # 勿用 % 格式串与 MAX_WAIT_SEC 表达式——均不进 co_consts）
+        '集中式缺参校验（v2.3.0 设计）',
+        '必填项缺失或非法，任务未提交',
+        '轮询至终态或期限，完成即一次性返回瘦结果',
     ],
     'modules.mcp.core.adapters': [
+        'MCP 业务能力适配器',
+        '省份不支持或未提供',
+        '花名册解析为空',
         '交付模式（v2.2.1 瘦返回）',
         '禁止内联回传',
     ],

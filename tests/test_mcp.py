@@ -869,5 +869,201 @@ class TestThinDelivery(unittest.TestCase):
         self.assertIn('stale_hint', payload)
 
 
+# ==================== 9. 集中式缺参校验 + Server 端等待 ====================
+class TestMissingParamsAndWait(unittest.TestCase):
+    """集中式缺参响应（blocking/optional_defaults）与 wait_seconds 一次性返回"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._orig_artifacts_dir = artifacts.data_dir
+        self._orig_adapters_dir = adapters.data_dir
+        artifacts.data_dir = lambda: self.tmp
+        adapters.data_dir = lambda: self.tmp
+        self.pdf = os.path.join(self.tmp, 'a.pdf')
+        with open(self.pdf, 'w', encoding='utf-8') as f:
+            f.write('x')
+        self.img = os.path.join(self.tmp, '张三.jpg')
+        with open(self.img, 'w', encoding='utf-8') as f:
+            f.write('x')
+
+    def tearDown(self):
+        artifacts.data_dir = self._orig_artifacts_dir
+        adapters.data_dir = self._orig_adapters_dir
+        _rmtree(self.tmp)
+
+    # ---- 集中式缺参：一次列出全部问题 ----
+    def test_insurance_missing_params_all_at_once(self):
+        before = len(tasks._TASKS)
+        text, is_error = tool_registry.call_tool('insurance_calculate', {
+            'file_paths': [os.path.join(self.tmp, '不存在.pdf')],
+            'year_start': 2023,
+            'wait_seconds': 'abc',
+        })
+        self.assertTrue(is_error)
+        payload = json.loads(text)
+        self.assertIn('未提交', payload['error'])
+        fields = [item['field'] for item in payload['blocking']]
+        # 一轮响应列出全部阻塞项，而非逐项报错
+        self.assertIn('file_paths', fields)
+        self.assertIn('province', fields)
+        self.assertIn('year_start/month_start/year_end/month_end', fields)
+        self.assertIn('wait_seconds', fields)
+        self.assertEqual(len(payload['blocking']), 4)
+        # 每个阻塞项都有修正方法
+        for item in payload['blocking']:
+            self.assertTrue(item.get('how_to_fix'))
+        # 省份给出候选列表
+        prov = [i for i in payload['blocking'] if i['field'] == 'province'][0]
+        self.assertTrue(prov.get('candidates'))
+        self.assertIn('value', prov['candidates'][0])
+        self.assertIn('label', prov['candidates'][0])
+        # 可选项默认值
+        opt_fields = [i['field'] for i in payload['optional_defaults']]
+        self.assertIn('tax_mode', opt_fields)
+        self.assertIn('wait_seconds', opt_fields)
+        tax = [i for i in payload['optional_defaults'] if i['field'] == 'tax_mode'][0]
+        self.assertEqual(tax['default'], '退税')
+        # 任务未创建
+        self.assertEqual(len(tasks._TASKS), before)
+
+    def test_insurance_tax_mode_invalid_is_blocking(self):
+        from modules.insurance.core import template_engine
+        code = template_engine.get_provinces()[0]['province_code']
+        text, is_error = tool_registry.call_tool('insurance_calculate', {
+            'file_paths': [self.img], 'province': code, 'tax_mode': '免税',
+        })
+        self.assertTrue(is_error)
+        payload = json.loads(text)
+        self.assertEqual([i['field'] for i in payload['blocking']], ['tax_mode'])
+
+    def test_contract_missing_roster_blocking(self):
+        text, is_error = tool_registry.call_tool('contract_organize', {
+            'file_paths': [self.img],
+        })
+        self.assertTrue(is_error)
+        payload = json.loads(text)
+        self.assertEqual([i['field'] for i in payload['blocking']], ['roster_path'])
+        self.assertIn('无法执行', payload['blocking'][0]['issue'])
+
+    def test_topdf_bad_output_mode_blocking(self):
+        text, is_error = tool_registry.call_tool('convert_to_pdf', {
+            'file_paths': [self.img], 'output_mode': 'both',
+        })
+        self.assertTrue(is_error)
+        payload = json.loads(text)
+        self.assertEqual([i['field'] for i in payload['blocking']], ['output_mode'])
+        opt = [i for i in payload['optional_defaults'] if i['field'] == 'output_mode']
+        self.assertEqual(opt[0]['default'], 'individual')
+
+    def test_wait_seconds_out_of_range_blocking(self):
+        text, is_error = tool_registry.call_tool('convert_pdf_to_word', {
+            'file_paths': [self.pdf], 'wait_seconds': 99999,
+        })
+        self.assertTrue(is_error)
+        payload = json.loads(text)
+        self.assertEqual([i['field'] for i in payload['blocking']],
+                         ['wait_seconds'])
+
+    def test_submit_without_wait_returns_task_id_immediately(self):
+        from modules.pdf2word.core import converter
+        orig = converter.batch_convert
+
+        def fake(pdf_files, output_dir, progress_callback=None):
+            return [{'pdf_name': os.path.basename(p), 'docx_name': 'a.docx',
+                     'ok': True, 'error': None} for p in pdf_files]
+
+        converter.batch_convert = fake
+        try:
+            text, is_error = tool_registry.call_tool('convert_pdf_to_word', {
+                'file_paths': [self.pdf],
+            })
+            self.assertFalse(is_error)
+            payload = json.loads(text)
+            self.assertEqual(payload['status'], 'processing')
+            self.assertIn('task_id', payload)
+            self.assertIn('wait_seconds', payload['hint'])
+            _wait_task(payload['task_id'])
+        finally:
+            converter.batch_convert = orig
+
+    # ---- Server 端等待：完成即一次性返回 ----
+    def test_wait_returns_result_in_one_shot(self):
+        from modules.pdf2word.core import converter
+        orig = converter.batch_convert
+
+        def fake(pdf_files, output_dir, progress_callback=None):
+            for i, p in enumerate(pdf_files, 1):
+                if progress_callback:
+                    progress_callback(i, len(pdf_files), os.path.basename(p), {})
+            return [{'pdf_name': os.path.basename(p), 'docx_name': 'a.docx',
+                     'ok': True, 'error': None} for p in pdf_files]
+
+        converter.batch_convert = fake
+        try:
+            text, is_error = tool_registry.call_tool('convert_pdf_to_word', {
+                'file_paths': [self.pdf], 'wait_seconds': 20,
+            })
+            self.assertFalse(is_error)
+            payload = json.loads(text)
+            # 一次性返回完成态瘦结果（而非 processing + task_id）
+            self.assertEqual(payload['status'], 'success')
+            self.assertIn('task_id', payload)
+            self.assertIn('一次性返回', payload['hint'])
+            self.assertTrue(payload['artifacts'])
+            self.assertEqual(payload['summary']['total'], 1)
+            self.assertEqual(payload['summary']['success'], 1)
+        finally:
+            converter.batch_convert = orig
+
+    def test_wait_timeout_degrades_but_task_continues(self):
+        from modules.pdf2word.core import converter
+        orig = converter.batch_convert
+
+        def slow(pdf_files, output_dir, progress_callback=None):
+            time.sleep(3.0)
+            return [{'pdf_name': os.path.basename(p), 'docx_name': 'a.docx',
+                     'ok': True, 'error': None} for p in pdf_files]
+
+        converter.batch_convert = slow
+        try:
+            text, is_error = tool_registry.call_tool('convert_pdf_to_word', {
+                'file_paths': [self.pdf], 'wait_seconds': 1,
+            })
+            self.assertTrue(is_error)
+            payload = json.loads(text)
+            # 降级信息明确：仍在处理中、未失败、给出建议
+            self.assertIn('仍在处理中', payload['error'])
+            self.assertIn('未失败', payload['error'])
+            self.assertEqual(payload['status'], 'processing')
+            self.assertIn('suggestion', payload)
+            # 任务仍在后台运行并最终完成
+            t = _wait_task(payload['task_id'], timeout=15)
+            self.assertEqual(t['status'], 'success')
+        finally:
+            converter.batch_convert = orig
+
+    def test_wait_covers_failure_path(self):
+        from modules.pdf2word.core import converter
+        orig = converter.batch_convert
+
+        def boom(pdf_files, output_dir, progress_callback=None):
+            raise RuntimeError('转换引擎崩溃')
+
+        converter.batch_convert = boom
+        try:
+            text, is_error = tool_registry.call_tool('convert_pdf_to_word', {
+                'file_paths': [self.pdf], 'wait_seconds': 20,
+            })
+            self.assertTrue(is_error)
+            payload = json.loads(text)
+            self.assertIn('转换引擎崩溃', payload['error'])
+            self.assertEqual(payload['status'], 'error')
+            # 失败时错误报告已落盘并附卡片
+            self.assertTrue(payload.get('artifacts'))
+            self.assertEqual(payload['artifacts'][0]['kind'], 'error')
+        finally:
+            converter.batch_convert = orig
+
+
 if __name__ == '__main__':
     unittest.main()
