@@ -34,7 +34,7 @@
                             onclick="dropdownAction('ddAccount', openPwdModal)" data-page-node-id="hxt6FQkLtsWecczEphSFsK">🔑 修改密码</button>
                 </div>
             </div>
-            <!-- 关于系统下拉（功能介绍 / 版本更新） -->
+            <!-- 关于系统下拉（功能介绍 / 版本更新 / MCP模块） -->
             <div class="nav-dropdown" id="ddAbout" data-page-node-id="yREGs34tZd9RFpGHrubcDQ">
                 <button type="button" class="btn-nav btn-dropdown-toggle"
                         onclick="toggleDropdown('ddAbout', event)"
@@ -46,6 +46,8 @@
                             onclick="dropdownAction('ddAbout', openAboutModal)" data-page-node-id="OrS1zncKz9AqZxpNELpwNs">📖 功能介绍</button>
                     <button type="button" class="dropdown-item" role="menuitem" id="btnCheckUpdate"
                             onclick="dropdownAction('ddAbout', function(){ checkAppUpdate(true); })" data-page-node-id="RP3aRbfN0hPhacjCkhEssl">🔄 版本更新</button>
+                    <!-- MCP模块入口（v2.3.1 从模块宫格迁入）：路由/权限不变，仅入口位置调整 -->
+                    <a href="/mcp/" class="dropdown-item" role="menuitem" data-page-node-id="McpMenuLuyue2026Node01">🔌 MCP模块</a>
                 </div>
             </div>
             <span class="user-name" data-page-node-id="1ikUnH3tD6EABxXAw4bA9s">{{ username }}</span>
@@ -131,23 +133,7 @@
                 <span class="module-action" data-page-node-id="UOK1BSnIsUCHRiwLe4QNrl">进入系统 →</span>
             </a>
 
-            <!-- MCP 服务端（v2.2.0） -->
-            <a href="/mcp/" class="module-card" data-page-node-id="McpCardLuyue2026Node01">
-                <div class="module-icon" data-page-node-id="McpCardIconNode02026">🔌</div>
-                <h2 class="module-title" data-page-node-id="McpCardTitleNode2026">MCP 服务端 <span style="font-size:11px;color:#999;" data-page-node-id="McpCardVerNode2026">v2.2.0 AI 可调用</span></h2>
-                <p class="module-desc" data-page-node-id="McpCardDescNode2026">
-                    把平台业务能力以标准 MCP 工具对外暴露，供 Claude Desktop、WorkBuddy 等
-                    AI 客户端调用，让平台成为可被 AI 驱动的业务系统。
-                </p>
-                <div class="module-features" data-page-node-id="McpCardFeatNode2026">
-                    <span class="feature-tag" data-page-node-id="McpTag1Node2026">社保核算</span>
-                    <span class="feature-tag" data-page-node-id="McpTag2Node2026">文档转换</span>
-                    <span class="feature-tag" data-page-node-id="McpTag3Node2026">合同整理</span>
-                    <span class="feature-tag" data-page-node-id="McpTag4Node2026">令牌鉴权</span>
-                    <span class="feature-tag" data-page-node-id="McpTag5Node2026">仅本机可达</span>
-                </div>
-                <span class="module-action" data-page-node-id="McpCardActNode2026">进入系统 →</span>
-            </a>
+            <!-- MCP 服务端（v2.2.0）：v2.3.1 入口迁至"关于系统"下拉菜单，模块宫格不再展示 -->
 
         </div>
     </main>

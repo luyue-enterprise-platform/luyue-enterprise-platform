@@ -62,8 +62,8 @@ class TestPlanRenames(unittest.TestCase):
         # auto: 张三x2 + 李四 = 3
         self.assertEqual(len(plan['auto']), 3)
         auto_names = {item['new_name']: item['original'] for item in plan['auto']}
-        self.assertIn('01-张三-002X.jpg', auto_names)
-        self.assertIn('01-张三-002X(2).jpg', auto_names)  # 第二文件 (2) 后缀
+        self.assertIn('01-张三-002X（1）.jpg', auto_names)  # 多文件首张必带（1）
+        self.assertIn('01-张三-002X（2）.jpg', auto_names)  # 第二文件（2）
         self.assertIn('02-李四.jpg', auto_names)  # 无身份证回退序号-姓名
         # 张三2.jpg 先出现则首选
         self.assertNotIn('03-王五-0014.jpg', auto_names)  # 王五是重名项
@@ -179,8 +179,8 @@ class TestExecuteAndRollback(unittest.TestCase):
 
         # 输出目录内容校验
         out_files = sorted(os.listdir(self.out_dir))
-        self.assertIn('01-张三-002X.jpg', out_files)
-        self.assertIn('01-张三-002X(2).jpg', out_files)
+        self.assertIn('01-张三-002X（1）.jpg', out_files)
+        self.assertIn('01-张三-002X（2）.jpg', out_files)
         self.assertIn('02-李四-手工改名.jpg', out_files)
         self.assertIn('04-王五-0027.jpg', out_files)
         # 待处理文件夹
@@ -214,7 +214,7 @@ class TestExecuteAndRollback(unittest.TestCase):
         for name in ['01张三.jpg', '张三2.jpg', '李四-合同.jpg', '王五.jpg']:
             self.assertIn(name, out_files)
         # 新文件名不再存在
-        for name in ['01-张三-002X.jpg', '01-张三-002X(2).jpg',
+        for name in ['01-张三-002X（1）.jpg', '01-张三-002X（2）.jpg',
                      '02-李四-手工改名.jpg', '04-王五-0027.jpg']:
             self.assertNotIn(name, out_files)
         # 待处理文件夹不受回滚影响

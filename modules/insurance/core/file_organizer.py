@@ -3,12 +3,16 @@
 
 异常图片（识别失败/无参保时间段/缴费单位不一致被排除）单独归类到"异常图片"文件夹，
 方便用户检查并重新提交识别。
+
+v2.3.1 需求1/3：有花名册时，重命名以身份证号为唯一匹配标识（不再姓名兜底/模糊匹配）；
+未匹配到花名册的记录（花名册外人员/无身份证号）保留原文件名归入"异常图片"文件夹。
 """
 import os
 import re
 import shutil
 
-from .roster_parser import match_person_to_roster, match_record_to_roster
+from .roster_parser import (match_person_to_roster, match_record_to_roster,
+                            build_strict_roster_index, match_record_strict)
 
 
 # 18位身份证号校验码权重表与校验码字符集（GB 11643-1999）
@@ -136,6 +140,10 @@ def organize_files(ocr_results, roster, output_dir):
     # PDF多页去重：同一源文件（如同一个PDF）只整理一次，避免"01-张三_2"等多余文件
     organized_origins = set()
 
+    # v2.3.1 需求3：严格花名册索引——身份证号为唯一匹配标识
+    # （花名册无证号列时降级为姓名精确匹配；无花名册时 index 为空、不走严格判定）
+    strict_index = build_strict_roster_index(roster) if roster else None
+
     for rec in ocr_results:
         name = rec.get('name', '')
         ins_type = rec.get('insurance_type')
@@ -153,7 +161,11 @@ def organize_files(ocr_results, roster, output_dir):
         organized_origins.add(origin_key)
 
         # === 异常图片判定：识别失败/无时间段/缴费单位不一致 → 放入异常文件夹 ===
-        if _is_abnormal(rec):
+        # v2.3.1 需求1/3：有花名册时，未按身份证号匹配到花名册的记录
+        # （花名册外人员/无身份证号）同样归入异常图片、保留原文件名（手动命名的除外）
+        matched = match_record_strict(rec, strict_index) if strict_index else None
+        if _is_abnormal(rec) or (strict_index and matched is None
+                                 and not rec.get('_manual_name')):
             # 保留原文件名（异常图片不做花名册重命名，方便用户定位问题）
             orig_filename = rec.get('filename', os.path.basename(src_path))
             ext = os.path.splitext(src_path)[1]
@@ -197,11 +209,8 @@ def organize_files(ocr_results, roster, output_dir):
             })
             continue
 
-        # 匹配花名册（v1.1.34: 身份证号优先匹配，姓名匹配兜底）
-        # 身份证号一致 → 图片命名为"花名册中序号+姓名"（格式保持 序号-姓名）
-        matched = None
-        if roster:
-            matched = match_record_to_roster(rec, roster)
+        # 花名册匹配结果已在上方严格判定（v2.3.1 需求3：身份证号唯一标识，
+        # 姓名不再兜底/模糊匹配；matched 为 None 且有花名册时已归入异常图片）
 
         # v1.1.45: 手动命名优先（异常图片手动处理后，用用户指定的文件名）
         manual_name = rec.get('_manual_name')
@@ -220,6 +229,7 @@ def organize_files(ocr_results, roster, output_dir):
             else:
                 new_basename = f'{seq_str}-{matched["name"]}'
         elif name:
+            # 仅无花名册时走到此分支（有花名册时未匹配记录已在上方归入异常图片）
             new_basename = name
         else:
             new_basename = os.path.splitext(rec.get('filename', 'unknown'))[0]

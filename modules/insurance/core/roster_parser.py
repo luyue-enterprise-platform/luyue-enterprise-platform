@@ -385,6 +385,52 @@ def extract_roster_company_name(file_path):
     return ''
 
 
+def build_strict_roster_index(roster):
+    """v2.3.1 需求3：花名册严格索引——身份证号为唯一匹配标识
+
+    - 花名册含身份证号（任意条目有）时：仅按身份证号精确匹配，
+      姓名不做兜底、不做模糊匹配，防止重名错配；
+    - 花名册完全无身份证号列时：降级为姓名精确匹配（重名视为无法确定，不匹配）。
+
+    Returns:
+        dict: {
+            'has_idcard': bool,          # 花名册是否含身份证号
+            'by_idcard': {证号: 条目},   # 同证号取第一次出现
+            'by_name': {姓名: [条目]},   # 重名时多条
+        }
+    """
+    index = {'has_idcard': False, 'by_idcard': {}, 'by_name': {}}
+    for item in (roster or []):
+        idc = re.sub(r'\s+', '', str(item.get('idcard') or '')).upper()
+        if idc:
+            index['has_idcard'] = True
+            index['by_idcard'].setdefault(idc, item)
+        nm = (item.get('name') or '').strip()
+        if nm:
+            index['by_name'].setdefault(nm, []).append(item)
+    return index
+
+
+def match_record_strict(rec, index):
+    """v2.3.1 需求3：按严格索引将记录匹配到花名册（身份证号唯一标识）
+
+    Args:
+        rec: 含 'name'/'idcard' 的记录 dict（花名册条目本身也可传入）
+        index: build_strict_roster_index() 返回的索引
+
+    Returns:
+        dict or None: 匹配到的花名册条目；无身份证号、证号不在花名册、
+        或降级模式下姓名非唯一精确匹配时返回 None
+    """
+    if not index or (not index['by_idcard'] and not index['by_name']):
+        return None
+    rec_id = re.sub(r'\s+', '', str(rec.get('idcard') or '')).upper()
+    if index['has_idcard']:
+        return index['by_idcard'].get(rec_id) if rec_id else None
+    cands = index['by_name'].get((rec.get('name') or '').strip(), [])
+    return cands[0] if len(cands) == 1 else None
+
+
 def match_person_to_roster(name, roster):
     """
     将OCR识别出的姓名匹配到花名册中的序号（仅按姓名匹配，旧接口保留兼容）

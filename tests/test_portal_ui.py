@@ -182,5 +182,63 @@ class TestAutoUpdateCheck(unittest.TestCase):
         self.assertIn('checkAppUpdate(true)', html)
 
 
+class TestV231NavAdjust(unittest.TestCase):
+    """五、v2.3.1 导航两处调整：MCP入口迁入"关于系统"下拉 + 登录页更新入口移除"""
+
+    LOGIN_TEMPLATE = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'templates', 'login.html')
+
+    def test_mcp_entry_moved_to_about_dropdown(self):
+        """MCP模块入口迁入 ddAbout 下拉：命名/样式与其他子项一致（dropdown-item）"""
+        html = _render()
+        self.assertIn('id="ddAbout"', html)
+        self.assertIn('🔌 MCP模块', html)
+        # 与其他子项同款 dropdown-item 样式，且为 <a> 直达原路由
+        self.assertRegex(html, r'<a href="/mcp/"[^>]*class="dropdown-item"')
+        # 版本更新唯一入口保留在 ddAbout 中
+        self.assertIn('id="btnCheckUpdate"', html)
+        self.assertIn("dropdownAction('ddAbout', openAboutModal)", html)
+
+    def test_mcp_card_removed_from_grid_without_residue(self):
+        """模块宫格不再出现 MCP 卡片，且无重复/失效入口残留"""
+        html = _render()
+        self.assertNotIn('McpCardLuyue2026Node01', html)   # 旧卡片节点已移除
+        self.assertNotIn('module-card" data-page-node-id="McpCard', html)
+        # 宫格内不得再出现指向 /mcp/ 的 module-card 链接（下拉中的 <a> 是 dropdown-item）
+        self.assertNotRegex(html, r'class="module-card"[^>]*href="/mcp/"')
+        # 全页 /mcp/ 链接只出现在 ddAbout 下拉中（唯一入口，无重复）
+        self.assertEqual(html.count('href="/mcp/"'), 1)
+
+    def test_mcp_route_and_permission_unchanged(self):
+        """/mcp/ 路由与鉴权不变（后端未动，未登录仍跳转登录页）"""
+        with flask_app.test_client() as c:
+            r = c.get('/mcp/')
+            self.assertEqual(r.status_code, 302)  # 未登录 → 跳转
+
+    def test_login_page_update_entry_removed(self):
+        """登录页不再显示任何更新提示：横幅/检测/升级按钮全部移除"""
+        with open(self.LOGIN_TEMPLATE, encoding='utf-8') as f:
+            src = f.read()
+        for kw in ('id="updateBanner"', 'id="updRemoteVer"', 'id="updStatusText"',
+                   'id="updDownloadBtn"', 'checkLoginUpdate',
+                   '发现新版本', '立即升级'):
+            self.assertNotIn(kw, src, '登录页不应残留更新入口: %s' % kw)
+
+    def test_login_page_core_features_intact(self):
+        """登录页其他功能与布局不受影响：登录表单/记住密码/注册链接保留"""
+        with open(self.LOGIN_TEMPLATE, encoding='utf-8') as f:
+            src = f.read()
+        for kw in ('id="loginForm"', 'id="loginBtn"', 'id="rememberPwd"',
+                   'api/remember_login', '前往注册'):
+            self.assertIn(kw, src)
+
+    def test_backend_update_api_kept_for_portal(self):
+        """后端更新接口保留（门户"版本更新"唯一入口仍可用），仅登录页不再调用"""
+        with flask_app.test_client() as c:
+            r = c.get('/api/app/check_update')
+            self.assertIn(r.status_code, (200, 500))  # 接口存在（500 为无网络环境的正常失败）
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

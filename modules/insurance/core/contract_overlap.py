@@ -194,15 +194,19 @@ def apply_contract_to_stats(person_stats, roster, year_range=None):
     Returns:
         list: 合同比对提示条目（未持久化，每次重建重新生成）
     """
-    from modules.insurance.core.roster_parser import match_record_to_roster
+    from modules.insurance.core.roster_parser import (build_strict_roster_index,
+                                                      match_record_strict)
 
     notes = []
     if not roster:
         return notes
 
+    # v2.3.1 需求3：身份证号为唯一匹配标识（不再姓名兜底/模糊匹配，防重名错配）
+    strict_index = build_strict_roster_index(roster)
+
     for ps in person_stats:
-        entry = match_record_to_roster(
-            {'name': ps.get('name', ''), 'idcard': ps.get('idcard', '')}, roster)
+        entry = match_record_strict(
+            {'name': ps.get('name', ''), 'idcard': ps.get('idcard', '')}, strict_index)
         if not entry:
             continue  # 不在花名册 → 无合同信息，不裁剪不标注（花名册补全人员才有合同列）
         status = entry.get('contract_status', 'missing')

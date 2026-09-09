@@ -11,7 +11,8 @@ v1.1.44 两阶段流程（预览确认后再执行）:
        unmatched 未匹配项（查无此人 / 无法识别姓名）
        roster_missing 花名册中无对应合同的人员
   4. 预览执行: execute_renames 按用户（可在预览界面手动调整过的）最终名单执行，
-     同一人员多文件追加 (2)(3) 后缀；未匹配文件移入"待处理"并生成失败明细报告
+     同一人员多文件全部追加全角编号后缀（1）（2）（3）…（首张必带（1），仅一张不带编号）；
+     未匹配文件移入"待处理"并生成失败明细报告
   5. 重命名日志: 记录 原文件名 -> 新文件名 对照（JSON），便于追溯
   6. 可回滚:   rollback_renames 依据日志将输出目录中的文件恢复为原文件名
 """
@@ -31,7 +32,8 @@ IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.tif', '.
 
 # ===== 命名规则 =====
 # v1.1.44: {seq:02d}-{姓名}-{身份证号后4位}；身份证号缺失/格式不合法时回退 {seq:02d}-{姓名}
-# 同一人员有多个文件时自动追加 (2) (3) ... 序号后缀
+# v2.3.1 需求4: 同一人员有多个文件时全部追加全角编号 （1）（2）（3）…（首张必带（1））；
+# 仅一个文件时不带编号
 NAME_TEMPLATE = '{seq:02d}-{name}-{idcard_tail4}'
 
 # 待处理文件夹与报告/日志文件名（生成在输出目录中）
@@ -158,7 +160,7 @@ def _person_brief(person):
 
 
 def _render_new_base(person):
-    """渲染新文件名主干（不含扩展名和 (2)(3) 序号后缀）
+    """渲染新文件名主干（不含扩展名和 （1）（2）（3） 编号后缀）
 
     v1.1.44: {seq:02d}-{姓名}-{身份证号后4位}；
     身份证号缺失/格式不合法时回退 {seq:02d}-{姓名}。
@@ -177,11 +179,11 @@ def _render_new_base(person):
 
 
 def _unique_name(output_dir, base, ext):
-    """生成不冲突的文件名：base.ext 已存在时追加 (2) (3) ..."""
+    """生成不冲突的文件名：base.ext 已存在时追加全角 （2）（3）... 编号"""
     candidate = base + ext
     counter = 2
     while os.path.exists(os.path.join(output_dir, candidate)):
-        candidate = f'{base}({counter}){ext}'
+        candidate = f'{base}（{counter}）{ext}'
         counter += 1
     return candidate
 
@@ -194,7 +196,8 @@ def plan_renames(file_paths, roster, folder_hints=None):
     命名规则:
     - 身份证号合法: {seq:02d}-{姓名}-{身份证号后4位}.{ext}
     - 身份证号缺失/不合法: {seq:02d}-{姓名}.{ext}
-    - 同一人员多个文件: 第2个起追加 (2) (3) ... 后缀
+    - 同一人员多个文件: 全部追加全角编号 （1）（2）（3）…（首张必带（1），
+      v2.3.1 需求4）；仅一个文件时不带编号
 
     Args:
         file_paths: 文件路径列表
@@ -268,7 +271,8 @@ def plan_renames(file_paths, roster, folder_hints=None):
             unmatched.append({'original': basename, 'guessed': guessed, 'reason': reason})
             logger.warning(f'未匹配: {basename!r} 提取={guessed!r} ({reason})')
 
-    # 生成自动匹配项的新文件名（同一人员多文件在计划阶段即分配 (2)(3) 后缀）
+    # 生成自动匹配项的新文件名（同一人员多文件在计划阶段即分配全角编号（1）（2）（3）…
+    # v2.3.1 需求4：首张必带（1）不得省略；仅一张时不带编号）
     auto = []
     for person in roster:
         seq = person.get('seq')
@@ -276,14 +280,15 @@ def plan_renames(file_paths, roster, folder_hints=None):
         if not files:
             continue
         base = _render_new_base(person)
+        multi = len(files) > 1
         for idx, (fp, basename) in enumerate(files):
             ext = os.path.splitext(basename)[1].lower()
             if ext not in IMAGE_EXTENSIONS:
                 ext = '.jpg'  # 兜底
-            if idx == 0:
-                new_name = f'{base}{ext}'
+            if multi:
+                new_name = f'{base}（{idx + 1}）{ext}'
             else:
-                new_name = f'{base}({idx + 1}){ext}'
+                new_name = f'{base}{ext}'
             auto.append({
                 'original': basename,
                 'seq': seq,
@@ -477,7 +482,7 @@ def execute_renames(source_paths, plan, output_dir, renames, pending,
                 counter = 1
                 while os.path.exists(dest):
                     stem, ext = os.path.splitext(item['original'])
-                    dest = os.path.join(pending_dir, f'{stem}({counter}){ext}')
+                    dest = os.path.join(pending_dir, f'{stem}（{counter}）{ext}')
                     counter += 1
                 shutil.copy2(fp, dest)
 
@@ -647,7 +652,8 @@ def write_rename_log(output_dir, result, task_id=None):
     log = {
         'task_id': task_id,
         'executed_at': now,
-        'naming_rule': NAME_TEMPLATE + '（无合法身份证号时回退 {seq:02d}-{name}）',
+        'naming_rule': NAME_TEMPLATE + '（无合法身份证号时回退 {seq:02d}-{name}；'
+                       '同一人多文件全部追加全角编号（1）（2）（3），首张必带（1），仅一张不带编号）',
         'summary': {
             'total': result.get('total', 0),
             'renamed': result.get('matched_count', 0),

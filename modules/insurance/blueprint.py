@@ -8,6 +8,7 @@ Flask Blueprint 模块 - 作为综合智能平台的子模块运行
 """
 import os
 import sys
+import re
 import uuid
 import json
 import shutil
@@ -116,7 +117,8 @@ from modules.insurance.core.stats_calculator import calc_all_stats, get_overlap_
 from modules.insurance.core.contract_overlap import apply_contract_to_stats, contract_display_text
 from modules.insurance.core.excel_generator import generate_excel
 from modules.insurance.core.roster_parser import (parse_roster, parse_roster_from_table,
-                                                   match_person_to_roster, extract_roster_company_name)
+                                                   match_person_to_roster, extract_roster_company_name,
+                                                   build_strict_roster_index, match_record_strict)
 from modules.insurance.core.file_organizer import organize_files, INSURANCE_FOLDER_MAP, _validate_idcard
 
 # ============ 导入共享认证模块（由父应用提供） ============
@@ -262,6 +264,61 @@ def _roster_complete(persons, roster):
     return roster_added
 
 
+def _strict_filter_by_roster(task_id, records, roster):
+    """v2.3.1 需求1+3：花名册为统计唯一数据基准（身份证号唯一匹配标识）
+
+    有花名册时对有效OCR记录做严格过滤：
+    - 花名册含身份证号：记录身份证号在花名册中 → 纳入统计（姓名以花名册为准，
+      在 _apply_roster_names 统一覆盖）；不在花名册或记录无身份证号 → 剔除，
+      不进统计表、不参与任何汇总/合计计算
+    - 花名册完全无身份证号列：降级为姓名精确匹配（保持无证号花名册可用）
+
+    剔除记录打上 _roster_excluded/_roster_excluded_reason 标记：
+    文件整理时保留原文件名归入"异常图片"，识别详情中标注剔除原因。
+    本函数不修改入参列表，返回 (保留记录, 剔除记录)。
+    """
+    index = build_strict_roster_index(roster)
+    kept, removed = [], []
+    for rec in records:
+        if match_record_strict(rec, index) is not None:
+            rec.pop('_roster_excluded', None)
+            rec.pop('_roster_excluded_reason', None)
+            kept.append(rec)
+        else:
+            if index['has_idcard']:
+                reason = ('身份证号不在花名册中，已剔除统计（图片归入异常图片）'
+                          if (rec.get('idcard') or '').strip()
+                          else '无身份证号，无法与花名册核实，已剔除统计（图片归入异常图片）')
+            else:
+                reason = '姓名未精确匹配到花名册，已剔除统计（图片归入异常图片）'
+            rec['_roster_excluded'] = True
+            rec['_roster_excluded_reason'] = reason
+            removed.append(rec)
+    if removed:
+        logger.info(f'[task:{task_id}] 花名册严格过滤: 保留 {len(kept)} 条, '
+                    f'剔除 {len(removed)} 条（花名册外/无身份证号/未匹配）')
+    return kept, removed
+
+
+def _apply_roster_names(persons, roster):
+    """v2.3.1 需求3：身份证号确定姓名——分组后人员姓名以花名册登记为准
+
+    OCR 识别的姓名可能有误差（错字/漏字），统计表、台账、重命名统一以
+    身份证号对应的花名册条目姓名显示，防止姓名误差进入统计结果。
+    （花名册无证号列的降级模式下，姓名本就精确一致，无需覆盖。）
+    """
+    index = build_strict_roster_index(roster)
+    if not index['has_idcard']:
+        return
+    for p in persons:
+        pid = re.sub(r'\s+', '', str(p.get('idcard') or '')).upper()
+        entry = index['by_idcard'].get(pid) if pid else None
+        if entry:
+            roster_name = (entry.get('name') or '').strip()
+            if roster_name:
+                p['name'] = roster_name
+
+
 def _apply_period_overrides(persons, overrides):
     """应用时间段覆盖层（v1.1.43 手动修改/新增的值优先于OCR识别值）
 
@@ -323,13 +380,22 @@ def _rebuild_result(task_id):
     if tax_mode not in ('退税', '抵税'):
         tax_mode = '退税'
 
-    # 1) 按人员分组 + 花名册补全
+    # 1) v2.3.1 需求1：花名册严格过滤（身份证号唯一标识，
+    #    花名册外/无身份证号记录剔除统计，不进统计表、不进汇总合计）
+    roster_removed = []
+    if roster:
+        success_results, roster_removed = _strict_filter_by_roster(
+            task_id, success_results, roster)
+
+    # 2) 按人员分组 + 姓名以花名册为准（需求3）+ 花名册补全
     persons = group_by_person(success_results)
+    if roster:
+        _apply_roster_names(persons, roster)
     roster_added = _roster_complete(persons, roster)
     if roster_added:
         logger.info(f'[task:{task_id}] 花名册补全: 新增 {roster_added} 名无参保证明人员（时间段留空）')
 
-    # 2) 应用手动时间段覆盖层（优先于OCR识别值）
+    # 3) 应用手动时间段覆盖层（优先于OCR识别值）
     if overrides:
         _apply_period_overrides(persons, overrides)
 
@@ -354,11 +420,13 @@ def _rebuild_result(task_id):
     yearly_ledger_files = gen_result.get('yearly_ledger_files', [])
     logger.info(f'[task:{task_id}] Excel重建完成: {excel_path}')
 
-    # 4) 文件整理（目录清空重建，防止旧文件残留；手动补录记录同时参与重命名归类）
+    # 4) 文件整理（目录清空重建，防止旧文件残留；手动补录记录同时参与重命名归类；
+    #    花名册外/无证号被剔除记录一并传入 → 保留原文件名归入"异常图片"）
     roster_index = _build_roster_index(roster)
     organize_dir = os.path.join(OUTPUT_DIR, task_id, '参保证明')
     _reset_dir(organize_dir)
-    all_for_organize = (list(success_results) + list(excluded_results) +
+    all_for_organize = (list(success_results) + list(roster_removed) +
+                        list(excluded_results) +
                         [r for r in failed_results if r.get('_source_path')])
     try:
         organize_result = organize_files(all_for_organize, roster, organize_dir)
@@ -378,6 +446,20 @@ def _rebuild_result(task_id):
                 json.dump(manual_log, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.warning(f'[task:{task_id}] 操作记录写入失败: {e}')
+
+    # 花名册过滤提示（不落盘，每次重建重新生成；与合同比对提示同格式）
+    roster_notes = []
+    if roster_removed:
+        roster_notes.append({
+            'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'action': '花名册过滤',
+            'name': '',
+            'idcard': '',
+            'insurance_type': '',
+            'old': f'{len(roster_removed)} 条记录',
+            'new': '身份证号不在花名册/无身份证号，已剔除统计并归入异常图片',
+            'operator': '系统',
+        })
 
     # 6) 组装完整 result（公开字段 + 内部状态）
     def _det(rec, error_text=''):
@@ -418,9 +500,11 @@ def _rebuild_result(task_id):
         'excel_path': excel_path,
         'excel_filename': excel_filename,
         'yearly_ledger_files': yearly_ledger_files,
-        'ocr_count': len(success_results) + len(excluded_results) + len(failed_results),
+        'ocr_count': (len(success_results) + len(roster_removed) +
+                      len(excluded_results) + len(failed_results)),
         'person_count': len(persons),
         'success_count': len(success_results),
+        'roster_excluded_count': len(roster_removed),
         'excluded_count': len(excluded_results),
         'failed_count': len(failed_results),
         'failed_files': [
@@ -428,9 +512,11 @@ def _rebuild_result(task_id):
             for r in failed_results
         ],
         'all_files': all_files,
-        # 每张图片的识别详情（有效 + 单位不一致排除 + 识别失败）
+        # 每张图片的识别详情（有效 + 花名册外剔除 + 单位不一致排除 + 识别失败）
         'image_details': (
             [_det(r) for r in success_results] +
+            [_det(r, r.get('_roster_excluded_reason', '不在花名册（已剔除统计）'))
+             for r in roster_removed] +
             [_det(r, '缴费单位不一致（已排除）') for r in excluded_results] +
             [_det(r, r.get('error', '识别失败')) for r in failed_results]
         ),
@@ -446,8 +532,9 @@ def _rebuild_result(task_id):
         'roster_company': roster_company,
         'ocr_companies': ocr_companies,
         'company_mismatch_files': company_mismatch_files,
-        # 操作记录（手动补录/修改时间段/恢复识别值 + v1.1.53 合同比对提示；提示不落盘，每次重建重新生成）
-        'operation_log': manual_log + contract_notes,
+        # 操作记录（手动补录/修改时间段/恢复识别值 + v1.1.53 合同比对提示
+        # + v2.3.1 花名册过滤提示；提示不落盘，每次重建重新生成）
+        'operation_log': manual_log + contract_notes + roster_notes,
         # ===== 内部状态（不返回前端） =====
         '_success_results': success_results,
         '_excluded_results': excluded_results,
@@ -1211,7 +1298,8 @@ def api_manual_fill(task_id):
     入参 JSON: {filename, name, idcard, insurance_type, start, end}
     - filename: 失败记录的文件名（image_details 中 error 非空行的 filename）
     - name: 姓名（必填，需与花名册一致才能自动重命名归类）
-    - idcard: 身份证号（选填，填写则做格式校验）
+    - idcard: 身份证号（强烈建议填写：v2.3.1 起花名册以身份证号为唯一匹配标识，
+      无身份证号的记录将剔除统计并归入异常图片；填写则做格式校验）
     - insurance_type: 四险之一
     - start/end: YYYY-MM 起止年月（必填，start <= end）
 

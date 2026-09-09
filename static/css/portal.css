@@ -490,6 +490,7 @@ body {
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
     white-space: nowrap;
+    text-decoration: none; /* v2.3.1: 兼容 <a> 型子菜单项（MCP模块），去除链接下划线 */
 }
 
 .dropdown-item:hover:not(:disabled),

@@ -100,7 +100,10 @@ def _build_roster_index(roster):
 
 def _find_in_roster(person, roster_index):
     """
-    在花名册中查找人员（先按身份证号，再按姓名）
+    在花名册中查找人员
+
+    v2.3.1 需求3：花名册含身份证号时仅按身份证号精确匹配（姓名不做兜底，
+    防止重名错配）；花名册完全无身份证号列时保持姓名精确匹配兜底。
 
     Args:
         person: dict {'name', 'idcard'}
@@ -115,11 +118,11 @@ def _find_in_roster(person, roster_index):
     idcard = person.get('idcard', '').strip()
     name = person.get('name', '').strip()
 
-    # 1. 优先按身份证号匹配
-    if idcard and idcard in roster_index['idcard_to_entry']:
-        return roster_index['idcard_to_entry'][idcard]
+    # 1. 花名册含身份证号 → 身份证号为唯一匹配标识
+    if roster_index['idcard_to_entry']:
+        return roster_index['idcard_to_entry'].get(idcard) if idcard else None
 
-    # 2. 兜底按姓名匹配（取第一个）
+    # 2. 花名册无证号列 → 兜底按姓名匹配（取第一个）
     if name and name in roster_index['name_to_entries']:
         entries = roster_index['name_to_entries'][name]
         if entries:
@@ -183,6 +186,7 @@ def _generate_yearly_ledger(year, classified, roster_index, company_name, output
 
     汇总行：金额在月数正下方（同一列），与总台账逻辑一致
     合计总金额行：下一列也是金额（不是月数）
+    v2.3.1 需求2：序号按行重新排列（1..N），不沿用花名册原始序号
     v1.1.55 需求4：工作簿设置打开即重算（fullCalcOnLoad），确保公式在本地打开时正常显示
     v1.1.57：tax_label 控制"退税/抵税"展示文案（仅展示层，字段标识不变）
     """
@@ -282,9 +286,10 @@ def _generate_yearly_ledger(year, classified, roster_index, company_name, output
         year_months = ps['yearly_months'].get(year, 0)
         rate = RATE_TUIWU if identity_type == '自主就业退役士兵' else RATE_TUPIN
 
-        # v1.1.34: 序号用花名册原始序号（与姓名一一对应，不修改），未匹配到花名册时用行号
+        # v2.3.1 需求2：年度台账序号按行重新排列（1..N），不沿用花名册原始序号
+        seq_val = idx + 1
+        # 合同起止时间仍按身份证号匹配的花名册条目展示
         _entry = _find_in_roster(ps, roster_index)
-        seq_val = (_entry.get('seq') or idx + 1) if _entry else idx + 1
 
         # 构建行数据（v1.1.54：劳动合同起止时间列位于参保证明时间段之前）
         contract_text = contract_display_text(_entry)
