@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="StCRsIhmUj5hBYFeb8E2qr">
+<head data-page-node-id="cm9ggi1OIQUAGXt3ERo1Cb">
+    <meta charset="UTF-8" data-page-node-id="Hz62LFCE4l8NvuVk7dbtTm">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="LR6YMdGMOrEZ3SIADBoE3x">
+    <title>MCP 服务端 - 鲁岳企业服务综合智能平台</title>
+    <link rel="stylesheet" href="{{ url_for('mcp.static', filename='css/style.css') }}" data-page-node-id="z2GGdc7uCzaUOOTajPHzIH">
+</head>
+<body data-page-node-id="xrWoFm9p1B5wJReHAfjIax">
+    <nav class="navbar" data-page-node-id="Vf7IeBLK0QXk1nn1FtRatl">
+        <div class="nav-brand" data-page-node-id="4QwGPtrZl5w2uQnGkxywGl">
+            <span class="brand-icon" data-page-node-id="UM4ytyvHjjc6HbsA17h8YK">🔌</span>
+            <span class="brand-text" data-page-node-id="K6p7bmWYTT0AACE2kucZ9g">MCP 服务端 <span style="font-size:11px;color:#c8d4e8;" data-page-node-id="2o4kHRdunvpVmplQQnDCSV">v{{ version }}</span></span>
+        </div>
+        <div class="nav-actions" data-page-node-id="iaGMjt0fkJHAVjb4E8hvE5">
+            <a class="btn-nav" href="/" title="返回首页" data-page-node-id="YqiKAhm1TEG2Q434PvL9vj">🏠 返回首页</a>
+            <button class="btn-nav" onclick="location.reload()" title="刷新页面" data-page-node-id="XLql67TIHu6i4vSHlYkXWR">🔄 刷新</button>
+        </div>
+    </nav>
+
+    <main class="main-content" data-page-node-id="0QaB2nQTfaj2EM29yKl42d">
+        <!-- 服务开关 -->
+        <section class="card" data-page-node-id="71RcRGw1tZFkNOOwZ5wrpm">
+            <div class="card-header" data-page-node-id="7b55Fl4N0ILI3Dhoi0UtRv">
+                <span class="icon" data-page-node-id="YwDxL4b5ucSLVRn9CbDFg9">🟢</span>
+                <h2 data-page-node-id="LhKAfGLjDopU1SOCqYFjfb">服务状态</h2>
+                <span id="stateBadge" class="badge {% if enabled %}on{% else %}off{% endif %}" data-page-node-id="OS4OEhZpKldtiAJjZBLwtV">
+                    {% if enabled %}已启用{% else %}已停用{% endif %}
+                </span>
+            </div>
+            <div class="switch" data-page-node-id="DzLInUmHjv7Cq03UDJWL9U">
+                <input type="checkbox" id="toggleEnabled" {% if enabled %}checked{% endif %} data-page-node-id="VtNvW4OLEVVmJfg582Qhim">
+                <label for="toggleEnabled" style="min-width:auto;font-weight:400;" data-page-node-id="BTDrBI21A96RXORGbmCEDT">
+                    启用 MCP 服务（停用后外部 AI 客户端无法调用本平台能力）
+                </label>
+            </div>
+            <p class="hint" data-page-node-id="QGXNTmQxlOai2llSdw2AWd">服务仅在本机回环地址（127.0.0.1）可达，外部网络无法访问。</p>
+        </section>
+
+        <!-- 端点 -->
+        <section class="card" data-page-node-id="j5AdVlzysTamO2hIl8zgV2">
+            <div class="card-header" data-page-node-id="a7mVlXY0fY8C4HQkjSGZVJ"><span class="icon" data-page-node-id="k5POX9rbRY4uwH2J0kkB75">🌐</span><h2 data-page-node-id="u13efFFanDfJsURKGs8i6j">接入地址</h2></div>
+            <div class="field" data-page-node-id="yyULH0Jmqnj2PxTET95epB">
+                <label data-page-node-id="gPKnaxsME931wo6NNzGer3">端点 URL</label>
+                <div class="mono" id="endpoint" data-page-node-id="QnBokE3rgpLs51rWnAt3zV">{{ endpoint }}</div>
+                <button class="btn secondary" onclick="copyText('endpoint')" data-page-node-id="GtdZOAITkuHwV5RS2079jn">复制</button>
+            </div>
+            <p class="hint" data-page-node-id="Gds9DDbjMmLLgMJD23LGXk">端口由程序启动时的实际端口决定，每次启动可能不同，请以此处显示为准。</p>
+        </section>
+
+        <!-- 令牌 -->
+        <section class="card" data-page-node-id="9QRwsElRIVAaT5PPlPO91f">
+            <div class="card-header" data-page-node-id="3SgKBOblH0pcTAjdt0rujC"><span class="icon" data-page-node-id="y8sAn3jvHoEryBSIiWu6q8">🔑</span><h2 data-page-node-id="6zIEI3mZP5Smgx0YyndBWY">访问令牌</h2></div>
+            <div class="field" data-page-node-id="mfviqQCvCd2ShYLJOp8mBu">
+                <label data-page-node-id="wcMdSKeE7ZDUfIjJOSYZ9b">Bearer Token</label>
+                <div class="mono" id="token" data-token="{{ token }}" data-page-node-id="a5lSnEFjDACuLox0zs8xYC">••••••••••••••••••••••••••••••••</div>
+                <button class="btn secondary" onclick="toggleToken()" data-page-node-id="mB4iOboSWi2SowSwPFm8HN">显示</button>
+                <button class="btn secondary" onclick="copyText('token')" data-page-node-id="qo2e7ARdTuMn9Q33AQ8cNA">复制</button>
+                <button class="btn danger" onclick="regenToken()" data-page-node-id="7As2i78dquy59a71A5O3D7">重新生成</button>
+            </div>
+            <p class="hint" data-page-node-id="sUwBQF0FKERRVyzRFlNzsV">重新生成后旧令牌立即失效，需同步更新 AI 客户端配置。</p>
+        </section>
+
+        <!-- 工具清单 -->
+        <section class="card" data-page-node-id="efrGyr4lmRKkIsgZytrEN7">
+            <div class="card-header" data-page-node-id="Xu85iLZIOZukzgt8WKcGVZ"><span class="icon" data-page-node-id="2fINnBIIpwHvdeo3UxAyk4">🧰</span><h2 data-page-node-id="4pa4eDQEfGE4u0UblY0lk9">对外能力（MCP 工具）</h2></div>
+            <table data-page-node-id="NQ7EKmRDXMTkszsHyoViO8">
+                <thead data-page-node-id="EX48RKr4N28WUTDZKp4QHM">
+                    <tr data-page-node-id="PqjpPbm5HJRy0tdYoEfAZy"><th style="width:190px;" data-page-node-id="WqcWhywLYF5W05VsyG74NE">工具名</th><th data-page-node-id="CKVpt9O68g1BwHtm1pushv">说明</th></tr>
+                </thead>
+                <tbody data-page-node-id="aVJVPH4ENPYL3V8OjO0cOX">
+                {% for t in tools %}
+                    <tr data-page-node-id="GEurJOSe3BQEnejLoaHBLP">
+                        <td data-page-node-id="38OlfuPEZKE8oYkAKW185U"><code data-page-node-id="DrcJjjSiGE9vddfq3sE4Kt">{{ t.name }}</code></td>
+                        <td data-page-node-id="f7phvOuoaQQ17d7fMYDQyD">{{ t.description }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            <p class="hint" data-page-node-id="uSXAZA6HdQgSRZ9TSyhEOf">
+                批量类工具为长耗时操作，统一返回 task_id，需用
+                <code data-page-node-id="jMyxWmM3HN6jJPTfaIfpNt">get_task_status</code> 轮询进度、<code data-page-node-id="UV8PKPWngWGSVg8TskTkpq">get_task_result</code> 取结果。
+            </p>
+        </section>
+
+        <!-- 接入示例 -->
+        <section class="card" data-page-node-id="Wu0MU046by9OOWhsNSOwWd">
+            <div class="card-header" data-page-node-id="M9GwBtp3r7Du2XboP0romO"><span class="icon" data-page-node-id="fEHIHPbH2i1jf7Np1aXCp4">📋</span><h2 data-page-node-id="RFc2tpXOyQiZ7lq6VoFKJD">客户端配置示例</h2></div>
+            <div class="mono" style="white-space:pre-wrap;" data-page-node-id="No1N30ygkZ5lpcCPCrgafL">{
+  "mcpServers": {
+    "luyue": {
+      "url": "{{ endpoint }}",
+      "headers": { "Authorization": "Bearer {{ token }}" }
+    }
+  }
+}</div>
+            <p class="hint" data-page-node-id="dVJbo20hEwhJmiCr4EK8Bm">将上述配置填入支持 MCP 的 AI 客户端（如 Claude Desktop、WorkBuddy）即可调用本平台能力。</p>
+        </section>
+    </main>
+
+    <div class="toast" id="toast" data-page-node-id="PmOIfQbJchxfUMAUpjqWV7"></div>
+
+<script>
+function toast(msg) {
+    var t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('show');
+    setTimeout(function () { t.classList.remove('show'); }, 1800);
+}
+function copyText(id) {
+    var el = document.getElementById(id);
+    var text = el.dataset.token || el.textContent;
+    if (id === 'token' && !el.dataset.showing) text = el.dataset.token;
+    navigator.clipboard.writeText(text.trim()).then(
+        function () { toast('已复制'); },
+        function () { toast('复制失败，请手动选择复制'); }
+    );
+}
+function toggleToken() {
+    var el = document.getElementById('token');
+    if (el.dataset.showing) {
+        el.textContent = '•'.repeat(32); delete el.dataset.showing;
+        event.target.textContent = '显示';
+    } else {
+        el.textContent = el.dataset.token; el.dataset.showing = '1';
+        event.target.textContent = '隐藏';
+    }
+}
+function regenToken() {
+    if (!confirm('重新生成后旧令牌立即失效，确定继续？')) return;
+    fetch('/mcp/api/token/regenerate', { method: 'POST' }).then(function (r) {
+        return r.json();
+    }).then(function (d) {
+        var el = document.getElementById('token');
+        el.dataset.token = d.token;
+        if (el.dataset.showing) el.textContent = d.token;
+        toast('令牌已重新生成');
+    });
+}
+document.getElementById('toggleEnabled').addEventListener('change', function (e) {
+    fetch('/mcp/api/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: e.target.checked })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+        var b = document.getElementById('stateBadge');
+        b.textContent = d.enabled ? '已启用' : '已停用';
+        b.className = 'badge ' + (d.enabled ? 'on' : 'off');
+        toast(d.enabled ? 'MCP 服务已启用' : 'MCP 服务已停用');
+    });
+});
+</script>
+</body>
+</html>

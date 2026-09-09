@@ -1,0 +1,76 @@
+/* MCP 服务端门户页样式（与平台其他模块风格一致） */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: #f5f6f8;
+    color: #222;
+    line-height: 1.6;
+}
+
+.navbar {
+    display: flex; justify-content: space-between; align-items: center;
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    color: #fff; padding: 14px 24px; box-shadow: 0 2px 8px rgba(0,0,0,.12);
+}
+.nav-brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; }
+.brand-icon { font-size: 22px; }
+.nav-actions { display: flex; gap: 10px; }
+.btn-nav {
+    background: rgba(255,255,255,.16); color: #fff; border: 1px solid rgba(255,255,255,.28);
+    padding: 6px 14px; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 13px;
+}
+.btn-nav:hover { background: rgba(255,255,255,.28); }
+
+.main-content { max-width: 980px; margin: 24px auto; padding: 0 20px 60px; }
+
+.card {
+    background: #fff; border-radius: 10px; padding: 22px 24px; margin-bottom: 18px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.07);
+}
+.card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 16px; }
+.card-header h2 { font-size: 16px; font-weight: 600; }
+.card-header .icon { font-size: 19px; }
+.hint { color: #7a8290; font-size: 13px; margin-top: 8px; }
+
+.field { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.field label { min-width: 84px; font-size: 14px; color: #555; font-weight: 500; }
+.mono {
+    font-family: Consolas, "Courier New", monospace; background: #f2f4f7;
+    border: 1px solid #e2e6ec; border-radius: 6px; padding: 8px 12px;
+    flex: 1; min-width: 260px; font-size: 13px; word-break: break-all;
+}
+
+.btn {
+    background: #2a5298; color: #fff; border: none; padding: 8px 16px;
+    border-radius: 6px; cursor: pointer; font-size: 13px;
+}
+.btn:hover { background: #1e3c72; }
+.btn.secondary { background: #6b7684; }
+.btn.secondary:hover { background: #565f6b; }
+.btn.danger { background: #c0392b; }
+.btn.danger:hover { background: #a33026; }
+
+.switch { display: flex; align-items: center; gap: 10px; }
+.switch input { width: 42px; height: 22px; cursor: pointer; }
+.badge {
+    display: inline-block; padding: 3px 10px; border-radius: 12px;
+    font-size: 12px; font-weight: 600;
+}
+.badge.on { background: #e6f4ea; color: #1e7e34; }
+.badge.off { background: #fdecea; color: #c0392b; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #edf0f4; vertical-align: top; }
+th { background: #fafbfc; font-weight: 600; color: #444; }
+td code {
+    background: #f2f4f7; padding: 2px 6px; border-radius: 4px;
+    font-family: Consolas, monospace; font-size: 12px;
+}
+
+.toast {
+    position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+    background: #2f3640; color: #fff; padding: 10px 22px; border-radius: 6px;
+    font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .25s;
+}
+.toast.show { opacity: 1; }

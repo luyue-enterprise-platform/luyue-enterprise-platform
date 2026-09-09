@@ -133,6 +133,33 @@ CHECKS = {
         '不添加任何额外字段',
         '供补充上传沿用',
     ],
+    # v2.2.0 新增 MCP 服务端：协议层 / 工具 / 适配器 / 令牌 / 路由
+    'modules.mcp.core.protocol': [
+        '以 JSON-RPC 2.0 实现 MCP 服务端所需方法',
+        'luyue-enterprise-platform',
+    ],
+    'modules.mcp.core.tools': [
+        'MCP 工具定义',
+        'insurance_provinces',
+        '社保智能核算：批量识别参保证明',
+    ],
+    'modules.mcp.core.adapters': [
+        'MCP 业务能力适配器',
+        '省份不支持或未提供',
+        '花名册解析为空',
+    ],
+    'modules.mcp.core.security': [
+        'MCP 访问令牌与总开关',
+        'mcp_config.json',
+    ],
+    'modules.mcp.core.tasks': [
+        'MCP 任务登记表',
+    ],
+    'modules.mcp.blueprint': [
+        'MCP 服务端 — Flask Blueprint',
+        '未授权：需要有效的 Bearer Token',
+        '本服务仅支持 POST JSON-RPC（不提供 SSE 流）',
+    ],
 }
 
 

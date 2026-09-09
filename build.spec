@@ -81,6 +81,9 @@ all_datas = [
     # 医保参保证明下载模块（templates 含 员工名单模板.xlsx）
     ('modules/medical/templates', 'modules/medical/templates'),
     ('modules/medical/static', 'modules/medical/static'),
+    # MCP 服务端模块
+    ('modules/mcp/templates', 'modules/mcp/templates'),
+    ('modules/mcp/static', 'modules/mcp/static'),
     # 版本信息（用于远程更新检查）
     ('version.json', '.'),
     # 远程认证配置（内嵌回退：外部 auth_config.json 丢失时使用）
@@ -123,6 +126,15 @@ a = Analysis(
         'win32com', 'win32com.client', 'pythoncom', 'pywintypes',
         # playwright（医保参保证明下载模块）
         'playwright.async_api', 'playwright._impl._driver', 'greenlet',
+        # MCP 服务端（适配器为降低启动耦合，业务模块在函数内延迟导入，此处显式声明）
+        'modules.mcp', 'modules.mcp.blueprint',
+        'modules.mcp.core.protocol', 'modules.mcp.core.security',
+        'modules.mcp.core.tools', 'modules.mcp.core.tasks',
+        'modules.mcp.core.adapters',
+        'modules.insurance.blueprint', 'modules.insurance.core.template_engine',
+        'modules.insurance.core.roster_parser',
+        'modules.pdf2word.core.converter', 'modules.pdf2word.core.to_pdf',
+        'modules.contract.core.file_renamer', 'modules.contract.core.roster_parser',
     ] + rapidocr_hidden + openpyxl_hidden + webview_hidden + pdf2docx_hidden + docx_hidden + pywin32_hidden + playwright_hidden,
     hookspath=[],
     hooksconfig={},

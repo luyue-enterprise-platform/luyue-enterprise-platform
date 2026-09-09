@@ -1,12 +1,13 @@
 {
-  "version": "2.1.2",
-  "version_code": 2102,
-  "release_date": "2026-09-07",
+  "version": "2.2.0",
+  "version_code": 2200,
+  "release_date": "2026-09-09",
   "mandatory": false,
   "changelog": [
-    "v2.1.2 更新（重要修复）：",
-    "1. 修复：图片转PDF时，部分竖版内容（如手机拍照的证件）被错误转成横版。现在按图片实际主体内容判断横竖版，并自动校正手机拍照方向，转换方向与原始内容一致",
-    "2. 优化：横竖版判断不再受图片右下角水印/印章位置影响"
+    "v2.2.0 更新（新增能力）：",
+    "1. 新增 MCP 服务端：平台对外提供标准 MCP 接口，AI 客户端可直接调用本平台的社保智能核算、PDF/Word 双向转换、劳动合同整理三类能力",
+    "2. 门户新增「MCP 服务」入口：可查看接口地址、访问令牌（支持一键复制/重新生成）、工具清单，并可随时启用或停用服务",
+    "3. 安全设计：MCP 接口采用令牌鉴权并配备总开关，停用后接口拒绝服务；本地业务功能不受影响"
   ],
-  "download_url": "https://luyue-1466112667.cos.ap-shanghai.myqcloud.com/LY_setup_v2.1.2.exe"
+  "download_url": "https://luyue-1466112667.cos.ap-shanghai.myqcloud.com/LY_setup_v2.2.0.exe"
 }
