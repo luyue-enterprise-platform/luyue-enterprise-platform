@@ -329,3 +329,155 @@ def start_contract(task_id, file_paths, roster_path=None):
     t = threading.Thread(target=_run, daemon=True)
     t.start()
     return t
+
+
+# ==================== 合同整理两阶段（v2.3.2 预览/确认） ====================
+
+def preview_contract(task_id, file_paths, roster_path=None):
+    """同步生成重命名计划（不执行），任务置 waiting_confirm 并暂存计划数据
+
+    与平台「重命名计划预览」对应：把需要人工选择的项（重名待确认，含候选
+    归属人）返回给调用方，由用户选择后再 confirm_contract 执行。
+    """
+    from modules.contract.core.roster_parser import parse_roster_from_table
+    from modules.contract.core.file_renamer import plan_renames
+
+    roster = parse_roster_from_table(roster_path) if roster_path else []
+    if not roster:
+        raise ValueError('未提供花名册或花名册解析为空（roster_path）')
+
+    plan = plan_renames(file_paths, roster)
+    dup_count = len(plan.get('duplicates', []))
+    tasks.update(
+        task_id, status='waiting_confirm',
+        total=plan.get('total', len(file_paths)),
+        message='计划已生成，等待确认（重名待确认 %d 项）' % dup_count,
+        pending_contract={'file_paths': list(file_paths),
+                          'roster_path': roster_path,
+                          'plan': plan})
+    return plan
+
+
+def _choice_maps(choices):
+    """解析确认选择：new_name 覆盖表 + 重名归属 seq 表（键均为原文件名）"""
+    override_name = {}
+    assign_seq = {}
+    for c in choices or []:
+        if not isinstance(c, dict):
+            continue
+        orig = (c.get('original') or '').strip()
+        if not orig:
+            continue
+        if c.get('new_name'):
+            override_name[orig] = str(c['new_name']).strip()
+        if c.get('seq') is not None:
+            try:
+                assign_seq[orig] = int(c['seq'])
+            except (TypeError, ValueError):
+                pass
+    return override_name, assign_seq
+
+
+def build_confirmed_renames(plan, choices):
+    """按计划 + 确认选择合成最终重命名名单与待处理名单
+
+    - auto 项全部重命名（new_name 可被 choices 覆盖）
+    - 重名项：choices 指定 seq 且命中候选 → 生成新名（可被 new_name 覆盖）；
+      未选择归属的重名项 → 待处理
+    - 未匹配项 → 待处理
+
+    返回 (renames, pending)。
+    """
+    override_name, assign_seq = _choice_maps(choices)
+
+    renames = []
+    for a in plan.get('auto', []):
+        orig = a.get('original')
+        renames.append({'original': orig,
+                        'new_name': override_name.get(orig) or a.get('new_name'),
+                        'seq': a.get('seq')})
+
+    pending = [u.get('original') for u in plan.get('unmatched', [])
+               if u.get('original')]
+    for d in plan.get('duplicates', []):
+        orig = d.get('original') or d.get('basename')
+        if not orig:
+            continue
+        seq = assign_seq.get(orig)
+        cand = None
+        if seq is not None:
+            for c in d.get('candidates', []):
+                if c.get('seq') == seq:
+                    cand = c
+                    break
+        if cand is None:
+            pending.append(orig)
+            continue
+        new_name = override_name.get(orig)
+        if not new_name:
+            ext = os.path.splitext(orig)[1]
+            tail = (cand.get('idcard_tail') or '').strip()
+            base = '%02d-%s' % (cand.get('seq') or 0, cand.get('name') or '')
+            if tail:
+                base = '%s-%s' % (base, tail)
+            new_name = base + ext
+        renames.append({'original': orig, 'new_name': new_name,
+                        'seq': cand.get('seq')})
+
+    return renames, pending
+
+
+def confirm_contract(task_id, choices=None):
+    """按确认选择执行合同重命名（后台线程）
+
+    前置：任务处于 waiting_confirm（preview_contract 已暂存计划）。
+    未在 choices 中选择归属的重名项与未匹配项移入「待处理」。
+    """
+    task = tasks.get(task_id) or {}
+    pending_data = task.get('pending_contract') or {}
+    plan = pending_data.get('plan') or {}
+    file_paths = pending_data.get('file_paths') or []
+    if not plan or not file_paths:
+        raise ValueError('任务缺少待确认计划数据，请重新 preview 后再确认')
+
+    out_dir = output_dir_for('contract', task_id)
+    cb = _progress_cb(task_id, '正在整理')
+    renames, pending = build_confirmed_renames(plan, choices)
+
+    def _run():
+        try:
+            from modules.contract.core.file_renamer import (
+                validate_renames, execute_renames)
+
+            source_paths = {os.path.basename(p): p for p in file_paths}
+            errors = validate_renames(source_paths, renames)
+            if errors:
+                raise ValueError('；'.join(errors[:5]))
+
+            tasks.update(task_id, status='processing',
+                         total=len(file_paths),
+                         message='正在执行重命名...')
+            result = execute_renames(source_paths, plan, out_dir, renames,
+                                     pending, progress_callback=cb,
+                                     task_id=task_id)
+            summary = {
+                'output_dir': out_dir,
+                'total': plan.get('total', len(file_paths)),
+                'renamed': len(renames),
+                'pending': len(pending),
+                'unmatched': len(plan.get('unmatched', [])),
+                'duplicates_resolved': len(renames) - len(plan.get('auto', [])),
+                'duplicates': len(plan.get('duplicates', [])),
+                'roster_missing': len(plan.get('roster_missing', [])),
+                'confirmed': True,
+                'detail': result if isinstance(result, dict) else {'raw': str(result)},
+            }
+            tasks.update(task_id, pending_contract=None)
+            _finalize(task_id, 'contract', out_dir, summary, '整理完成（已确认）',
+                      'contract')
+        except Exception as e:
+            _fail_with_report(task_id, 'contract', e, '整理失败: %s' % e)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return t

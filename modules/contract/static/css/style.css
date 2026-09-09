@@ -582,3 +582,48 @@ body {
 .stat-card.danger .stat-value {
     color: #d9534f;
 }
+
+/* ===== v2.3.2 卡片展开/折叠 ===== */
+/* 折叠态隐藏卡片区，仅保留头部；各卡片状态相互独立（class 各自持有） */
+.card.collapsed > .card-body {
+    display: none;
+}
+
+.card.collapsed > .card-header {
+    border-bottom: none;
+}
+
+.collapse-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
+    padding: 5px 12px;
+    font-size: 13px;
+    color: var(--primary);
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    white-space: nowrap;
+}
+
+.collapse-btn:hover {
+    background: #f0f4f8;
+    border-color: var(--primary);
+}
+
+.collapse-btn .collapse-icon {
+    font-size: 12px;
+    line-height: 1;
+}
+
+/* 折叠态按钮弱化为主色描边，展开态实心反馈更明显 */
+.card.collapsed .collapse-btn {
+    color: var(--text-light);
+}
+
+@media (max-width: 768px) {
+    .collapse-btn { padding: 4px 10px; font-size: 12px; }
+}

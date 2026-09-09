@@ -590,6 +590,129 @@ def _split_ocr_results(task_id, ocr_results, roster):
     return success_results, failed_results, all_files
 
 
+# v2.3.2 并行 OCR 工作者数：onnxruntime 推理释放 GIL，多线程真正并行；
+# 引擎为线程本地实例（ocr_engine.get_engine），无跨线程共享。
+# 上限 4：参保证明单张推理约 1-3s，4 线程已能跑满常见 4-8 核 CPU。
+OCR_MAX_WORKERS = max(1, min(4, (os.cpu_count() or 4)))
+
+
+def _ocr_one_image(fp, province_code, display_name, source_origin):
+    """单张图片 OCR + 解析 + 字段装配（线程安全：引擎线程本地、无共享写）
+
+    成功/失败均返回结构统一的 dict（失败带 error），异常绝不抛出线程外。
+    """
+    try:
+        parsed = parse_ocr_result_from_image(fp, province_code=province_code)
+        parsed['filename'] = display_name
+        parsed['_source_path'] = fp  # 保留源文件路径供整理使用
+        parsed['_source_origin'] = source_origin  # 原始源文件名，用于PDF多页去重
+        logger.info(
+            f'[ocr] {display_name} → '
+            f'险种={parsed.get("insurance_type")}, '
+            f'姓名={parsed.get("name")}, '
+            f'时间段={parsed.get("period")}, '
+            f'单位={parsed.get("company_name")}'
+        )
+        return parsed
+    except Exception as e:
+        err_msg = str(e)
+        logger.error(f'[ocr] 识别 {display_name} 失败: {err_msg}\n{traceback.format_exc()}')
+        return {
+            'filename': display_name,
+            'error': err_msg,
+            'name': '', 'idcard': '',
+            'insurance_type': None, 'period': None, 'raw_text': '',
+            '_source_path': fp,
+            '_source_origin': source_origin
+        }
+
+
+def _ocr_all_items(task_id, all_items, province_code):
+    """并行识别全部图片（v2.3.2），结果按 all_items 原序归位
+
+    有界窗口提交：任一时刻最多 OCR_MAX_WORKERS 张在飞，补齐窗口前先检查
+    取消/暂停——保留原串行版的控制语义（取消立即停、暂停不再派新活）。
+    返回 None 表示任务已取消（状态已在函数内回写）。
+    """
+    from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+
+    total = len(all_items)
+
+    def _ctl():
+        with tasks_lock:
+            t = tasks.get(task_id) or {}
+            if t.get('cancelled'):
+                return 'cancelled'
+            if t.get('paused'):
+                return 'paused'
+        return None
+
+    def _wait_if_paused():
+        """暂停时循环等待；返回 True 表示等待期间被取消"""
+        while True:
+            state = _ctl()
+            if state == 'cancelled':
+                with tasks_lock:
+                    tasks[task_id]['status'] = 'cancelled'
+                    tasks[task_id]['message'] = '任务已取消'
+                    tasks[task_id]['paused'] = False
+                logger.info(f'[task:{task_id}] 任务在暂停中被取消')
+                return True
+            if state is None:
+                return False
+            time.sleep(0.5)
+
+    def _mark_cancelled(msg):
+        with tasks_lock:
+            tasks[task_id]['status'] = 'cancelled'
+            tasks[task_id]['message'] = '任务已取消'
+        logger.info(f'[task:{task_id}] {msg}')
+
+    results = [None] * total
+    next_idx = 0
+    done = 0
+    cancelled = False
+
+    with ThreadPoolExecutor(max_workers=OCR_MAX_WORKERS,
+                            thread_name_prefix='ocr') as pool:
+        in_flight = {}  # future -> idx
+        while next_idx < total or in_flight:
+            # 补满窗口（每次派新活前检查取消/暂停）
+            while next_idx < total and len(in_flight) < OCR_MAX_WORKERS:
+                if _wait_if_paused():
+                    cancelled = True
+                    break
+                display_name, fp, source_origin = all_items[next_idx]
+                fut = pool.submit(_ocr_one_image, fp, province_code,
+                                  display_name, source_origin)
+                in_flight[fut] = next_idx
+                next_idx += 1
+            if cancelled:
+                break
+            if not in_flight:
+                break
+            done_futs, _ = wait(in_flight.keys(), return_when=FIRST_COMPLETED)
+            for fut in done_futs:
+                idx = in_flight.pop(fut)
+                parsed = fut.result()  # _ocr_one_image 不抛异常
+                results[idx] = parsed
+                done += 1
+                with tasks_lock:
+                    tasks[task_id]['current'] = done
+                    tasks[task_id]['message'] = (
+                        f'正在识别 ({done}/{total}): {parsed.get("filename")}')
+            if _ctl() == 'cancelled':
+                cancelled = True
+                break
+        if cancelled:
+            for fut in in_flight:
+                fut.cancel()
+            _mark_cancelled('任务被用户取消')
+            return None
+
+    return results
+
+
 def process_task(task_id, file_paths, roster, roster_company='', roster_source_path='', year_range=None,
                  tax_mode='退税', province_code=None):
     """后台线程：PDF转图片 -> 逐张OCR识别 -> 解析 -> 分组 -> 统计 -> 文件整理 -> 生成Excel
@@ -654,62 +777,13 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
 
         logger.info(f'[task:{task_id}] 共需识别 {len(all_items)} 张图片')
 
-        for i, (display_name, fp, source_origin) in enumerate(all_items):
-            # 检查是否已取消
-            with tasks_lock:
-                if tasks[task_id].get('cancelled'):
-                    tasks[task_id]['status'] = 'cancelled'
-                    tasks[task_id]['message'] = '任务已取消'
-                    logger.info(f'[task:{task_id}] 任务被用户取消')
-                    return
-
-            # 检查是否已暂停，暂停时循环等待
-            while True:
-                with tasks_lock:
-                    is_paused = tasks[task_id].get('paused')
-                    is_cancelled = tasks[task_id].get('cancelled')
-                if is_cancelled:
-                    with tasks_lock:
-                        tasks[task_id]['status'] = 'cancelled'
-                        tasks[task_id]['message'] = '任务已取消'
-                        tasks[task_id]['paused'] = False
-                    logger.info(f'[task:{task_id}] 任务在暂停中被取消')
-                    return
-                if not is_paused:
-                    break
-                time.sleep(0.5)
-
-            with tasks_lock:
-                tasks[task_id]['current'] = i
-                tasks[task_id]['message'] = f'正在识别 ({i+1}/{len(all_items)}): {display_name}'
-
-            try:
-                parsed = parse_ocr_result_from_image(fp, province_code=province_code)
-                parsed['filename'] = display_name
-                parsed['_source_path'] = fp  # 保留源文件路径供整理使用
-                parsed['_source_origin'] = source_origin  # 原始源文件名，用于PDF多页去重
-                ocr_results.append(parsed)
-                # 记录OCR解析详情，便于排查问题
-                logger.info(
-                    f'[task:{task_id}] {display_name} → '
-                    f'险种={parsed.get("insurance_type")}, '
-                    f'姓名={parsed.get("name")}, '
-                    f'时间段={parsed.get("period")}, '
-                    f'单位={parsed.get("company_name")}'
-                )
-            except Exception as e:
-                err_msg = str(e)
-                logger.error(f'[task:{task_id}] 识别 {display_name} 失败: {err_msg}\n{traceback.format_exc()}')
-                ocr_results.append({
-                    'filename': display_name,
-                    'error': err_msg,
-                    'name': '', 'idcard': '',
-                    'insurance_type': None, 'period': None, 'raw_text': '',
-                    '_source_path': fp,
-                    '_source_origin': source_origin
-                })
-
-            time.sleep(0.05)
+        # v2.3.2：OCR 主循环并行化——多线程识别（有界窗口，保留取消/暂停语义），
+        # 结果按 all_items 原序归位；返回 None 表示任务已取消。
+        # 注意 extend 而非赋值：PDF 转换阶段的失败记录已先入 ocr_results。
+        parallel_results = _ocr_all_items(task_id, all_items, province_code)
+        if parallel_results is None:
+            return
+        ocr_results.extend(parallel_results)
 
         with tasks_lock:
             tasks[task_id]['current'] = len(all_items)

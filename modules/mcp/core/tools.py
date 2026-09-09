@@ -261,6 +261,12 @@ def _wait_and_fetch(task_id, wait_seconds):
                 task, hint='任务已完成，Server 已内部等待并一次性返回全部结果（耗时 %s）；'
                            '完整明细已落盘，见 artifacts 文件卡片'
                            % _elapsed_human(_elapsed(task))))
+        if status == 'waiting_confirm':
+            # v2.3.2 合同两阶段：计划待确认不是"执行中"，直接返回引导而非空等
+            return _err_payload(
+                '任务待确认：重命名计划已生成，尚未执行任何重命名', task,
+                suggestion='调用 contract_organize 传 confirm_task_id=%s 与 choices '
+                           '确认执行' % task_id)
         if time.monotonic() >= deadline:
             return _err_payload(
                 'Server 已内部等待 %d 秒，任务仍在处理中'
@@ -271,9 +277,13 @@ def _wait_and_fetch(task_id, wait_seconds):
         time.sleep(POLL_INTERVAL_SEC)
 
 
-def _immediate_payload(task_id, capability, file_count, message):
-    """wait_seconds=0 时的立即返回体：只给 task_id 与去向，不等待"""
-    return _ok({
+def _immediate_payload(task_id, capability, file_count, message, effective=None):
+    """wait_seconds=0 时的立即返回体：只给 task_id 与去向，不等待
+
+    v2.3.2：effective_params 回显本次实际生效的参数（含各项默认值），
+    让"平台上需要选择的项"在 MCP 响应中可见、可核对。
+    """
+    body = {
         'task_id': task_id,
         'file_count': file_count,
         'status': 'processing',
@@ -282,7 +292,10 @@ def _immediate_payload(task_id, capability, file_count, message):
         'hint': '任务已提交；大批量长耗时任务可在提交时携带 wait_seconds（0-%d 秒）'
                 '由 Server 内部等待并一次性返回全部结果；完成后调用 get_task_result '
                 '取精简摘要与文件卡片，完整明细一律落盘' % MAX_WAIT_SEC,
-    })
+    }
+    if effective:
+        body['effective_params'] = effective
+    return _ok(body)
 
 
 YEAR_KEYS = ('year_start', 'month_start', 'year_end', 'month_end')
@@ -441,10 +454,19 @@ def tool_insurance_calculate(args):
                              tax_mode=tax_mode,
                              roster_path=args.get('roster_path'),
                              year_range=year_range)
+    effective = {
+        'province': province,
+        'tax_mode': tax_mode,
+        'roster_path': args.get('roster_path') or '不使用',
+        'year_range': ('%04d-%02d ~ %04d-%02d' % year_range) if year_range
+                      else '参保数据全区间',
+        'wait_seconds': wait_seconds,
+    }
     if wait_seconds > 0:
         return _wait_and_fetch(task_id, wait_seconds)
     return _immediate_payload(task_id, 'insurance', len(file_paths),
-                              '社保核算任务已提交（%d 份文件）' % len(file_paths))
+                              '社保核算任务已提交（%d 份文件）' % len(file_paths),
+                              effective=effective)
 
 
 def tool_convert_pdf_to_word(args):
@@ -455,10 +477,12 @@ def tool_convert_pdf_to_word(args):
     task_id = tasks.create('pdf2word', {'file_count': len(file_paths),
                                         'direction': 'pdf2word'})
     adapters.start_pdf2word(task_id, file_paths, direction='pdf2word')
+    effective = {'direction': 'pdf2word', 'wait_seconds': wait_seconds}
     if wait_seconds > 0:
         return _wait_and_fetch(task_id, wait_seconds)
     return _immediate_payload(task_id, 'pdf2word', len(file_paths),
-                              'PDF转Word任务已提交（%d 份文件）' % len(file_paths))
+                              'PDF转Word任务已提交（%d 份文件）' % len(file_paths),
+                              effective=effective)
 
 
 def tool_convert_to_pdf(args):
@@ -471,23 +495,140 @@ def tool_convert_to_pdf(args):
                                         'output_mode': output_mode})
     adapters.start_pdf2word(task_id, file_paths, direction='topdf',
                             output_mode=output_mode)
+    effective = {'direction': 'topdf', 'output_mode': output_mode,
+                 'wait_seconds': wait_seconds}
     if wait_seconds > 0:
         return _wait_and_fetch(task_id, wait_seconds)
     return _immediate_payload(task_id, 'pdf2word', len(file_paths),
-                              '转PDF任务已提交（%d 份文件）' % len(file_paths))
+                              '转PDF任务已提交（%d 份文件）' % len(file_paths),
+                              effective=effective)
+
+
+# 合同预览响应中各清单的内联上限（完整计划一律落盘，见 artifacts 卡片）
+PREVIEW_INLINE_LIMIT = 100
+
+
+def _contract_preview_payload(task_id, plan):
+    """预览阶段响应：重名待确认（含候选归属人）等需人工选择项内联展示，
+    完整计划（含全量 auto 清单）落盘为卡片，不执行任何重命名。"""
+    dups = plan.get('duplicates', [])
+    unmatched = plan.get('unmatched', [])
+    auto = plan.get('auto', [])
+    card = artifacts.write_json('contract', task_id, 'preview', plan,
+                                label='重命名计划预览（完整JSON，含全部自动匹配项）')
+    return _ok({
+        'task_id': task_id,
+        'status': 'waiting_confirm',
+        'message': '重命名计划已生成，未执行任何重命名，等待确认',
+        'summary': {
+            'total': plan.get('total'),
+            'auto': len(auto),
+            'duplicates': len(dups),
+            'unmatched': len(unmatched),
+            'roster_missing': len(plan.get('roster_missing', [])),
+        },
+        # 平台「重名待确认（请选择归属人）」环节对应的待选择项
+        'needs_selection': [
+            {'original': d.get('original') or d.get('basename'),
+             'guessed': d.get('guessed'),
+             'reason': d.get('reason'),
+             'candidates': d.get('candidates', [])}
+            for d in dups[:PREVIEW_INLINE_LIMIT]
+        ],
+        'needs_selection_truncated': len(dups) > PREVIEW_INLINE_LIMIT,
+        'unmatched': [
+            {'original': u.get('original'), 'guessed': u.get('guessed'),
+             'reason': u.get('reason')}
+            for u in unmatched[:PREVIEW_INLINE_LIMIT]
+        ],
+        'unmatched_truncated': len(unmatched) > PREVIEW_INLINE_LIMIT,
+        'roster_missing': plan.get('roster_missing', []),
+        'auto_preview': [
+            {'original': a.get('original'), 'new_name': a.get('new_name')}
+            for a in auto[:PREVIEW_INLINE_LIMIT]
+        ],
+        'auto_preview_truncated': len(auto) > PREVIEW_INLINE_LIMIT,
+        'artifacts': [card],
+        'how_to_confirm': (
+            '调用 contract_organize 传 confirm_task_id=%s 执行重命名；'
+            'choices 数组中：重名项传 {"original": 原文件名, "seq": 候选人的 seq}'
+            '（seq 取自 candidates），可选加 "new_name" 覆盖新文件名；'
+            'auto 项也可传 {"original", "new_name"} 改名；'
+            '未出现在 choices 中的重名项与未匹配文件将移入「待处理」目录'
+            % task_id),
+    })
+
+
+def _contract_confirm(confirm_id, args):
+    """确认阶段：校验任务状态与 choices，启动执行线程"""
+    task = tasks.get(confirm_id)
+    if not task or task.get('capability') != 'contract':
+        return _err_payload('合同整理任务不存在: %s' % confirm_id,
+                            {'task_id': confirm_id, 'capability': 'contract',
+                             'status': 'not_found'},
+                            suggestion='核对 task_id；预览阶段由 contract_organize '
+                                       'preview_only=true 返回')
+    if task.get('status') != 'waiting_confirm':
+        return _err_payload(
+            '任务当前状态=%s，仅 waiting_confirm（待确认）状态可确认执行'
+            % task.get('status'), task,
+            suggestion='如需重新预览，请用 file_paths + roster_path + '
+                       'preview_only=true 重新提交')
+    choices = args.get('choices') or []
+    if not isinstance(choices, list):
+        return _missing_payload([{
+            'field': 'choices',
+            'issue': 'choices 必须是数组，元素为 {"original", "seq"?, "new_name"?}',
+            'how_to_fix': '重名项传 original+seq（seq 取自预览响应 candidates）；'
+                          '改名传 original+new_name；不需要调整时省略 choices',
+        }], [])
+    wait_issue, wait_seconds = _check_wait(args)
+    if wait_issue:
+        return _missing_payload([wait_issue], [])
+    try:
+        adapters.confirm_contract(confirm_id, choices)
+    except Exception as e:
+        return _err_payload('确认执行失败: %s' % e, task,
+                            suggestion='任务可能已确认过或计划数据缺失，可重新预览')
+    if wait_seconds > 0:
+        return _wait_and_fetch(confirm_id, wait_seconds)
+    return _immediate_payload(
+        confirm_id, 'contract', task.get('total') or 0,
+        '合同整理已确认，重命名执行中',
+        effective={'confirm_task_id': confirm_id,
+                   'choices_count': len(choices),
+                   'wait_seconds': wait_seconds})
 
 
 def tool_contract_organize(args):
+    # 确认阶段（v2.3.2）：confirm_task_id + choices 执行已预览的计划
+    confirm_id = (args.get('confirm_task_id') or '').strip()
+    if confirm_id:
+        return _contract_confirm(confirm_id, args)
     issues, optional, file_paths, roster_path, wait_seconds = \
         _validate_contract(args)
     if issues:
         return _missing_payload(issues, optional)
-    task_id = tasks.create('contract', {'file_count': len(file_paths)})
+    preview_only = bool(args.get('preview_only'))
+    task_id = tasks.create('contract', {'file_count': len(file_paths),
+                                        'preview_only': preview_only})
+    if preview_only:
+        # 预览阶段（v2.3.2）：同步生成计划，返回需人工选择项，不执行重命名
+        try:
+            plan = adapters.preview_contract(task_id, file_paths, roster_path)
+        except Exception as e:
+            tasks.fail(task_id, e, '计划生成失败')
+            return _err_payload('计划生成失败: %s' % e, tasks.get(task_id),
+                                suggestion='核对花名册与文件路径后重新提交')
+        return _contract_preview_payload(task_id, plan)
     adapters.start_contract(task_id, file_paths, roster_path=roster_path)
+    effective = {'roster_path': roster_path, 'preview_only': False,
+                 'wait_seconds': wait_seconds}
     if wait_seconds > 0:
         return _wait_and_fetch(task_id, wait_seconds)
     return _immediate_payload(task_id, 'contract', len(file_paths),
-                              '合同整理任务已提交（%d 份文件）' % len(file_paths))
+                              '合同整理任务已提交（%d 份文件）' % len(file_paths),
+                              effective=effective)
 
 
 def tool_get_task_status(args):
@@ -509,7 +650,11 @@ def tool_get_task_status(args):
                                                   STALE_AFTER_SEC // 60))
     else:
         view['stale'] = False
-    view['hint'] = '完成后调用 get_task_result 取精简摘要与文件卡片'
+    if task.get('status') == 'waiting_confirm':
+        view['hint'] = ('计划待确认：调用 contract_organize 传 confirm_task_id 与 '
+                        'choices 确认执行；待选择项见预览响应 needs_selection')
+    else:
+        view['hint'] = '完成后调用 get_task_result 取精简摘要与文件卡片'
     return _ok(view)
 
 
@@ -527,6 +672,14 @@ def tool_get_task_result(args):
         return _err_payload(
             task.get('error') or '任务执行失败', task,
             suggestion='错误报告已落盘（见 artifacts）；请核对入参与文件后重新提交')
+
+    # 待确认（v2.3.2 合同两阶段）：计划已生成但未执行，引导确认
+    if status == 'waiting_confirm':
+        return _err_payload(
+            '任务待确认：重命名计划已生成，尚未执行任何重命名', task,
+            suggestion='调用 contract_organize 传 confirm_task_id=%s 与 choices '
+                       '确认执行；待选择项（重名归属，含 candidates）见预览响应的 '
+                       'needs_selection 与落盘计划卡片' % task_id)
 
     # 降级二：任务未完成 —— 明确状态、进度与耗时，并给出超时判定
     if status in ('pending', 'processing') or not _artifacts_of(task):
@@ -615,8 +768,11 @@ TOOLS = {
         'handler': tool_convert_to_pdf,
     },
     'contract_organize': {
-        'description': '劳动合同整理：按花名册智能匹配合同影像并批量重命名归档；'
-                       '自动匹配的直接重命名，未匹配与重名待确认的移入「待处理」目录。'
+        'description': '劳动合同整理：按花名册智能匹配合同影像并批量重命名归档。'
+                       '两种模式：①无人值守（默认）：自动匹配的直接重命名，未匹配与重名待确认的移入「待处理」目录；'
+                       '②两阶段确认（preview_only=true）：先返回重命名计划与「重名待确认」清单（含候选归属人 candidates），'
+                       '不执行任何重命名；用户选择后再用 confirm_task_id + choices 确认执行，'
+                       '未选择的重名项与未匹配文件移入「待处理」。'
                        '长耗时任务；默认立即返回 task_id，可传 wait_seconds 由 Server 内部等待并一次性返回全部结果。'
                        '结果落盘，响应只回精简摘要与文件卡片。',
         'inputSchema': {
@@ -626,11 +782,22 @@ TOOLS = {
                                'description': '合同影像文件路径数组（图片/PDF），可填目录（自动递归）'},
                 'roster_path': {'type': 'string',
                                 'description': '花名册文件路径（Excel/CSV），用于姓名匹配'},
+                'preview_only': {'type': 'boolean',
+                                 'description': 'true=只生成重命名计划并返回「重名待确认」待选择清单（不执行），'
+                                                '随后用 confirm_task_id + choices 确认执行；默认 false 无人值守直接执行'},
+                'confirm_task_id': {'type': 'string',
+                                    'description': '确认执行：preview_only 预览返回的 task_id。'
+                                                   '传此参数时 file_paths/roster_path 不需要'},
+                'choices': {'type': 'array',
+                            'items': {'type': 'object'},
+                            'description': '确认选择（配合 confirm_task_id）：重名项传 {"original", "seq"}'
+                                           '（seq 取自预览响应 candidates）；任意项可加 "new_name" 覆盖新文件名；'
+                                           '省略时重名项全部进「待处理」'},
                 'wait_seconds': {'type': 'integer',
                                  'description': 'Server 内部等待并一次性返回结果的秒数（0-%d，默认 0 立即返回 task_id）。'
                                                 '大批量任务建议 600-1200' % MAX_WAIT_SEC},
             },
-            'required': ['file_paths', 'roster_path'],
+            'required': [],
         },
         'handler': tool_contract_organize,
     },

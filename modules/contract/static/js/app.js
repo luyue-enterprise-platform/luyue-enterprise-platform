@@ -893,3 +893,23 @@ function resetAll() {
     document.getElementById('startBtn').disabled = false;
     document.getElementById('startBtn').textContent = '🚀 开始整理';
 }
+
+// ===== v2.3.2 卡片展开/折叠 =====
+// 两个上传卡片（花名册/合同文件）默认折叠（HTML 中已带 collapsed class，
+// 避免加载闪烁），点击头部按钮独立切换；状态不共享、互不影响。
+function toggleSection(sectionId, btn) {
+    var sec = document.getElementById(sectionId);
+    if (!sec || !btn) {
+        return;
+    }
+    var collapsed = sec.classList.toggle('collapsed');
+    btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    var icon = btn.querySelector('.collapse-icon');
+    var text = btn.querySelector('.collapse-text');
+    if (icon) {
+        icon.textContent = collapsed ? '▸' : '▾';
+    }
+    if (text) {
+        text.textContent = collapsed ? '展开' : '折叠';
+    }
+}

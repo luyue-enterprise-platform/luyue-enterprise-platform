@@ -2,6 +2,7 @@
 """OCR引擎模块 - 封装rapidocr，提供图片文字识别能力"""
 import os
 import sys
+import threading
 
 # 单文件 exe 模式下，确保 onnxruntime/capi 目录在 DLL 搜索路径中
 if getattr(sys, 'frozen', False):
@@ -13,16 +14,20 @@ if getattr(sys, 'frozen', False):
     except Exception:
         pass
 
-_engine = None
+# v2.3.2 并行 OCR：线程本地引擎实例——每线程首次调用时各自加载一次模型，
+# 规避 InferenceSession 跨线程并发调用的兼容性风险；onnxruntime 推理
+# 释放 GIL，多线程可真正并行。串行调用方（单线程）行为与原版完全一致。
+_engines = threading.local()
 
 
 def get_engine():
-    """懒加载OCR引擎（单例模式，避免重复加载模型）"""
-    global _engine
-    if _engine is None:
+    """懒加载OCR引擎（线程本地单例，避免重复加载模型）"""
+    engine = getattr(_engines, 'engine', None)
+    if engine is None:
         from rapidocr_onnxruntime import RapidOCR
-        _engine = RapidOCR()
-    return _engine
+        engine = RapidOCR()
+        _engines.engine = engine
+    return engine
 
 
 def ocr_image(image_path):

@@ -20,12 +20,17 @@
     </nav>
 
     <main class="main-content">
-        <!-- 第一步：上传花名册 -->
-        <section class="card" id="rosterSection">
+        <!-- 第一步：上传花名册（v2.3.2：卡片默认折叠，点按钮展开） -->
+        <section class="card collapsible collapsed" id="rosterSection">
             <div class="card-header">
                 <span class="step-badge">1</span>
                 <h2>上传人员花名册</h2>
                 <span class="card-tip">支持 .xlsx / .xls / .csv 格式</span>
+                <button type="button" class="collapse-btn" id="rosterCollapseBtn"
+                        onclick="toggleSection('rosterSection', this)"
+                        aria-expanded="false" aria-controls="rosterSection">
+                    <span class="collapse-icon">▸</span><span class="collapse-text">展开</span>
+                </button>
             </div>
             <div class="card-body">
                 <div class="upload-box" id="rosterUploadBox">
@@ -46,12 +51,17 @@
             </div>
         </section>
 
-        <!-- 第二步：上传劳动合同 -->
-        <section class="card" id="uploadSection">
+        <!-- 第二步：上传劳动合同（v2.3.2：卡片默认折叠，点按钮展开） -->
+        <section class="card collapsible collapsed" id="uploadSection">
             <div class="card-header">
                 <span class="step-badge">2</span>
                 <h2>上传劳动合同图片</h2>
                 <span class="card-tip">可上传单人文件夹（以姓名命名）或单个文件，支持图片和PDF</span>
+                <button type="button" class="collapse-btn" id="uploadCollapseBtn"
+                        onclick="toggleSection('uploadSection', this)"
+                        aria-expanded="false" aria-controls="uploadSection">
+                    <span class="collapse-icon">▸</span><span class="collapse-text">展开</span>
+                </button>
             </div>
             <div class="card-body">
                 <div class="dropzone" id="dropzone">
