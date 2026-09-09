@@ -160,6 +160,22 @@ CHECKS = {
         '未授权：需要有效的 Bearer Token',
         '本服务仅支持 POST JSON-RPC（不提供 SSE 流）',
     ],
+    # v2.2.1 瘦返回交付：结果落盘 + 文件卡片（docstring 针刺 + 命名/URI 常量）
+    'modules.mcp.core.artifacts': [
+        'MCP 结果落盘与文件卡片',
+        '不覆盖历史结果',
+        'mcp-%s-%s-%s-%s.%s',
+        'file://',
+    ],
+    'modules.mcp.core.tools': [
+        '瘦返回交付模式（v2.2.1）',
+        '完整明细已落盘',
+        '任务尚未完成：状态=',
+    ],
+    'modules.mcp.core.adapters': [
+        '交付模式（v2.2.1 瘦返回）',
+        '禁止内联回传',
+    ],
 }
 
 

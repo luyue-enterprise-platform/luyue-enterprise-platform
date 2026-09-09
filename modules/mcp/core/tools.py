@@ -5,13 +5,24 @@
 处理器统一返回 (text, is_error)：text 为回传给 AI 的可读文本（JSON），
 is_error=True 时按 MCP 规范标记工具执行失败。
 
+**瘦返回交付模式（v2.2.1）**
+响应只回「精简摘要 + 执行状态 + 结果规模 + 文件卡片」：
+- 批量明细（逐文件结果、逐人参保记录、逐图识别详情）一律不内联，
+  由 core/artifacts.py 落盘为 JSON，响应只给卡片（name/path/uri/size/lines/mime）
+- 未完成任务 / 失败任务：给出明确错误、当前状态、已运行时长与后续建议，
+  失败同时落盘错误报告便于追溯
+
 批量能力均为长耗时操作，统一返回 task_id，由 get_task_status / get_task_result
 完成后续轮询与取结果。
 """
 import json
 import os
+from datetime import datetime
 
-from . import adapters, tasks
+from . import adapters, artifacts, tasks
+
+# 判定为"疑似卡死"的运行时长阈值（秒）：仅用于给出提示，不主动结束任务
+STALE_AFTER_SEC = 30 * 60
 
 INSURANCE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.pdf'}
 PDF_EXTS = {'.pdf'}
@@ -70,6 +81,96 @@ def _err(msg):
     return json.dumps({'error': str(msg)}, ensure_ascii=False, indent=2), True
 
 
+def _elapsed(task):
+    """任务已运行秒数（用于超时/卡死判定提示）"""
+    try:
+        start = datetime.fromisoformat(task.get('created_at'))
+        return max(0, int((datetime.now() - start).total_seconds()))
+    except Exception:
+        return None
+
+
+def _elapsed_human(sec):
+    if not sec and sec != 0:
+        return '-'
+    if sec < 60:
+        return '%d 秒' % sec
+    if sec < 3600:
+        return '%d 分 %d 秒' % (sec // 60, sec % 60)
+    return '%d 小时 %d 分' % (sec // 3600, (sec % 3600) // 60)
+
+
+def _artifacts_of(task):
+    result = task.get('result')
+    if isinstance(result, dict):
+        return result.get('artifacts') or []
+    return task.get('artifacts') or []
+
+
+def _thin_payload(task, hint=None):
+    """统一瘦返回体：状态 + 精简摘要 + 结果规模 + 文件卡片（不内联明细）"""
+    result = task.get('result') if isinstance(task.get('result'), dict) else {}
+    cards = _artifacts_of(task)
+    return {
+        'task_id': task.get('task_id'),
+        'capability': task.get('capability'),
+        'status': task.get('status'),
+        'message': task.get('message'),
+        'summary': result.get('summary'),
+        'result_size': artifacts.result_size(cards),
+        'artifacts': cards,
+        'output_dir': result.get('output_dir'),
+        'elapsed_sec': _elapsed(task),
+        'elapsed_human': _elapsed_human(_elapsed(task)),
+        'hint': hint or '完整明细已落盘，请通过 artifacts 中的文件卡片查看/下载/打开',
+    }
+
+
+def _err_payload(msg, task, suggestion=None):
+    """错误与降级响应：明确错误信息 + 当前状态 + 已运行时长 + 后续建议
+    （已有落盘文件时附卡片，便于追溯）"""
+    payload = {
+        'error': str(msg),
+        'task_id': task.get('task_id'),
+        'capability': task.get('capability'),
+        'status': task.get('status'),
+        'current': task.get('current'),
+        'total': task.get('total'),
+        'progress': task.get('progress'),
+        'elapsed_sec': _elapsed(task),
+        'elapsed_human': _elapsed_human(_elapsed(task)),
+    }
+    cards = _artifacts_of(task)
+    if cards:
+        payload['artifacts'] = cards
+    if suggestion:
+        payload['suggestion'] = suggestion
+    return json.dumps(payload, ensure_ascii=False, indent=2), True
+
+
+def _sync_insurance(task):
+    """社保任务：回读原生进度；原生完成后物化产物（落盘+卡片），只回精简视图"""
+    if task.get('capability') != 'insurance' or not task.get('native_task_id'):
+        return task
+    native = adapters.insurance_native(task['native_task_id']) or {}
+    if not native:
+        return task
+    task.update({
+        'status': native.get('status', task.get('status')),
+        'current': native.get('current', task.get('current')),
+        'total': native.get('total', task.get('total')),
+        'message': native.get('message', task.get('message')),
+    })
+    if native.get('result') is not None:
+        task_id = task.get('task_id')
+        stored = tasks.get(task_id) or {}
+        if not (stored.get('result') or {}).get('artifacts'):
+            # 幂等物化：worker 线程已做则跳过，线程异常时由此兜底
+            adapters.materialize_insurance(task_id)
+        task = tasks.get(task_id) or task
+    return task
+
+
 # ---------------- 工具实现 ----------------
 
 def tool_insurance_provinces(args):
@@ -94,8 +195,14 @@ def tool_insurance_calculate(args):
                              tax_mode=args.get('tax_mode', '退税'),
                              roster_path=args.get('roster_path'),
                              year_range=year_range)
-    return _ok({'task_id': task_id, 'file_count': len(file_paths),
-                'message': '社保核算任务已提交，用 get_task_status 查询进度'})
+    return _ok({
+        'task_id': task_id,
+        'file_count': len(file_paths),
+        'status': 'processing',
+        'message': '社保核算任务已提交，用 get_task_status 查询进度',
+        'result_dir': artifacts.artifact_dir('insurance', task_id),
+        'hint': '完成后调用 get_task_result 取精简摘要与文件卡片；完整明细不随响应返回，一律落盘',
+    })
 
 
 def tool_convert_pdf_to_word(args):
@@ -103,8 +210,14 @@ def tool_convert_pdf_to_word(args):
     task_id = tasks.create('pdf2word', {'file_count': len(file_paths),
                                         'direction': 'pdf2word'})
     adapters.start_pdf2word(task_id, file_paths, direction='pdf2word')
-    return _ok({'task_id': task_id, 'file_count': len(file_paths),
-                'message': 'PDF转Word任务已提交，用 get_task_status 查询进度'})
+    return _ok({
+        'task_id': task_id,
+        'file_count': len(file_paths),
+        'status': 'processing',
+        'message': 'PDF转Word任务已提交，用 get_task_status 查询进度',
+        'result_dir': artifacts.artifact_dir('pdf2word', task_id),
+        'hint': '完成后调用 get_task_result 取精简摘要与文件卡片；完整明细不随响应返回，一律落盘',
+    })
 
 
 def tool_convert_to_pdf(args):
@@ -117,8 +230,14 @@ def tool_convert_to_pdf(args):
                                         'output_mode': output_mode})
     adapters.start_pdf2word(task_id, file_paths, direction='topdf',
                             output_mode=output_mode)
-    return _ok({'task_id': task_id, 'file_count': len(file_paths),
-                'message': '转PDF任务已提交，用 get_task_status 查询进度'})
+    return _ok({
+        'task_id': task_id,
+        'file_count': len(file_paths),
+        'status': 'processing',
+        'message': '转PDF任务已提交，用 get_task_status 查询进度',
+        'result_dir': artifacts.artifact_dir('pdf2word', task_id),
+        'hint': '完成后调用 get_task_result 取精简摘要与文件卡片；完整明细不随响应返回，一律落盘',
+    })
 
 
 def tool_contract_organize(args):
@@ -128,47 +247,68 @@ def tool_contract_organize(args):
         raise ValueError('花名册文件不存在: %s' % roster_path)
     task_id = tasks.create('contract', {'file_count': len(file_paths)})
     adapters.start_contract(task_id, file_paths, roster_path=roster_path)
-    return _ok({'task_id': task_id, 'file_count': len(file_paths),
-                'message': '合同整理任务已提交，用 get_task_status 查询进度'})
+    return _ok({
+        'task_id': task_id,
+        'file_count': len(file_paths),
+        'status': 'processing',
+        'message': '合同整理任务已提交，用 get_task_status 查询进度',
+        'result_dir': artifacts.artifact_dir('contract', task_id),
+        'hint': '完成后调用 get_task_result 取精简摘要与文件卡片；完整明细不随响应返回，一律落盘',
+    })
 
 
 def tool_get_task_status(args):
+    """查询进度：只给精简视图（状态/进度/耗时），结果明细一律不内联"""
     task_id = (args.get('task_id') or '').strip()
     task = tasks.get(task_id)
     if not task:
         raise ValueError('任务不存在: %s' % task_id)
-    # 社保能力复用宿模块原生任务表，实时回读真实进度
-    if task.get('capability') == 'insurance' and task.get('native_task_id'):
-        native = adapters.insurance_native(task['native_task_id']) or {}
-        task.update({
-            'status': native.get('status', task.get('status')),
-            'current': native.get('current', task.get('current')),
-            'total': native.get('total', task.get('total')),
-            'message': native.get('message', task.get('message')),
-        })
-        if native.get('result') is not None:
-            task['result'] = native.get('result')
-            task['status'] = 'success'
-    return _ok(tasks.public_view(task))
+    task = _sync_insurance(task)
+    view = tasks.public_view(task)
+    view.pop('result', None)          # 明细不进响应，仅由 get_task_result 给卡片
+    sec = _elapsed(task)
+    view['elapsed_sec'] = sec
+    view['elapsed_human'] = _elapsed_human(sec)
+    if task.get('status') in ('pending', 'processing') and (sec or 0) > STALE_AFTER_SEC:
+        view['stale'] = True
+        view['stale_hint'] = ('任务已运行 %s 仍在进行，超过 %d 分钟可视为异常；'
+                              '可继续轮询或重新提交' % (_elapsed_human(sec),
+                                                  STALE_AFTER_SEC // 60))
+    else:
+        view['stale'] = False
+    view['hint'] = '完成后调用 get_task_result 取精简摘要与文件卡片'
+    return _ok(view)
 
 
 def tool_get_task_result(args):
+    """取结果：精简摘要 + 结果规模 + 文件卡片；未完成/失败给出明确降级信息"""
     task_id = (args.get('task_id') or '').strip()
     task = tasks.get(task_id)
     if not task:
         raise ValueError('任务不存在: %s' % task_id)
-    if task.get('capability') == 'insurance' and task.get('native_task_id'):
-        native = adapters.insurance_native(task['native_task_id']) or {}
-        if native.get('result') is not None:
-            task['result'] = native.get('result')
-            task['status'] = native.get('status', 'success')
-    if task.get('status') == 'error':
-        raise ValueError(task.get('error') or '任务执行失败')
-    if task.get('result') is None:
-        raise ValueError('任务尚未完成（当前状态：%s，%s）'
-                         % (task.get('status'), task.get('message')))
-    return _ok({'task_id': task_id, 'status': task.get('status'),
-                'result': task.get('result')})
+    task = _sync_insurance(task)
+    status = task.get('status')
+
+    # 降级一：任务失败 —— 明确错误 + 错误报告卡片 + 建议
+    if status == 'error':
+        return _err_payload(
+            task.get('error') or '任务执行失败', task,
+            suggestion='错误报告已落盘（见 artifacts）；请核对入参与文件后重新提交')
+
+    # 降级二：任务未完成 —— 明确状态、进度与耗时，并给出超时判定
+    if status in ('pending', 'processing') or not _artifacts_of(task):
+        sec = _elapsed(task)
+        msg = ('任务尚未完成：状态=%s，进度=%s/%s，%s，已运行 %s'
+               % (status, task.get('current'), task.get('total'),
+                  task.get('message') or '', _elapsed_human(sec)))
+        suggestion = '请稍后再次调用 get_task_status 轮询，完成后再取结果'
+        if (sec or 0) > STALE_AFTER_SEC:
+            suggestion = ('已运行 %s 超过 %d 分钟仍无结果，可视为超时；'
+                          '建议核对文件数量后重新提交，或联系管理员查看日志'
+                          % (_elapsed_human(sec), STALE_AFTER_SEC // 60))
+        return _err_payload(msg, task, suggestion=suggestion)
+
+    return _ok(_thin_payload(task))
 
 
 TOOLS = {
@@ -179,7 +319,8 @@ TOOLS = {
     },
     'insurance_calculate': {
         'description': '社保智能核算：批量识别参保证明（图片/PDF），生成重点群体参保统计与台账Excel。'
-                       '长耗时任务，返回 task_id，需用 get_task_status 轮询、get_task_result 取结果。',
+                       '长耗时任务，返回 task_id，需用 get_task_status 轮询、get_task_result 取结果。'
+                       '结果与Excel均落盘，响应只回精简摘要与文件卡片（逐人参保明细含身份证号，不随响应返回）。',
         'inputSchema': {
             'type': 'object',
             'properties': {
@@ -201,7 +342,7 @@ TOOLS = {
     },
     'convert_pdf_to_word': {
         'description': 'PDF 转 Word：批量将 PDF 转换为可编辑 docx，保持原排版（A4规范化+逐页方向保持+逐项校验）。'
-                       '长耗时任务，返回 task_id。',
+                       '长耗时任务，返回 task_id。结果落盘，响应只回精简摘要与文件卡片。',
         'inputSchema': {
             'type': 'object',
             'properties': {
@@ -214,7 +355,7 @@ TOOLS = {
     },
     'convert_to_pdf': {
         'description': '其他格式转 PDF：支持 Word/Excel/图片/文本/PDF，统一输出 A4 并按主体内容判定横竖版。'
-                       '长耗时任务，返回 task_id。',
+                       '长耗时任务，返回 task_id。结果落盘，响应只回精简摘要与文件卡片。',
         'inputSchema': {
             'type': 'object',
             'properties': {
@@ -230,7 +371,7 @@ TOOLS = {
     'contract_organize': {
         'description': '劳动合同整理：按花名册智能匹配合同影像并批量重命名归档；'
                        '自动匹配的直接重命名，未匹配与重名待确认的移入「待处理」目录。'
-                       '长耗时任务，返回 task_id。',
+                       '长耗时任务，返回 task_id。结果落盘，响应只回精简摘要与文件卡片。',
         'inputSchema': {
             'type': 'object',
             'properties': {
@@ -244,7 +385,8 @@ TOOLS = {
         'handler': tool_contract_organize,
     },
     'get_task_status': {
-        'description': '查询任务进度与状态（status: pending/processing/success/error）。',
+        'description': '查询任务进度与状态（status: pending/processing/success/error）。'
+                       '只返回精简视图（进度与耗时），不含结果明细。',
         'inputSchema': {
             'type': 'object',
             'properties': {'task_id': {'type': 'string', 'description': '任务ID'}},
@@ -253,7 +395,9 @@ TOOLS = {
         'handler': tool_get_task_status,
     },
     'get_task_result': {
-        'description': '获取已完成任务的结果（输出目录、成功/失败统计、明细）。任务未完成时报错。',
+        'description': '获取已完成任务的结果：精简摘要（统计口径）+ 结果规模（文件数/字节）+ '
+                       '文件卡片（name/path/uri/size_human/lines/mime），可直接查看、下载或打开。'
+                       '完整明细不随响应返回，已落盘为 JSON。任务未完成或失败时返回明确错误信息与后续建议。',
         'inputSchema': {
             'type': 'object',
             'properties': {'task_id': {'type': 'string', 'description': '任务ID'}},

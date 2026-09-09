@@ -24,7 +24,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import app as flask_app
 from modules.mcp import __version__ as MCP_VERSION
-from modules.mcp.core import adapters, protocol, security, tasks, tools as tool_registry
+from modules.mcp.core import (adapters, artifacts, protocol, security, tasks,
+                              tools as tool_registry)
 from modules.mcp import blueprint as mcp_bp_module
 
 
@@ -490,6 +491,11 @@ class TestAdapters(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
+        # 隔离落盘目录（避免测试产物写进项目 outputs/）
+        self._orig_artifacts_dir = artifacts.data_dir
+        self._orig_adapters_dir = adapters.data_dir
+        artifacts.data_dir = lambda: self.tmp
+        adapters.data_dir = lambda: self.tmp
         self.pdfs = []
         for name in ('a.pdf', 'b.pdf'):
             p = os.path.join(self.tmp, name)
@@ -504,6 +510,8 @@ class TestAdapters(unittest.TestCase):
             self.imgs.append(p)
 
     def tearDown(self):
+        artifacts.data_dir = self._orig_artifacts_dir
+        adapters.data_dir = self._orig_adapters_dir
         _rmtree(self.tmp)
 
     # ---- pdf2word ----
@@ -528,12 +536,24 @@ class TestAdapters(unittest.TestCase):
             adapters.start_pdf2word(tid, self.pdfs, direction='pdf2word')
             t = _wait_task(tid)
             self.assertEqual(t['status'], 'success')
-            self.assertEqual(t['result']['direction'], 'pdf2word')
-            self.assertEqual(t['result']['total'], 2)
-            self.assertEqual(t['result']['success'], 2)
-            self.assertEqual(t['result']['failed'], 0)
-            self.assertTrue(os.path.isdir(t['result']['output_dir']))
+            res = t['result']
+            self.assertEqual(res['summary']['direction'], 'pdf2word')
+            self.assertEqual(res['summary']['total'], 2)
+            self.assertEqual(res['summary']['success'], 2)
+            self.assertEqual(res['summary']['failed'], 0)
+            self.assertTrue(os.path.isdir(res['output_dir']))
             self.assertEqual(len(seen['files']), 2)
+            # 瘦返回：明细不留在任务结果里，只保留计数
+            self.assertNotIn('files', res['summary'])
+            self.assertEqual(res['summary']['files_count'], 2)
+            # 完整结果已落盘，且有卡片
+            self.assertTrue(res['artifacts'])
+            result_card = res['artifacts'][0]
+            self.assertEqual(result_card['kind'], 'result')
+            self.assertTrue(os.path.isfile(result_card['path']))
+            with open(result_card['path'], encoding='utf-8') as f:
+                full = json.load(f)
+            self.assertEqual(len(full['files']), 2)
         finally:
             converter.batch_convert = orig
 
@@ -553,10 +573,15 @@ class TestAdapters(unittest.TestCase):
                                     output_mode='merge')
             t = _wait_task(tid)
             self.assertEqual(t['status'], 'success')
-            self.assertEqual(t['result']['total'], 2)
-            self.assertEqual(t['result']['success'], 1)
-            self.assertEqual(t['result']['failed'], 1)
-            self.assertEqual(t['result']['files'][1]['error'], '不支持的格式')
+            res = t['result']
+            self.assertEqual(res['summary']['total'], 2)
+            self.assertEqual(res['summary']['success'], 1)
+            self.assertEqual(res['summary']['failed'], 1)
+            # 失败明细只在落盘 JSON 里，响应/任务内不内联
+            self.assertNotIn('files', res['summary'])
+            with open(res['artifacts'][0]['path'], encoding='utf-8') as f:
+                full = json.load(f)
+            self.assertEqual(full['files'][1]['error'], '不支持的格式')
         finally:
             to_pdf.batch_to_pdf = orig
 
@@ -578,11 +603,14 @@ class TestAdapters(unittest.TestCase):
         t = _wait_task(tid)
         self.assertEqual(t['status'], 'success', t.get('error'))
         res = t['result']
-        self.assertEqual(res['total'], 3)
-        self.assertEqual(res['renamed'], 2)      # 张三、李四命中
-        self.assertEqual(res['pending'], 1)      # 王五未匹配 → 待处理
+        self.assertEqual(res['summary']['total'], 3)
+        self.assertEqual(res['summary']['renamed'], 2)      # 张三、李四命中
+        self.assertEqual(res['summary']['pending'], 1)      # 王五未匹配 → 待处理
         self.assertTrue(os.path.isdir(res['output_dir']))
         self.assertTrue(os.path.isdir(os.path.join(res['output_dir'], '待处理')))
+        # 执行明细落盘，任务内只留计数
+        self.assertNotIn('detail', res['summary'])
+        self.assertTrue(os.path.isfile(res['artifacts'][0]['path']))
 
     # ---- 社保 ----
     def test_insurance_rejects_unknown_province(self):
@@ -593,23 +621,45 @@ class TestAdapters(unittest.TestCase):
         # 未启动线程，任务仍为 pending
         self.assertEqual(tasks.get(tid)['status'], 'pending')
 
-    def test_insurance_registers_native_task(self):
+    def test_insurance_registers_native_task_and_slims_result(self):
+        """社保复用原生任务表，且大体量/敏感结果只落盘不内联"""
         from modules.insurance import blueprint as ins_bp
         from modules.insurance.core import template_engine
         orig = ins_bp.process_task
         calls = []
 
         def fake(*args):
+            tid = args[0]
             calls.append(args)
+            # 模拟宿模块跑完：写回原生任务表（含逐人/逐图明细与身份证号）
+            with ins_bp.tasks_lock:
+                ins_bp.tasks[tid]['status'] = 'success'
+                ins_bp.tasks[tid]['result'] = {
+                    'person_count': 2,
+                    'ocr_count': 3,
+                    'success_count': 3,
+                    'excluded_count': 0,
+                    'failed_count': 0,
+                    'tax_mode': '退税',
+                    'year_cols': [2024, 2025],
+                    'excel_filename': '总台账.xlsx',
+                    'yearly_ledger_files': [],
+                    'company_name': '某某公司',
+                    'person_stats': [{'name': '张三',
+                                      'idcard': '610101199001011234',
+                                      'insurances': {}, 'yearly_months': {}}
+                                     for _ in range(200)],
+                    'image_details': [{'filename': 'x.jpg',
+                                       'idcard': '610101199001011234'}
+                                      for _ in range(300)],
+                }
 
         ins_bp.process_task = fake
         tid = tasks.create('insurance', {})
         try:
             code = template_engine.get_provinces()[0]['province_code']
             adapters.start_insurance(tid, self.imgs, code, tax_mode='退税')
-            deadline = time.time() + 5
-            while time.time() < deadline and not calls:
-                time.sleep(0.05)
+            t = _wait_task(tid)
             self.assertTrue(calls, 'process_task 未被调用')
             args = calls[0]
             self.assertEqual(args[0], tid)
@@ -624,10 +674,199 @@ class TestAdapters(unittest.TestCase):
             self.assertFalse(native['cancelled'])
             self.assertEqual(tasks.get(tid)['native_task_id'], tid)
             self.assertEqual(adapters.insurance_native(tid)['total'], 3)
+
+            # 瘦返回：任务完成，大结果与敏感字段不进任务表
+            self.assertEqual(t['status'], 'success', t.get('error'))
+            res = t['result']
+            self.assertNotIn('person_stats', res)
+            self.assertNotIn('image_details', res)
+            self.assertEqual(res['summary']['person_count'], 2)
+            self.assertEqual(res['summary']['person_stats_count'], 200)
+            self.assertEqual(res['summary']['image_details_count'], 300)
+            # 完整结果落盘
+            card = res['artifacts'][0]
+            self.assertEqual(card['kind'], 'result')
+            with open(card['path'], encoding='utf-8') as f:
+                full = json.load(f)
+            self.assertEqual(len(full['person_stats']), 200)
+            self.assertEqual(full['person_stats'][0]['idcard'], '610101199001011234')
         finally:
             ins_bp.process_task = orig
             with ins_bp.tasks_lock:
                 ins_bp.tasks.pop(tid, None)
+
+
+# ==================== 9. 瘦返回交付：落盘 + 卡片 + 降级 ====================
+class TestThinDelivery(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._orig_artifacts_dir = artifacts.data_dir
+        self._orig_adapters_dir = adapters.data_dir
+        artifacts.data_dir = lambda: self.tmp
+        adapters.data_dir = lambda: self.tmp
+
+    def tearDown(self):
+        artifacts.data_dir = self._orig_artifacts_dir
+        adapters.data_dir = self._orig_adapters_dir
+        _rmtree(self.tmp)
+
+    # ---- 落盘命名 ----
+    def test_artifact_filename_readable_and_traceable(self):
+        card = artifacts.write_json('pdf2word', 'ab12cd34', 'pdf2word', {'a': 1})
+        name = card['name']
+        self.assertTrue(name.startswith('mcp-pdf2word-ab12cd34-pdf2word-'), name)
+        self.assertTrue(name.endswith('.json'))
+        self.assertIn('ab12cd34', name)          # 可追溯：含任务 ID
+        self.assertTrue(os.path.isfile(card['path']))
+        self.assertIn(os.path.join('outputs', 'mcp', 'pdf2word', 'ab12cd34'),
+                      card['path'])
+
+    def test_artifacts_never_overwrite_history(self):
+        c1 = artifacts.write_json('pdf2word', 'ab12cd34', 'pdf2word', {'n': 1})
+        c2 = artifacts.write_json('pdf2word', 'ab12cd34', 'pdf2word', {'n': 2})
+        c3 = artifacts.write_json('pdf2word', 'ab12cd34', 'pdf2word', {'n': 3})
+        paths = {c1['path'], c2['path'], c3['path']}
+        self.assertEqual(len(paths), 3, '同名结果被覆盖了')
+        for p in paths:
+            self.assertTrue(os.path.isfile(p))
+
+    # ---- 卡片字段 ----
+    def test_card_fields(self):
+        p = os.path.join(self.tmp, '结果 张三.json')
+        with open(p, 'w', encoding='utf-8') as f:
+            f.write('{"a": 1}\n{"b": 2}\n')
+        card = artifacts.make_card(p, kind='result', label='完整结果（JSON）')
+        for k in ('name', 'kind', 'mime', 'path', 'uri', 'size_bytes',
+                  'size_human', 'lines', 'modified_at', 'label'):
+            self.assertIn(k, card)
+        self.assertEqual(card['kind'], 'result')
+        self.assertEqual(card['mime'], 'application/json')
+        self.assertEqual(card['lines'], 2)
+        self.assertTrue(card['uri'].startswith('file://'))
+        # 中文/空格必须被百分号编码，否则打不开
+        self.assertNotIn('张三', card['uri'])
+        self.assertNotIn(' ', card['uri'])
+        self.assertEqual(card['size_human'].split()[1], 'B')
+
+    def test_slim_drops_bulky_details(self):
+        s = artifacts.slim({'total': 3, 'success': 2, 'failed': 1,
+                            'files': [1, 2, 3], 'direction': 'pdf2word'})
+        self.assertNotIn('files', s)
+        self.assertEqual(s['files_count'], 3)
+        self.assertEqual(s['total'], 3)
+        self.assertEqual(s['direction'], 'pdf2word')
+
+    def test_result_size_aggregates(self):
+        p1 = os.path.join(self.tmp, 'a.json')
+        p2 = os.path.join(self.tmp, 'b.pdf')
+        for p in (p1, p2):
+            with open(p, 'w', encoding='utf-8') as f:
+                f.write('x' * 100)
+        cards = [artifacts.make_card(p1), artifacts.make_card(p2)]
+        size = artifacts.result_size(cards)
+        self.assertEqual(size['files'], 2)
+        self.assertEqual(size['bytes'], 200)
+        self.assertTrue(size['size_human'].endswith('B'))
+
+    # ---- 端到端：get_task_result 瘦返回 ----
+    def _run_pdf2word_task(self, fail=False):
+        from modules.pdf2word.core import converter
+        orig = converter.batch_convert
+
+        def fake(pdf_files, output_dir, progress_callback=None):
+            if fail:
+                raise RuntimeError('转换引擎崩溃')
+            for i, p in enumerate(pdf_files, 1):
+                if progress_callback:
+                    progress_callback(i, len(pdf_files), os.path.basename(p), {})
+                with open(os.path.join(output_dir, 'out%d.docx' % i), 'w',
+                          encoding='utf-8') as f:
+                    f.write('docx')
+            return [{'pdf_name': os.path.basename(p), 'docx_name': 'out.docx',
+                     'ok': True, 'error': None} for p in pdf_files]
+
+        converter.batch_convert = fake
+        try:
+            src = os.path.join(self.tmp, 'a.pdf')
+            with open(src, 'w', encoding='utf-8') as f:
+                f.write('x')
+            tid = tasks.create('pdf2word', {})
+            adapters.start_pdf2word(tid, [src], direction='pdf2word')
+            return _wait_task(tid)
+        finally:
+            converter.batch_convert = orig
+
+    def test_get_task_result_is_thin(self):
+        t = self._run_pdf2word_task()
+        self.assertEqual(t['status'], 'success')
+        text, is_error = tool_registry.call_tool('get_task_result',
+                                                 {'task_id': t['task_id']})
+        self.assertFalse(is_error)
+        payload = json.loads(text)
+        # 结构：状态 + 精简摘要 + 结果规模 + 文件卡片
+        for k in ('task_id', 'capability', 'status', 'summary',
+                  'result_size', 'artifacts', 'output_dir', 'hint'):
+            self.assertIn(k, payload)
+        self.assertNotIn('result', payload)          # 不再回传完整 result
+        self.assertNotIn('files', payload['summary'])  # 明细不内联
+        self.assertEqual(payload['summary']['total'], 1)
+        self.assertGreaterEqual(payload['result_size']['files'], 2)  # 结果JSON + docx
+        # 卡片完整，可直接打开
+        card = payload['artifacts'][0]
+        self.assertEqual(card['kind'], 'result')
+        self.assertTrue(os.path.isfile(card['path']))
+        self.assertTrue(card['uri'].startswith('file://'))
+        self.assertGreater(card['size_bytes'], 0)
+        # 输出目录中的产出文件也给了卡片
+        self.assertTrue(any(c['kind'] == 'output' for c in payload['artifacts']))
+
+    def test_get_task_status_has_no_details(self):
+        t = self._run_pdf2word_task()
+        text, _ = tool_registry.call_tool('get_task_status', {'task_id': t['task_id']})
+        payload = json.loads(text)
+        self.assertNotIn('result', payload)
+        self.assertNotIn('summary', payload)
+        self.assertIn('elapsed_sec', payload)
+        self.assertIn('elapsed_human', payload)
+        self.assertFalse(payload['stale'])
+
+    def test_get_task_result_pending_degrades_clearly(self):
+        tid = tasks.create('pdf2word', {})
+        text, is_error = tool_registry.call_tool('get_task_status', {'task_id': tid})
+        text, is_error = tool_registry.call_tool('get_task_result', {'task_id': tid})
+        self.assertTrue(is_error)
+        payload = json.loads(text)
+        self.assertIn('任务尚未完成', payload['error'])
+        self.assertEqual(payload['status'], 'pending')
+        self.assertIn('suggestion', payload)
+        self.assertIn('elapsed_human', payload)
+
+    def test_get_task_result_error_writes_report(self):
+        t = self._run_pdf2word_task(fail=True)
+        self.assertEqual(t['status'], 'error')
+        text, is_error = tool_registry.call_tool('get_task_result',
+                                                 {'task_id': t['task_id']})
+        self.assertTrue(is_error)
+        payload = json.loads(text)
+        self.assertIn('转换引擎崩溃', payload['error'])
+        self.assertEqual(payload['status'], 'error')
+        self.assertIn('suggestion', payload)
+        # 错误报告已落盘并可追溯
+        self.assertTrue(payload.get('artifacts'))
+        err_card = payload['artifacts'][0]
+        self.assertEqual(err_card['kind'], 'error')
+        self.assertTrue(os.path.isfile(err_card['path']))
+        with open(err_card['path'], encoding='utf-8') as f:
+            self.assertIn('转换引擎崩溃', json.load(f)['error'])
+
+    def test_stale_flag_on_long_running(self):
+        tid = tasks.create('pdf2word', {})
+        tasks.update(tid, created_at='2020-01-01T00:00:00', status='processing')
+        text, _ = tool_registry.call_tool('get_task_status', {'task_id': tid})
+        payload = json.loads(text)
+        self.assertTrue(payload['stale'])
+        self.assertIn('stale_hint', payload)
 
 
 if __name__ == '__main__':

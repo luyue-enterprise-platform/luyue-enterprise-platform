@@ -7,6 +7,10 @@
 - 社保智能核算: modules.insurance.blueprint.process_task（复用其原生任务表）
 - PDF/Word 转换: modules.pdf2word.core.converter.batch_convert / to_pdf.batch_to_pdf
 - 劳动合同整理: modules.contract.core.file_renamer.plan_renames + execute_renames
+
+**交付模式（v2.2.1 瘦返回）**：任务完成时只把「精简摘要 + 文件卡片」存进任务表，
+完整结果一律经 core/artifacts.py 落盘（含社保的 person_stats / image_details，
+体量大且含身份证号，禁止内联回传）。
 """
 import os
 import threading
@@ -14,7 +18,7 @@ from datetime import datetime
 
 from core.paths import data_dir
 
-from . import tasks
+from . import artifacts, tasks
 
 # 结果明细最多返回的条数（避免一次性回传过多内容给 AI）
 MAX_DETAIL = 50
@@ -60,6 +64,30 @@ def _summarize(items, name_key='name', ok_key='ok'):
     }
 
 
+def _finalize(task_id, capability, out_dir, summary, message, prefix):
+    """任务完成：完整结果落盘 → 生成卡片 → 任务表只留精简摘要与卡片（瘦返回）"""
+    card = artifacts.write_json(capability, task_id, prefix, summary)
+    out_cards, out_total, out_trunc = artifacts.collect_output_cards(out_dir)
+    payload = {
+        'summary': artifacts.slim(summary),
+        'artifacts': [card] + out_cards,
+        'output_dir': out_dir,
+        'output_file_count': out_total,
+        'output_list_truncated': out_trunc,
+    }
+    tasks.finish(task_id, payload, message)
+    return payload
+
+
+def _fail_with_report(task_id, capability, error, message):
+    """失败降级：错误报告落盘留痕，任务表只留精简错误与卡片"""
+    card = artifacts.write_error(capability, task_id, error,
+                                 {'task_id': task_id, 'capability': capability})
+    tasks.fail(task_id, error, message)
+    tasks.update(task_id, artifacts=[card])
+    return card
+
+
 # ==================== 社保智能核算 ====================
 
 def start_insurance(task_id, file_paths, province, tax_mode='退税',
@@ -96,17 +124,84 @@ def start_insurance(task_id, file_paths, province, tax_mode='退税',
             'cancelled': False,
         }
 
-    thread = threading.Thread(
-        target=ins_bp.process_task,
-        args=(task_id, file_paths, roster or [], '', roster_path or '',
-              year_range, tax_mode, province),
-        daemon=True)
-    thread.start()
-
+    args = (task_id, file_paths, roster or [], '', roster_path or '',
+            year_range, tax_mode, province)
+    # 先登记映射与初始状态再起线程：否则极快完成的任务会被随后的
+    # update(status='processing') 覆盖回进行中（竞态）
     tasks.set_native(task_id, task_id)
     tasks.update(task_id, status='processing', total=len(file_paths),
                  message='社保核算进行中...')
+
+    thread = threading.Thread(target=_insurance_worker, args=args, daemon=True)
+    thread.start()
     return thread
+
+
+def _insurance_worker(*args):
+    """社保核算线程包装：先跑宿模块 process_task，返回后再物化产物并落盘
+
+    包一层的原因：process_task 只写宿模块原生任务表，不会回调 MCP；
+    包装后可在其返回或抛错时统一落盘完整结果 / 错误报告。
+    """
+    task_id = args[0]
+    from modules.insurance import blueprint as ins_bp
+    try:
+        ins_bp.process_task(*args)
+    except Exception as e:
+        _fail_with_report(task_id, 'insurance', e, '社保核算失败: %s' % e)
+        return
+    materialize_insurance(task_id)
+
+
+def materialize_insurance(task_id):
+    """社保结果落盘 + 卡片化，任务表只留精简摘要
+
+    result 含 person_stats / image_details（逐人逐图且带身份证号），
+    体量大且敏感，禁止内联回传，只回传统计口径与文件卡片。
+    """
+    native = insurance_native(task_id) or {}
+    result = native.get('result')
+    status = native.get('status')
+    if result is None or status == 'error':
+        err = native.get('error') or native.get('message') or '社保核算未完成'
+        _fail_with_report(task_id, 'insurance', err, '社保核算失败: %s' % err)
+        return None
+
+    out_dir = ''
+    if isinstance(result, dict) and result.get('excel_path'):
+        out_dir = os.path.dirname(os.path.abspath(result['excel_path']))
+
+    card = artifacts.write_json('insurance', task_id, 'insurance', result,
+                                label='完整核算结果（JSON，含逐人参保明细）')
+    out_cards, out_total, out_trunc = artifacts.collect_output_cards(out_dir)
+
+    if isinstance(result, dict):
+        summary = {
+            'person_count': result.get('person_count'),
+            'ocr_count': result.get('ocr_count'),
+            'success_count': result.get('success_count'),
+            'excluded_count': result.get('excluded_count'),
+            'failed_count': result.get('failed_count'),
+            'tax_mode': result.get('tax_mode'),
+            'year_cols': result.get('year_cols'),
+            'excel_filename': result.get('excel_filename'),
+            'yearly_ledger_count': len(result.get('yearly_ledger_files') or []),
+            'company_name': result.get('company_name'),
+            'person_stats_count': len(result.get('person_stats') or []),
+            'image_details_count': len(result.get('image_details') or []),
+        }
+    else:
+        summary = {'raw': str(result)}
+
+    payload = {
+        'summary': summary,
+        'artifacts': [card] + out_cards,
+        'output_dir': out_dir,
+        'output_file_count': out_total,
+        'output_list_truncated': out_trunc,
+    }
+    tasks.finish(task_id, payload, '核算完成')
+    return payload
 
 
 def insurance_native(task_id):
@@ -163,9 +258,9 @@ def start_pdf2word(task_id, file_paths, direction='pdf2word',
                 summary = _summarize(results, name_key='name')
             summary['output_dir'] = out_dir
             summary['direction'] = direction
-            tasks.finish(task_id, summary, '转换完成')
+            _finalize(task_id, 'pdf2word', out_dir, summary, '转换完成', direction)
         except Exception as e:
-            tasks.fail(task_id, e, '转换失败: %s' % e)
+            _fail_with_report(task_id, 'pdf2word', e, '转换失败: %s' % e)
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
@@ -227,9 +322,9 @@ def start_contract(task_id, file_paths, roster_path=None):
                 'roster_missing': len(plan.get('roster_missing', [])),
                 'detail': result if isinstance(result, dict) else {'raw': str(result)},
             }
-            tasks.finish(task_id, summary, '整理完成')
+            _finalize(task_id, 'contract', out_dir, summary, '整理完成', 'contract')
         except Exception as e:
-            tasks.fail(task_id, e, '整理失败: %s' % e)
+            _fail_with_report(task_id, 'contract', e, '整理失败: %s' % e)
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
