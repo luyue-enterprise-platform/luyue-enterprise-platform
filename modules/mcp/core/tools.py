@@ -277,7 +277,13 @@ def _wait_and_fetch_inner(task_id, wait_seconds):
                            '完整明细已落盘，见 artifacts 文件卡片'
                            % _elapsed_human(_elapsed(task))))
         if status == 'waiting_confirm':
-            # v2.3.2 合同两阶段：计划待确认不是"执行中"，直接返回引导而非空等
+            # v2.3.2 合同两阶段 / v2.3.5 社保两阶段：
+            # 计划待确认不是"执行中"，直接返回引导而非空等
+            if task.get('capability') == 'insurance':
+                return _err_payload(
+                    '任务待确认：核算预览已生成，尚未开始识别', task,
+                    suggestion='调用 insurance_calculate 传 confirm_task_id=%s '
+                               '确认执行（可在同一次调用中覆盖预览参数）' % task_id)
             return _err_payload(
                 '任务待确认：重命名计划已生成，尚未执行任何重命名', task,
                 suggestion='调用 contract_organize 传 confirm_task_id=%s 与 choices '
@@ -447,6 +453,101 @@ def _validate_contract(args):
     return issues, optional, file_paths, roster_path, wait_seconds
 
 
+def _insurance_preview_payload(task_id, plan):
+    """社保核算预览响应（v2.3.5）：待生效参数 + 文件清点 + 花名册概览 + 姓名预比对
+
+    对应「先确认参数再执行」：把将要生效的参数与文件范围一次性呈现，
+    不执行任何 OCR；确认后由 confirm_task_id 启动识别。
+    """
+    inv = plan.get('inventory') or {}
+    ros = plan.get('roster') or {}
+    pre = plan.get('prematch') or {}
+    warnings = []
+    if plan.get('roster_error'):
+        warnings.append('花名册解析失败：%s（确认后将不带花名册比对执行）'
+                        % plan['roster_error'])
+    if pre.get('roster_only_count'):
+        warnings.append('花名册中有 %d 人未找到对应证明文件'
+                        % pre['roster_only_count'])
+    if pre.get('proof_only_count'):
+        warnings.append('有 %d 人的证明文件不在花名册中（统计以花名册为唯一基准）'
+                        % pre['proof_only_count'])
+    if inv.get('abnormal_name_count'):
+        warnings.append('有 %d 个文件命名无法解析出姓名，请核对'
+                        % inv['abnormal_name_count'])
+    return _ok({
+        'task_id': task_id,
+        'status': 'waiting_confirm',
+        'message': '核算预览已生成，尚未开始识别，等待确认参数与文件范围',
+        'effective_params': plan.get('effective_params') or {},
+        'inventory': inv,
+        'roster': ros,
+        'prematch': plan.get('prematch'),
+        'warnings': warnings,
+        'how_to_confirm': (
+            '核对以上参数与文件范围后，调用 insurance_calculate 传 confirm_task_id=%s '
+            '即开始识别；如需修正参数，可在同一次调用中附带 province / tax_mode / '
+            'year_start / month_start / year_end / month_end / roster_path 覆盖预览值'
+            % task_id),
+    })
+
+
+def _insurance_confirm(confirm_id, args):
+    """社保核算确认阶段（v2.3.5）：按预览暂存参数启动识别，args 可覆盖预览值"""
+    task = tasks.get(confirm_id)
+    if not task or task.get('capability') != 'insurance':
+        return _err_payload('社保核算任务不存在: %s' % confirm_id,
+                            {'task_id': confirm_id, 'capability': 'insurance',
+                             'status': 'not_found'},
+                            suggestion='核对 task_id；预览阶段由 insurance_calculate '
+                                       'preview_only=true 返回')
+    if task.get('status') != 'waiting_confirm':
+        return _err_payload(
+            '任务当前状态=%s，仅 waiting_confirm（待确认）状态可确认执行'
+            % task.get('status'), task,
+            suggestion='如需重新预览，请用 file_paths + province + '
+                       'preview_only=true 重新提交')
+    wait_issue, wait_seconds = _check_wait(args)
+    if wait_issue:
+        return _missing_payload([wait_issue], [])
+    # 允许确认时覆盖预览参数：修正口径后直接执行，无需重新预览
+    overrides = {}
+    for k in ('province', 'tax_mode', 'roster_path'):
+        if args.get(k) not in (None, ''):
+            overrides[k] = args[k]
+    present = [k for k in YEAR_KEYS if args.get(k) not in (None, '')]
+    if present:
+        if len(present) != len(YEAR_KEYS):
+            missing = [k for k in YEAR_KEYS if k not in present]
+            return _missing_payload([{
+                'field': '/'.join(YEAR_KEYS),
+                'issue': '统计时间段须四项同时提供，当前缺失: %s' % ', '.join(missing),
+                'how_to_fix': '同时提供 %s（均为整数）；不改动则四项全部省略，'
+                              '沿用预览值' % ', '.join(YEAR_KEYS),
+            }], [])
+        try:
+            overrides['year_range'] = _year_range(args)
+        except Exception as e:
+            return _missing_payload([{
+                'field': '/'.join(YEAR_KEYS),
+                'issue': str(e),
+                'how_to_fix': '年月均为整数，且起始不得晚于截止（如 2023-01 至 2025-12）',
+            }], [])
+    try:
+        adapters.confirm_insurance(confirm_id, overrides)
+    except Exception as e:
+        return _err_payload('确认执行失败: %s' % e, task,
+                            suggestion='任务可能已确认过或预览数据缺失，可重新预览')
+    if wait_seconds > 0:
+        return _wait_and_fetch(confirm_id, wait_seconds)
+    return _immediate_payload(
+        confirm_id, 'insurance', task.get('total') or 0,
+        '社保核算已确认，识别进行中',
+        effective={'confirm_task_id': confirm_id,
+                   'overridden': sorted(overrides) or '无（沿用预览参数）',
+                   'wait_seconds': wait_seconds})
+
+
 # ---------------- 工具实现 ----------------
 
 def tool_insurance_provinces(args):
@@ -458,13 +559,29 @@ def tool_insurance_provinces(args):
 
 
 def tool_insurance_calculate(args):
+    # 确认阶段（v2.3.5）：confirm_task_id 启动已预览的核算
+    confirm_id = (args.get('confirm_task_id') or '').strip()
+    if confirm_id:
+        return _insurance_confirm(confirm_id, args)
     issues, optional, file_paths, province, tax_mode, year_range, wait_seconds = \
         _validate_insurance(args)
     if issues:
         return _missing_payload(issues, optional)
+    preview_only = bool(args.get('preview_only'))
     task_id = tasks.create('insurance', {
         'file_count': len(file_paths), 'province': province, 'tax_mode': tax_mode,
     })
+    if preview_only:
+        # 预览阶段（v2.3.5）：只清点文件与参数，不 OCR、不建原生任务
+        try:
+            plan = adapters.preview_insurance(
+                task_id, file_paths, province, tax_mode=tax_mode,
+                roster_path=args.get('roster_path'), year_range=year_range)
+        except Exception as e:
+            tasks.fail(task_id, e, '核算预览失败')
+            return _err_payload('核算预览失败: %s' % e, tasks.get(task_id),
+                                suggestion='核对文件路径与花名册后重新提交')
+        return _insurance_preview_payload(task_id, plan)
     adapters.start_insurance(task_id, file_paths, province,
                              tax_mode=tax_mode,
                              roster_path=args.get('roster_path'),
@@ -473,7 +590,12 @@ def tool_insurance_calculate(args):
         'province': province,
         'tax_mode': tax_mode,
         'roster_path': args.get('roster_path') or '不使用',
-        'year_range': ('%04d-%02d ~ %04d-%02d' % year_range) if year_range
+        # _year_range 返回的已是 ('YYYY-MM', 'YYYY-MM') 字符串对，
+        # 只能按 %s 拼接。曾误用 '%04d-%02d ~ %04d-%02d' 对字符串元组做
+        # 整数格式化 → TypeError("%d format: a real number is required, not str")，
+        # 且该语句位于 wait_seconds 分支之前，导致带时间段的调用全部 isError、
+        # 服务端等待功能整体失效（v2.3.5 修复）。
+        'year_range': ('%s ~ %s' % (year_range[0], year_range[1])) if year_range
                       else '参保数据全区间',
         'wait_seconds': wait_seconds,
     }
@@ -666,8 +788,12 @@ def tool_get_task_status(args):
     else:
         view['stale'] = False
     if task.get('status') == 'waiting_confirm':
-        view['hint'] = ('计划待确认：调用 contract_organize 传 confirm_task_id 与 '
-                        'choices 确认执行；待选择项见预览响应 needs_selection')
+        if task.get('capability') == 'insurance':
+            view['hint'] = ('核算待确认：调用 insurance_calculate 传 confirm_task_id 确认执行；'
+                            '待核对内容见预览响应的 effective_params/inventory/roster/prematch')
+        else:
+            view['hint'] = ('计划待确认：调用 contract_organize 传 confirm_task_id 与 '
+                            'choices 确认执行；待选择项见预览响应 needs_selection')
     else:
         view['hint'] = '完成后调用 get_task_result 取精简摘要与文件卡片'
     return _ok(view)
@@ -720,6 +846,10 @@ TOOLS = {
     },
     'insurance_calculate': {
         'description': '社保智能核算：批量识别参保证明（图片/PDF），生成重点群体参保统计与台账Excel。'
+                       '两种模式：①直接执行（默认）：提交后立即开始识别；'
+                       '②两阶段确认（preview_only=true）：先返回「待生效参数 + 文件清点 + 花名册概览 + 姓名预比对」'
+                       '且不执行任何 OCR，用户核对参数与文件范围后再用 confirm_task_id 确认执行'
+                       '（确认时可在同一次调用中覆盖 province/tax_mode/年份月份/roster_path）。'
                        '长耗时任务；默认立即返回 task_id，可传 wait_seconds 由 Server 内部等待并一次性返回全部结果'
                        '（数百份以上建议 600-1200，避免反复轮询）。'
                        '结果与Excel均落盘，响应只回精简摘要与文件卡片（逐人参保明细含身份证号，不随响应返回）。'
@@ -738,11 +868,19 @@ TOOLS = {
                 'month_start': {'type': 'integer', 'description': '统计起始月'},
                 'year_end': {'type': 'integer', 'description': '统计截止年'},
                 'month_end': {'type': 'integer', 'description': '统计截止月'},
+                'preview_only': {'type': 'boolean',
+                                 'description': 'true=只生成核算预览（待生效参数/文件清点/花名册概览/姓名预比对），'
+                                                '不执行任何 OCR；核对后再用 confirm_task_id 确认执行。'
+                                                '推荐在正式核算前先预览，以便确认参数与文件范围；默认 false 直接执行'},
+                'confirm_task_id': {'type': 'string',
+                                    'description': '确认执行：preview_only 预览返回的 task_id。'
+                                                   '传此参数时 file_paths/province 不需要；'
+                                                   '可同时附带 province/tax_mode/年份月份/roster_path 覆盖预览值'},
                 'wait_seconds': {'type': 'integer',
                                  'description': 'Server 内部等待并一次性返回结果的秒数（0-%d，默认 0 立即返回 task_id）。'
                                                 '大批量任务建议 600-1200' % MAX_WAIT_SEC},
             },
-            'required': ['file_paths', 'province'],
+            'required': [],
         },
         'handler': tool_insurance_calculate,
     },

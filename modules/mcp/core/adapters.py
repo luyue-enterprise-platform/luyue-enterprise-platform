@@ -13,6 +13,7 @@
 体量大且含身份证号，禁止内联回传）。
 """
 import os
+import re
 import threading
 from datetime import datetime
 
@@ -213,6 +214,189 @@ def insurance_native(task_id):
             return dict(native) if native else None
     except Exception:
         return None
+
+
+# ==================== 社保核算：两阶段预览确认（v2.3.5） ====================
+
+# 险种关键字：按目录名/文件名判定，不依赖 OCR（OCR 前的清点用）
+INS_TYPE_KEYWORDS = (
+    ('养老保险', ('养老',)),
+    ('医疗保险', ('医疗', '医保')),
+    ('失业保险', ('失业',)),
+    ('工伤保险', ('工伤',)),
+)
+
+
+def guess_insurance_type(path):
+    """从文件路径（含上级目录名）推断险种；无法判定返回「未识别」"""
+    text = str(path).replace('\\', '/')
+    for name, kws in INS_TYPE_KEYWORDS:
+        if any(kw in text for kw in kws):
+            return name
+    return '未识别'
+
+
+def split_proof_filename(stem):
+    """拆解参保证明文件名 → (序号, 姓名, 命名形态)
+
+    平台历史数据存在三种形态：
+      '103 王冬'（数字+空格+姓名）、'103王冬'（紧邻）、
+      '01-王冬-5611'（数字-姓名-证号尾号，合同整理产物）。
+    末尾的 (1)/（2）页码后缀会被剥离。
+    """
+    s = str(stem).strip()
+    m = re.match(r'^(\d+)\s*[-_、.]?\s*(.*?)\s*$', s)
+    if not m:
+        return None, None, '未识别'
+    seq, rest = m.group(1), m.group(2)
+    rest = re.sub(r'[（(]\s*\d+\s*[)）]\s*$', '', rest).strip()
+    rest = rest.strip('-_、. ')
+    if re.match(r'^\d+\s+\S', s):
+        shape = '数字+空格+姓名'
+    elif re.match(r'^\d+\s*[-_、.]', s):
+        shape = '数字-姓名（含尾号）'
+    else:
+        shape = '数字姓名紧邻'
+    return seq, (rest or None), shape
+
+
+def inventory_insurance_files(file_paths):
+    """参保证明清点（纯文件名/路径，不做 OCR）：险种分布、扩展名、命名形态、异常命名"""
+    by_type, by_ext, shapes = {}, {}, {}
+    abnormal = []
+    for p in file_paths:
+        fn = os.path.basename(p)
+        stem, ext = os.path.splitext(fn)
+        ext = ext.lower()
+        by_ext[ext] = by_ext.get(ext, 0) + 1
+        itype = guess_insurance_type(p)
+        by_type[itype] = by_type.get(itype, 0) + 1
+        seq, name, shape = split_proof_filename(stem)
+        shapes[shape] = shapes.get(shape, 0) + 1
+        if not seq or not name:
+            abnormal.append(fn)
+    return {
+        'total': len(file_paths),
+        'by_insurance_type': by_type,
+        'by_extension': by_ext,
+        'naming_shapes': shapes,
+        'abnormal_name_count': len(abnormal),
+        'abnormal_names': abnormal[:MAX_DETAIL],
+        'abnormal_names_truncated': len(abnormal) > MAX_DETAIL,
+    }
+
+
+def _roster_overview(roster):
+    """花名册概览：人数 + 身份类型分布 + 有无身份证号/合同期"""
+    types, with_idcard, with_contract = {}, 0, 0
+    for r in roster or []:
+        t = (r.get('identity_type') or '').strip() or '未标注'
+        types[t] = types.get(t, 0) + 1
+        if (r.get('idcard') or '').strip():
+            with_idcard += 1
+        if r.get('contract_periods'):
+            with_contract += 1
+    return {
+        'person_count': len(roster or []),
+        'identity_type_dist': types,
+        'with_idcard': with_idcard,
+        'with_contract_period': with_contract,
+    }
+
+
+def match_proofs_to_roster(file_paths, roster):
+    """OCR 前的姓名预比对：证明文件名 ↔ 花名册姓名
+
+    仅用于让用户在识别前确认文件与花名册是否对得上，不替代 OCR 后的严格比对。
+    """
+    roster_names, proof_names, unnamed = {}, {}, []
+    for r in roster or []:
+        n = (r.get('name') or '').strip()
+        if n:
+            roster_names[n] = roster_names.get(n, 0) + 1
+    for p in file_paths:
+        stem = os.path.splitext(os.path.basename(p))[0]
+        _seq, name, _shape = split_proof_filename(stem)
+        if not name:
+            unnamed.append(os.path.basename(p))
+            continue
+        proof_names[name] = proof_names.get(name, 0) + 1
+    matched = sorted(set(proof_names) & set(roster_names))
+    proof_only = sorted(set(proof_names) - set(roster_names))
+    roster_only = sorted(set(roster_names) - set(proof_names))
+    return {
+        'roster_person_count': len(roster_names),
+        'proof_person_count': len(proof_names),
+        'matched_person_count': len(matched),
+        'proof_only_count': len(proof_only),
+        'roster_only_count': len(roster_only),
+        'proof_only_names': proof_only[:MAX_DETAIL],
+        'proof_only_truncated': len(proof_only) > MAX_DETAIL,
+        'roster_only_names': roster_only[:MAX_DETAIL],
+        'roster_only_truncated': len(roster_only) > MAX_DETAIL,
+        'unnamed_file_count': len(unnamed),
+    }
+
+
+def preview_insurance(task_id, file_paths, province, tax_mode='退税',
+                      roster_path=None, year_range=None):
+    """社保核算预览（不 OCR）：清点文件 + 花名册概览 + 姓名预比对 + 待生效参数
+
+    对应「先确认参数再执行」的诉求：把本次将要生效的全部参数与文件范围一次性
+    呈现给调用方，由用户确认后再 confirm_insurance 真正启动识别。
+    """
+    from modules.insurance.core.roster_parser import parse_roster_from_table
+
+    roster, roster_error = [], None
+    if roster_path:
+        try:
+            roster = parse_roster_from_table(roster_path) or []
+        except Exception as e:
+            roster_error = str(e)
+
+    plan = {
+        'effective_params': {
+            'province': province,
+            'tax_mode': tax_mode,
+            'year_range': ('%s ~ %s' % (year_range[0], year_range[1]))
+                          if year_range else '参保数据全区间',
+            'roster_path': roster_path or '不使用',
+            'file_count': len(file_paths),
+        },
+        'inventory': inventory_insurance_files(file_paths),
+        'roster': _roster_overview(roster) if roster else {'person_count': 0},
+        'roster_error': roster_error,
+        'prematch': match_proofs_to_roster(file_paths, roster) if roster else None,
+    }
+    tasks.update(
+        task_id, status='waiting_confirm', total=len(file_paths),
+        message='核算预览已生成，尚未开始识别（待确认参数与文件范围）',
+        pending_insurance={
+            'file_paths': list(file_paths),
+            'province': province,
+            'tax_mode': tax_mode,
+            'roster_path': roster_path,
+            'year_range': tuple(year_range) if year_range else None,
+        })
+    return plan
+
+
+def confirm_insurance(task_id, overrides=None):
+    """按预览暂存的参数启动社保核算（后台线程）；overrides 可修正预览参数"""
+    task = tasks.get(task_id) or {}
+    pending = task.get('pending_insurance') or {}
+    file_paths = pending.get('file_paths') or []
+    if not file_paths:
+        raise ValueError('任务缺少待确认的预览数据，请重新以 preview_only=true 预览后再确认')
+    ov = overrides or {}
+    province = ov.get('province') or pending.get('province')
+    tax_mode = ov.get('tax_mode') or pending.get('tax_mode') or '退税'
+    roster_path = ov.get('roster_path') or pending.get('roster_path')
+    year_range = ov.get('year_range') if ov.get('year_range') is not None \
+        else pending.get('year_range')
+    tasks.update(task_id, pending_insurance=None)
+    return start_insurance(task_id, file_paths, province, tax_mode=tax_mode,
+                           roster_path=roster_path, year_range=year_range)
 
 
 # ==================== PDF / Word 双向转换 ====================
