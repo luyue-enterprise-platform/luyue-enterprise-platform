@@ -734,8 +734,11 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
 
     v1.1.57：tax_mode（退税/抵税）存入内部状态，影响 Excel 展示文案与年度台账生成。
     多省份：province_code 路由到对应省份模板（None = 兼容模式，走原有陕西逻辑）。
+    v2.3.4：全程阶段耗时埋点（PDF转换/OCR识别/统计整理Excel/总计），
+    供 MCP 链路「平台慢还是 AI 慢」定界——本日志给出的就是平台侧真实耗时。
     """
     try:
+        _t0 = time.monotonic()
         with tasks_lock:
             tasks[task_id]['status'] = 'processing'
             tasks[task_id]['current'] = 0
@@ -754,6 +757,7 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
 
         pdf_count = sum(1 for fp in file_paths if os.path.splitext(fp)[1].lower() == '.pdf')
         logger.info(f'[task:{task_id}] 其中 {pdf_count} 个PDF文件')
+        _t_pdf = time.monotonic()
 
         for idx, fp in enumerate(file_paths):
             # 检查是否已取消
@@ -791,14 +795,20 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
             tasks[task_id]['total'] = len(all_items)
 
         logger.info(f'[task:{task_id}] 共需识别 {len(all_items)} 张图片')
+        logger.info(f'[task:{task_id}] [耗时] PDF转换阶段 {time.monotonic() - _t_pdf:.1f}s'
+                    f'（{pdf_count} 个PDF → {len(all_items)} 张）')
 
         # v2.3.2：OCR 主循环并行化——多线程识别（有界窗口，保留取消/暂停语义），
         # 结果按 all_items 原序归位；返回 None 表示任务已取消。
         # 注意 extend 而非赋值：PDF 转换阶段的失败记录已先入 ocr_results。
+        _t_ocr = time.monotonic()
         parallel_results = _ocr_all_items(task_id, all_items, province_code)
         if parallel_results is None:
             return
         ocr_results.extend(parallel_results)
+        _ocr_sec = time.monotonic() - _t_ocr
+        logger.info(f'[task:{task_id}] [耗时] OCR识别阶段 {_ocr_sec:.1f}s'
+                    f'（{len(all_items)} 张，均 {_ocr_sec / max(1, len(all_items)):.1f}s/张）')
 
         with tasks_lock:
             tasks[task_id]['current'] = len(all_items)
@@ -908,11 +918,15 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
                 '_province_code': province_code or '610000',
             }
 
+        _t_stat = time.monotonic()
         _rebuild_result(task_id)
+        logger.info(f'[task:{task_id}] [耗时] 统计/Excel/文件整理阶段 '
+                    f'{time.monotonic() - _t_stat:.1f}s')
 
         with tasks_lock:
             tasks[task_id]['status'] = 'done'
             tasks[task_id]['message'] = '处理完成'
+        logger.info(f'[task:{task_id}] [耗时] 全程总计 {time.monotonic() - _t0:.1f}s')
         logger.info(f'[task:{task_id}] 处理完成')
 
     except Exception as e:

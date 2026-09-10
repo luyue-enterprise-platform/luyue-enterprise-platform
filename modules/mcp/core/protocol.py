@@ -12,13 +12,37 @@
 打包链风险；响应统一 application/json（Streamable HTTP 允许单条 JSON 响应）。
 """
 import json
+import os
+import sys
 
 from . import tools as tool_registry
 
 SERVER_NAME = 'luyue-enterprise-platform'
-SERVER_VERSION = '2.2.0'
+SERVER_VERSION = '2.3.4'  # 兜底值：读不到 version.json 时使用
 DEFAULT_PROTOCOL_VERSION = '2025-06-18'
 SUPPORTED_PROTOCOL_VERSIONS = ('2025-06-18', '2025-03-26', '2024-11-05')
+
+
+def _server_version():
+    """serverInfo 版本号跟随平台 version.json（v2.3.4 顺修：此前写死 2.2.0 长期漂移）
+
+    查找序：PyInstaller 内嵌 > EXE 同目录 > 源码项目根；都读不到回退 SERVER_VERSION。
+    """
+    candidates = []
+    if getattr(sys, 'frozen', False):
+        candidates.append(os.path.join(getattr(sys, '_MEIPASS', ''), 'version.json'))
+        candidates.append(os.path.join(os.path.dirname(sys.executable), 'version.json'))
+    candidates.append(os.path.abspath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'version.json')))
+    for path in candidates:
+        try:
+            with open(path, encoding='utf-8') as f:
+                ver = json.load(f).get('version')
+            if ver:
+                return ver
+        except Exception:
+            continue
+    return SERVER_VERSION
 
 # JSON-RPC 2.0 标准错误码
 PARSE_ERROR = -32700
@@ -54,7 +78,7 @@ def _handle_initialize(req):
     return _result(req.get('id'), {
         'protocolVersion': _negotiate_version(params.get('protocolVersion')),
         'capabilities': {'tools': {'listChanged': False}},
-        'serverInfo': {'name': SERVER_NAME, 'version': SERVER_VERSION},
+        'serverInfo': {'name': SERVER_NAME, 'version': _server_version()},
     })
 
 

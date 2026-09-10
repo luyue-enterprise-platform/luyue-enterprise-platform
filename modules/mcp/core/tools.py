@@ -25,11 +25,14 @@ is_error=True 时按 MCP 规范标记工具执行失败。
 完成后续轮询与取结果。
 """
 import json
+import logging
 import os
 import time
 from datetime import datetime
 
 from . import adapters, artifacts, tasks
+
+logger = logging.getLogger('mcp.tools')
 
 # 判定为"疑似卡死"的运行时长阈值（秒）：仅用于给出提示，不主动结束任务
 STALE_AFTER_SEC = 30 * 60
@@ -240,6 +243,18 @@ def _check_wait(args):
 
 
 def _wait_and_fetch(task_id, wait_seconds):
+    """Server 端内部等待（v2.3.4 起带耗时埋点）：进入/退出各记一条日志，
+    实际等待时长可与 access 日志、任务日志互相印证"""
+    started = time.monotonic()
+    logger.info('[mcp.wait] task=%s 进入 Server 端等待（上限 %ss）',
+                task_id, wait_seconds)
+    text, is_error = _wait_and_fetch_inner(task_id, wait_seconds)
+    logger.info('[mcp.wait] task=%s 退出等待：实际 %.1fs is_error=%s',
+                task_id, time.monotonic() - started, is_error)
+    return text, is_error
+
+
+def _wait_and_fetch_inner(task_id, wait_seconds):
     """Server 端内部等待：轮询至终态或期限，完成即一次性返回瘦结果。
 
     避免外部 AI 反复轮询"好了吗"；超时未完成返回明确降级信息

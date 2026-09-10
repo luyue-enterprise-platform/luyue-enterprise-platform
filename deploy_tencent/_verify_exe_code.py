@@ -89,6 +89,9 @@ CHECKS = {
         # v2.3.3 速度回归：默认回退串行（环境变量可开并行）+ 每会话限核开关
         'LY_OCR_WORKERS',
         '并行（workers>1）时才压每会话线程数',
+        # v2.3.4 阶段耗时埋点（f-string 字面量片段，完整落在单个常量内）
+        'OCR识别阶段',
+        '全程总计',
     ],
     # v1.1.54 统计表/预览列表新增劳动合同起止时间列
     # v1.1.55 需求4 打开即重算（docstring 针刺）
@@ -160,6 +163,8 @@ CHECKS = {
     'modules.mcp.core.protocol': [
         '以 JSON-RPC 2.0 实现 MCP 服务端所需方法',
         'luyue-enterprise-platform',
+        # v2.3.4 serverInfo 版本号跟随 version.json（此前写死漂移）
+        'serverInfo 版本号跟随平台 version.json',
     ],
     'modules.mcp.core.security': [
         'MCP 访问令牌与总开关',
@@ -172,6 +177,9 @@ CHECKS = {
         'MCP 服务端 — Flask Blueprint',
         '未授权：需要有效的 Bearer Token',
         '本服务仅支持 POST JSON-RPC（不提供 SSE 流）',
+        # v2.3.4 访问日志埋点（区分平台慢/AI 慢）
+        'MCP 访问日志',
+        'mcp_access.log',
     ],
     # v2.2.1 瘦返回交付 + v2.3.0 集中式缺参/服务端等待
     # （⚠️ 同名键合并——此前 tools/adapters 各有重复键，后者覆盖前者致 v2.2.0 针刺未生效）
@@ -199,6 +207,9 @@ CHECKS = {
         'preview_only',
         'confirm_task_id',
         '重命名计划已生成，未执行任何重命名，等待确认',
+        # v2.3.4 Server 端等待耗时埋点（% 格式串前缀片段可作针刺——片段整体是常量）
+        '进入 Server 端等待',
+        '退出等待',
     ],
     'modules.mcp.core.adapters': [
         'MCP 业务能力适配器',
