@@ -44,22 +44,8 @@ class TestProofInventory(unittest.TestCase):
         for path, expect in cases:
             self.assertEqual(adapters.guess_insurance_type(path), expect, path)
 
-    def test_split_proof_filename_both_shapes(self):
-        # 形态一：数字 + 空格 + 姓名
-        self.assertEqual(adapters.split_proof_filename('103 王冬')[:2], ('103', '王冬'))
-        self.assertEqual(adapters.split_proof_filename('103 王冬')[2], '数字+空格+姓名')
-        # 形态二：数字与姓名紧邻
-        self.assertEqual(adapters.split_proof_filename('103王冬')[:2], ('103', '王冬'))
-        self.assertEqual(adapters.split_proof_filename('103王冬')[2], '数字姓名紧邻')
-        # 页码后缀需剥离
-        self.assertEqual(adapters.split_proof_filename('01-王冬-5611（2）')[:2],
-                         ('01', '王冬-5611'))
-        self.assertEqual(adapters.split_proof_filename('01-王冬-5611（2）')[2],
-                         '数字-姓名（含尾号）')
-        # 无法解析
-        self.assertEqual(adapters.split_proof_filename('参保证明')[:2], (None, None))
-
     def test_inventory_groups_by_type_and_extension(self):
+        """清点只报份数与分布，不含任何命名解析/异常命名判定"""
         paths = [
             'X/4.养老参保证明/103 王冬.png',
             'X/4.养老参保证明/104 刘栋.png',
@@ -74,21 +60,14 @@ class TestProofInventory(unittest.TestCase):
         self.assertEqual(inv['by_insurance_type']['医疗保险'], 2)
         self.assertEqual(inv['by_extension']['.png'], 4)
         self.assertEqual(inv['by_extension']['.jpg'], 1)
-        self.assertEqual(inv['abnormal_name_count'], 1)
-        self.assertIn('无法识别.png', inv['abnormal_names'])
 
-    def test_match_proofs_to_roster(self):
-        roster = [{'seq': 1, 'name': '王冬'}, {'seq': 2, 'name': '刘栋'},
-                  {'seq': 3, 'name': '张三'}]
-        paths = ['X/4.养老参保证明/103 王冬.png',
-                 'X/4.养老参保证明/104 刘栋.png',
-                 'X/4.养老参保证明/999 李四.png']
-        pre = adapters.match_proofs_to_roster(paths, roster)
-        self.assertEqual(pre['roster_person_count'], 3)
-        self.assertEqual(pre['proof_person_count'], 3)
-        self.assertEqual(pre['matched_person_count'], 2)
-        self.assertEqual(pre['proof_only_names'], ['李四'])
-        self.assertEqual(pre['roster_only_names'], ['张三'])
+    def test_mcp_layer_has_no_naming_logic(self):
+        """角色边界：MCP 层不得承载命名解析/匹配（2026-09-10 用户确立）"""
+        for gone in ('split_proof_filename', 'match_proofs_to_roster'):
+            self.assertFalse(hasattr(adapters, gone), gone)
+        inv = adapters.inventory_insurance_files(['X/4.养老参保证明/103 王冬.png'])
+        for field in ('naming_shapes', 'abnormal_name_count', 'abnormal_names'):
+            self.assertNotIn(field, inv, field)
 
 
 # ---------------------------------------------------------------- year_range 修复
@@ -178,21 +157,20 @@ class TestInsurancePreview(_Base):
         self.assertEqual(payload['effective_params']['year_range'], '2023-01 ~ 2025-12')
         self.assertEqual(payload['effective_params']['file_count'], 6)
 
-    def test_preview_inventory_and_roster_and_prematch(self):
+    def test_preview_inventory_and_roster(self):
+        """预览只报份数分布与花名册概览，不含命名解析与姓名匹配"""
         text, _ = tool_registry.tool_insurance_calculate(self._preview_args())
         payload = json.loads(text)
         inv = payload['inventory']
         self.assertEqual(inv['total'], 6)
         self.assertEqual(inv['by_insurance_type']['养老保险'], 2)
         self.assertEqual(inv['by_insurance_type']['医疗保险'], 2)
-        self.assertEqual(inv['abnormal_name_count'], 0)
         self.assertEqual(payload['roster']['person_count'], 3)
         self.assertEqual(payload['roster']['identity_type_dist'], {'脱贫人口': 3})
-        pre = payload['prematch']
-        self.assertEqual(pre['matched_person_count'], 2)
-        self.assertEqual(pre['roster_only_names'], ['张三'])
-        # 花名册有人无证明 → 应给出告警
-        self.assertTrue(any('未找到对应证明文件' in w for w in payload['warnings']))
+        # 命名/匹配相关字段一律不再出现在预览响应里
+        self.assertNotIn('prematch', payload)
+        for field in ('naming_shapes', 'abnormal_name_count', 'abnormal_names'):
+            self.assertNotIn(field, inv, field)
 
     def test_preview_task_state_is_waiting_confirm(self):
         text, _ = tool_registry.tool_insurance_calculate(self._preview_args())
@@ -210,7 +188,7 @@ class TestInsurancePreview(_Base):
         self.assertFalse(is_error)
         payload = json.loads(text)
         self.assertEqual(payload['roster']['person_count'], 0)
-        self.assertIsNone(payload['prematch'])
+        self.assertNotIn('prematch', payload)
 
     def test_preview_status_hint_for_insurance(self):
         text, _ = tool_registry.tool_insurance_calculate(self._preview_args())

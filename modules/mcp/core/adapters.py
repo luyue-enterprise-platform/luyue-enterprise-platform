@@ -236,53 +236,24 @@ def guess_insurance_type(path):
     return '未识别'
 
 
-def split_proof_filename(stem):
-    """拆解参保证明文件名 → (序号, 姓名, 命名形态)
-
-    平台历史数据存在三种形态：
-      '103 王冬'（数字+空格+姓名）、'103王冬'（紧邻）、
-      '01-王冬-5611'（数字-姓名-证号尾号，合同整理产物）。
-    末尾的 (1)/（2）页码后缀会被剥离。
-    """
-    s = str(stem).strip()
-    m = re.match(r'^(\d+)\s*[-_、.]?\s*(.*?)\s*$', s)
-    if not m:
-        return None, None, '未识别'
-    seq, rest = m.group(1), m.group(2)
-    rest = re.sub(r'[（(]\s*\d+\s*[)）]\s*$', '', rest).strip()
-    rest = rest.strip('-_、. ')
-    if re.match(r'^\d+\s+\S', s):
-        shape = '数字+空格+姓名'
-    elif re.match(r'^\d+\s*[-_、.]', s):
-        shape = '数字-姓名（含尾号）'
-    else:
-        shape = '数字姓名紧邻'
-    return seq, (rest or None), shape
-
-
 def inventory_insurance_files(file_paths):
-    """参保证明清点（纯文件名/路径，不做 OCR）：险种分布、扩展名、命名形态、异常命名"""
-    by_type, by_ext, shapes = {}, {}, {}
-    abnormal = []
+    """参保证明清点（纯路径/扩展名，不做 OCR、不解析命名）
+
+    只报份数与分布：总数、险种分布、扩展名分布。
+    命名与匹配规则一律归平台自身，MCP 层不承载任何命名判断
+    （2026-09-10 用户确立的角色边界）。
+    """
+    by_type, by_ext = {}, {}
     for p in file_paths:
-        fn = os.path.basename(p)
-        stem, ext = os.path.splitext(fn)
+        _stem, ext = os.path.splitext(os.path.basename(p))
         ext = ext.lower()
         by_ext[ext] = by_ext.get(ext, 0) + 1
         itype = guess_insurance_type(p)
         by_type[itype] = by_type.get(itype, 0) + 1
-        seq, name, shape = split_proof_filename(stem)
-        shapes[shape] = shapes.get(shape, 0) + 1
-        if not seq or not name:
-            abnormal.append(fn)
     return {
         'total': len(file_paths),
         'by_insurance_type': by_type,
         'by_extension': by_ext,
-        'naming_shapes': shapes,
-        'abnormal_name_count': len(abnormal),
-        'abnormal_names': abnormal[:MAX_DETAIL],
-        'abnormal_names_truncated': len(abnormal) > MAX_DETAIL,
     }
 
 
@@ -304,46 +275,13 @@ def _roster_overview(roster):
     }
 
 
-def match_proofs_to_roster(file_paths, roster):
-    """OCR 前的姓名预比对：证明文件名 ↔ 花名册姓名
-
-    仅用于让用户在识别前确认文件与花名册是否对得上，不替代 OCR 后的严格比对。
-    """
-    roster_names, proof_names, unnamed = {}, {}, []
-    for r in roster or []:
-        n = (r.get('name') or '').strip()
-        if n:
-            roster_names[n] = roster_names.get(n, 0) + 1
-    for p in file_paths:
-        stem = os.path.splitext(os.path.basename(p))[0]
-        _seq, name, _shape = split_proof_filename(stem)
-        if not name:
-            unnamed.append(os.path.basename(p))
-            continue
-        proof_names[name] = proof_names.get(name, 0) + 1
-    matched = sorted(set(proof_names) & set(roster_names))
-    proof_only = sorted(set(proof_names) - set(roster_names))
-    roster_only = sorted(set(roster_names) - set(proof_names))
-    return {
-        'roster_person_count': len(roster_names),
-        'proof_person_count': len(proof_names),
-        'matched_person_count': len(matched),
-        'proof_only_count': len(proof_only),
-        'roster_only_count': len(roster_only),
-        'proof_only_names': proof_only[:MAX_DETAIL],
-        'proof_only_truncated': len(proof_only) > MAX_DETAIL,
-        'roster_only_names': roster_only[:MAX_DETAIL],
-        'roster_only_truncated': len(roster_only) > MAX_DETAIL,
-        'unnamed_file_count': len(unnamed),
-    }
-
-
 def preview_insurance(task_id, file_paths, province, tax_mode='退税',
                       roster_path=None, year_range=None):
-    """社保核算预览（不 OCR）：清点文件 + 花名册概览 + 姓名预比对 + 待生效参数
+    """社保核算预览（不 OCR）：清点份数 + 花名册概览 + 待生效参数
 
     对应「先确认参数再执行」的诉求：把本次将要生效的全部参数与文件范围一次性
     呈现给调用方，由用户确认后再 confirm_insurance 真正启动识别。
+    **不含任何命名解析或姓名匹配**——命名与统计规则归平台自身。
     """
     from modules.insurance.core.roster_parser import parse_roster_from_table
 
@@ -366,7 +304,6 @@ def preview_insurance(task_id, file_paths, province, tax_mode='退税',
         'inventory': inventory_insurance_files(file_paths),
         'roster': _roster_overview(roster) if roster else {'person_count': 0},
         'roster_error': roster_error,
-        'prematch': match_proofs_to_roster(file_paths, roster) if roster else None,
     }
     tasks.update(
         task_id, status='waiting_confirm', total=len(file_paths),

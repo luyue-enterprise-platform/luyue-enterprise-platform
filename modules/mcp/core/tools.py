@@ -454,27 +454,18 @@ def _validate_contract(args):
 
 
 def _insurance_preview_payload(task_id, plan):
-    """社保核算预览响应（v2.3.5）：待生效参数 + 文件清点 + 花名册概览 + 姓名预比对
+    """社保核算预览响应（v2.3.5）：待生效参数 + 份数清点 + 花名册概览
 
     对应「先确认参数再执行」：把将要生效的参数与文件范围一次性呈现，
     不执行任何 OCR；确认后由 confirm_task_id 启动识别。
+    **不含命名解析与姓名匹配**——命名与统计规则归平台自身。
     """
     inv = plan.get('inventory') or {}
     ros = plan.get('roster') or {}
-    pre = plan.get('prematch') or {}
     warnings = []
     if plan.get('roster_error'):
         warnings.append('花名册解析失败：%s（确认后将不带花名册比对执行）'
                         % plan['roster_error'])
-    if pre.get('roster_only_count'):
-        warnings.append('花名册中有 %d 人未找到对应证明文件'
-                        % pre['roster_only_count'])
-    if pre.get('proof_only_count'):
-        warnings.append('有 %d 人的证明文件不在花名册中（统计以花名册为唯一基准）'
-                        % pre['proof_only_count'])
-    if inv.get('abnormal_name_count'):
-        warnings.append('有 %d 个文件命名无法解析出姓名，请核对'
-                        % inv['abnormal_name_count'])
     return _ok({
         'task_id': task_id,
         'status': 'waiting_confirm',
@@ -482,7 +473,6 @@ def _insurance_preview_payload(task_id, plan):
         'effective_params': plan.get('effective_params') or {},
         'inventory': inv,
         'roster': ros,
-        'prematch': plan.get('prematch'),
         'warnings': warnings,
         'how_to_confirm': (
             '核对以上参数与文件范围后，调用 insurance_calculate 传 confirm_task_id=%s '
@@ -790,7 +780,7 @@ def tool_get_task_status(args):
     if task.get('status') == 'waiting_confirm':
         if task.get('capability') == 'insurance':
             view['hint'] = ('核算待确认：调用 insurance_calculate 传 confirm_task_id 确认执行；'
-                            '待核对内容见预览响应的 effective_params/inventory/roster/prematch')
+                            '待核对内容见预览响应的 effective_params/inventory/roster')
         else:
             view['hint'] = ('计划待确认：调用 contract_organize 传 confirm_task_id 与 '
                             'choices 确认执行；待选择项见预览响应 needs_selection')
