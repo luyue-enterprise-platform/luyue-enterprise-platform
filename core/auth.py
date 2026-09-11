@@ -674,14 +674,23 @@ def _is_api_request():
 
 
 def login_required(f):
-    """要求登录才能访问"""
+    """要求登录才能访问
+
+    v2.5.1：非 API 请求跳登录页时携带 next=完整路径（含查询串），
+    登录成功后回跳原页面——授权确认页（/mcp/oauth/authorize）等
+    带参页面登录后不再被丢到门户首页。
+    """
     @wraps(f)
     def decorated(*args, **kwargs):
         if 'user_id' not in session:
             # 如果是API请求返回JSON，否则重定向
             if _is_api_request():
                 return jsonify({'error': '登录已失效，请重新登录', 'need_login': True}), 401
-            return redirect(url_for('login'))
+            # full_path 无查询串时带尾部 '?'，顺手去掉
+            target = request.full_path
+            if target.endswith('?'):
+                target = target[:-1]
+            return redirect(url_for('login', next=target))
         return f(*args, **kwargs)
     return decorated
 

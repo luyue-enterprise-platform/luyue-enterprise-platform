@@ -123,6 +123,8 @@
         // 版本更新唯一入口为门户"关于系统 → 版本更新"；后端 /api/app/* 更新接口保留不变
 
         // 表单提交：AJAX 登录 + 保存凭据
+        // v2.5.1：回退原生提交时也带上 next 查询串（登录后回跳授权页等）
+        formEl.action = '/login' + window.location.search;
         var submitting = false;
         formEl.addEventListener('submit', function(e) {
             if (submitting) return; // 回退模式：允许原生表单提交
@@ -149,14 +151,14 @@
 
             // 2. 等待保存完成后再发送登录请求（确保凭据已持久化）
             savePromise.finally(function() {
-                fetch('/login', {
+                fetch('/login' + window.location.search, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(creds)
                 }).then(function(resp) {
                     return resp.json().then(function(data) {
                         if (data.ok) {
-                            window.location.href = '/';
+                            window.location.href = data.redirect || '/';
                         } else {
                             showMsg(data.error || '登录失败');
                             btnEl.disabled = false;

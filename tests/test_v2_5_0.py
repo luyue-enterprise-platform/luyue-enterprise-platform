@@ -46,11 +46,18 @@ class _OAuthBase(unittest.TestCase):
         oauth._STORE_PATH = os.path.join(self.tmp, 'oauth_store.json')
         security._CONFIG_PATH = os.path.join(self.tmp, 'mcp_config.json')
         oauth._CODES.clear()
+        # v2.5.1：audit() 落盘 handler 隔离（不写实盘日志）
+        self._orig_env = os.environ.get('LY_MCP_NO_ACCESS_FILE')
+        os.environ['LY_MCP_NO_ACCESS_FILE'] = '1'
 
     def tearDown(self):
         oauth._STORE_PATH = self._orig_store
         security._CONFIG_PATH = self._orig_cfg
         oauth._CODES.clear()
+        if self._orig_env is None:
+            os.environ.pop('LY_MCP_NO_ACCESS_FILE', None)
+        else:
+            os.environ['LY_MCP_NO_ACCESS_FILE'] = self._orig_env
         _rmtree(self.tmp)
 
     # ---- 便捷流程 ----

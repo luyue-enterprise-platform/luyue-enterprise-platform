@@ -148,6 +148,13 @@ def api_save_remembered_login():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    def _safe_next(default='/'):
+        """v2.5.1 登录后回跳：仅允许站内相对路径，防开放重定向"""
+        nxt = (request.args.get('next') or request.form.get('next') or '').strip()
+        if nxt.startswith('/') and not nxt.startswith('//') and not nxt.startswith('/\\'):
+            return nxt
+        return default
+
     if request.method == 'POST':
         # 兼容 HTML 表单 POST 和 AJAX JSON POST
         if request.is_json:
@@ -173,8 +180,9 @@ def login():
             if remote_token:
                 session['_auth_token'] = remote_token
             if request.is_json:
-                return jsonify({'ok': True})
-            return redirect('/')
+                # v2.5.1：回传回跳地址（如授权确认页），前端 data.redirect 优先
+                return jsonify({'ok': True, 'redirect': _safe_next()})
+            return redirect(_safe_next())
         else:
             # 透传 verify_user 返回的真实错误（密码错/停用/认证服务不可用），
             # 避免把所有失败都硬编码成"用户名或密码错误"误导用户

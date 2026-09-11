@@ -97,8 +97,13 @@ audit_logger = logging.getLogger('oauth.audit')
 
 
 def audit(event, **fields):
-    """授权链路审计（任何异常不得影响业务）：event + 关键字段单行留痕"""
+    """授权链路审计（任何异常不得影响业务）：event + 关键字段单行留痕
+
+    v2.5.1 修复：首次调用即挂载落盘 handler（此前漏挂导致 oauth_audit.log
+    从不生成，审计链路断裂——验收实测发现）。
+    """
     try:
+        _setup_audit_log()
         extras = ' '.join('%s=%s' % (k, v) for k, v in sorted(fields.items()))
         audit_logger.info('[oauth] %s %s', event, extras)
     except Exception:

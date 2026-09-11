@@ -18,6 +18,8 @@ CHECKS = {
         '认证服务暂时不可用，请检查网络或联系管理员',
         '云端无单用户查询端点，走用户列表接口按 id 过滤',
         '非200不再静默回退本地',
+        # v2.5.1 登录后回跳（login_required 携带 next）
+        '登录成功后回跳原页面',
     ],
     'app': [
         'https://luyue-1466112667.cos.ap-shanghai.myqcloud.com/version.json',
@@ -44,6 +46,8 @@ CHECKS = {
         '/api/model/start_update',
         '当前模型状态 + 更新任务状态（远端检查须显式触发）',
         '启动后台模型更新：下载 → 校验 → 原子轮换 → 提示重启',
+        # v2.5.1 登录后回跳（_safe_next docstring 针刺）
+        'v2.5.1 登录后回跳：仅允许站内相对路径，防开放重定向',
     ],
     # 注：launcher.py 是 PyInstaller 入口脚本，编入 bootloader 而非 PYZ，
     # 无法用 PYZ 提取针刺——其 v1.1.56 互斥/清理逻辑由 tests/test_v1_1_56.py 静态断言
@@ -190,6 +194,8 @@ CHECKS = {
         '读取花名册解析结果（永不开放）',
         '授权码换令牌（PKCE S256 校验 + 一次性消费 + 重放全废）',
         '刷新令牌轮换：签发新对，旧刷新令牌作废',
+        # v2.5.1 审计落盘修复（audit docstring 针刺）
+        'v2.5.1 修复：首次调用即挂载落盘 handler',
     ],
     'modules.mcp.core.tasks': [
         'MCP 任务登记表',
