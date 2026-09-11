@@ -159,6 +159,8 @@ def materialize_insurance(task_id):
 
     result 含 person_stats / image_details（逐人逐图且带身份证号），
     体量大且敏感，禁止内联回传，只回传统计口径与文件卡片。
+    v2.3.8：摘要不再包含 company_name（公司名属台账数据，仅落盘保留），
+    返回内容安全化规则见 tools._scrub_summary。
     """
     native = insurance_native(task_id) or {}
     result = native.get('result')
@@ -177,6 +179,8 @@ def materialize_insurance(task_id):
     out_cards, out_total, out_trunc = artifacts.collect_output_cards(out_dir)
 
     if isinstance(result, dict):
+        # v2.3.8 返回安全化：company_name 属台账数据，不进 MCP 摘要
+        # （完整结果 JSON 落盘文件中仍保留）；摘要只留统计计数与文件线索。
         summary = {
             'person_count': result.get('person_count'),
             'ocr_count': result.get('ocr_count'),
@@ -187,7 +191,6 @@ def materialize_insurance(task_id):
             'year_cols': result.get('year_cols'),
             'excel_filename': result.get('excel_filename'),
             'yearly_ledger_count': len(result.get('yearly_ledger_files') or []),
-            'company_name': result.get('company_name'),
             'person_stats_count': len(result.get('person_stats') or []),
             'image_details_count': len(result.get('image_details') or []),
         }

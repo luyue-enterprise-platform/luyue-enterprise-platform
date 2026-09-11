@@ -186,6 +186,67 @@ body {
 .file-tag .file-remove { cursor: pointer; color: var(--danger); font-size: 16px; margin-left: 4px; }
 .file-tag .file-remove:hover { color: #c0392b; }
 
+/* ===== v2.3.8 上传队列手动排序（文件/文件夹统一队列，↑↓ 调序） ===== */
+.file-items.file-rows {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+}
+
+.file-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #f0f4f8;
+    padding: 7px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    border: 1px solid var(--border);
+}
+
+.file-row.folder-row {
+    background: #FFF8E7;
+    border: 1px solid #F1C40F;
+}
+
+.file-row .file-row-seq {
+    min-width: 22px;
+    text-align: center;
+    font-weight: 600;
+    color: var(--primary, #2c7be5);
+    font-size: 12px;
+}
+
+.file-row .file-row-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-row .file-row-meta { color: #999; font-size: 11px; white-space: nowrap; }
+
+.file-order-btns { display: inline-flex; gap: 4px; margin-left: auto; }
+
+.order-btn {
+    width: 24px;
+    height: 24px;
+    line-height: 1;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: #fff;
+    color: var(--primary, #2c7be5);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 0;
+}
+
+.order-btn:hover { background: #e8f1fd; }
+.order-btn:active { background: #d7e8fb; }
+
+.file-row .file-remove { cursor: pointer; color: var(--danger); font-size: 16px; }
+.file-row .file-remove:hover { color: #c0392b; }
+
 /* ===== 按钮 ===== */
 .btn-primary {
     background: var(--primary);

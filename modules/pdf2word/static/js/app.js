@@ -8,8 +8,10 @@
  */
 
 // ===== 全局状态 =====
-var selectedFiles = [];     // [File, ...] 按选择先后顺序
-var pickEntries = [];       // [{pick_id, folder, file_count, files:[...]}, ...] 按选择先后顺序
+// v2.3.8：统一上传队列（文件与文件夹可交错排列，支持手动调整顺序）。
+// 每项为 {kind:'file', file:File} 或 {kind:'pick', pick_id, folder, file_count, files}。
+// 队列顺序即转换/合并顺序，尤其决定 merge 模式下合并 PDF 的页面排序。
+var queueItems = [];
 var currentTaskId = null;
 var pollTimer = null;
 var currentDirection = 'pdf2word';  // 'pdf2word' | 'topdf'
@@ -73,7 +75,7 @@ function onDirectionChange(dir) {
     }
 
     // 切换方向后清掉不符合当前方向的已选文件，避免误传
-    if (selectedFiles.length > 0 || pickEntries.length > 0) {
+    if (queueItems.length > 0) {
         clearFiles();
         showToast('已切换转换方向，请重新选择文件', 'info');
     }
@@ -117,12 +119,12 @@ function addFiles(fileList) {
             continue;
         }
         // 避免重复
-        var dup = selectedFiles.some(function (sf) {
-            return sf.name === f.name && sf.size === f.size;
+        var dup = queueItems.some(function (it) {
+            return it.kind === 'file' && it.file.name === f.name && it.file.size === f.size;
         });
         if (dup) continue;
 
-        selectedFiles.push(f);
+        queueItems.push({ kind: 'file', file: f });
         added++;
     }
     if (skipped.length > 0) {
@@ -145,7 +147,8 @@ function pickFolder() {
                 showToast(data.error, 'error');
                 return;
             }
-            pickEntries.push({
+            queueItems.push({
+                kind: 'pick',
                 pick_id: data.pick_id,
                 folder: data.folder,
                 file_count: data.file_count,
@@ -164,17 +167,28 @@ function pickFolder() {
         });
 }
 
-function removePick(idx) {
-    pickEntries.splice(idx, 1);
+function removeItem(idx) {
+    queueItems.splice(idx, 1);
     renderFileList();
     checkReady();
 }
 
-// ===== 文件列表渲染（独立文件 + 文件夹组） =====
+// ===== 手动调整顺序（v2.3.8）：上移/下移，队列顺序即转换与合并顺序 =====
+function moveItem(idx, delta) {
+    var to = idx + delta;
+    if (to < 0 || to >= queueItems.length) return;
+    var item = queueItems.splice(idx, 1)[0];
+    queueItems.splice(to, 0, item);
+    renderFileList();
+}
+
+// ===== 文件列表渲染（v2.3.8：统一队列，带序号与 ↑↓ 调序按钮） =====
 function renderFileList() {
     var list = document.getElementById('fileList');
-    var total = selectedFiles.length;
-    pickEntries.forEach(function (p) { total += p.file_count; });
+    var total = 0;
+    queueItems.forEach(function (it) {
+        total += (it.kind === 'pick') ? it.file_count : 1;
+    });
 
     if (total === 0) {
         list.style.display = 'none';
@@ -183,26 +197,37 @@ function renderFileList() {
     list.style.display = 'block';
 
     var label = currentDirection === 'pdf2word' ? 'PDF 文件' : '待转换文件';
-    document.getElementById('fileCount').textContent = '共 ' + total + ' 个' + label;
+    var orderHint = queueItems.length > 1 ? '（顺序即转换/合并顺序，可 ↑↓ 调整）' : '';
+    document.getElementById('fileCount').textContent = '共 ' + total + ' 个' + label + orderHint;
 
-    var html = selectedFiles.map(function (f, idx) {
-        return '<span class="file-tag">' +
-            '<span>📄</span>' +
-            '<span class="file-name" title="' + esc(f.name) + '">' + esc(f.name) + '</span>' +
-            '<span style="color:#999;font-size:11px;">(' + formatSize(f.size) + ')</span>' +
-            '<span class="file-remove" onclick="removeFile(' + idx + ')">✕</span>' +
+    var html = queueItems.map(function (it, idx) {
+        var upHide = idx === 0 ? ' style="visibility:hidden;"' : '';
+        var downHide = idx === queueItems.length - 1 ? ' style="visibility:hidden;"' : '';
+        var btns = '<span class="file-order-btns">' +
+            '<button type="button" class="order-btn" title="上移"' + upHide +
+            ' onclick="moveItem(' + idx + ',-1)">↑</button>' +
+            '<button type="button" class="order-btn" title="下移"' + downHide +
+            ' onclick="moveItem(' + idx + ',1)">↓</button>' +
             '</span>';
-    }).join('');
-
-    html += pickEntries.map(function (p, idx) {
-        var filesPreview = (p.files || []).slice(0, 5).join('、');
-        if (p.file_count > 5) filesPreview += ' 等共 ' + p.file_count + ' 个文件';
-        return '<span class="file-tag folder-tag" title="' + esc(filesPreview) + '">' +
+        var remove = '<span class="file-remove" onclick="removeItem(' + idx + ')">✕</span>';
+        if (it.kind === 'file') {
+            return '<div class="file-row">' +
+                '<span class="file-row-seq">' + (idx + 1) + '</span>' +
+                '<span>📄</span>' +
+                '<span class="file-row-name" title="' + esc(it.file.name) + '">' + esc(it.file.name) + '</span>' +
+                '<span class="file-row-meta">(' + formatSize(it.file.size) + ')</span>' +
+                btns + remove +
+                '</div>';
+        }
+        var filesPreview = (it.files || []).slice(0, 5).join('、');
+        if (it.file_count > 5) filesPreview += ' 等共 ' + it.file_count + ' 个文件';
+        return '<div class="file-row folder-row" title="' + esc(filesPreview) + '">' +
+            '<span class="file-row-seq">' + (idx + 1) + '</span>' +
             '<span>📂</span>' +
-            '<span class="file-name">' + esc(p.folder) + '</span>' +
-            '<span style="color:#999;font-size:11px;">(' + p.file_count + ' 个文件，递归)</span>' +
-            '<span class="file-remove" onclick="removePick(' + idx + ')">✕</span>' +
-            '</span>';
+            '<span class="file-row-name">' + esc(it.folder) + '</span>' +
+            '<span class="file-row-meta">(' + it.file_count + ' 个文件，递归)</span>' +
+            btns + remove +
+            '</div>';
     }).join('');
 
     document.getElementById('fileItems').innerHTML = html;
@@ -214,15 +239,8 @@ function formatSize(bytes) {
     return (bytes / 1024 / 1024).toFixed(1) + 'MB';
 }
 
-function removeFile(idx) {
-    selectedFiles.splice(idx, 1);
-    renderFileList();
-    checkReady();
-}
-
 function clearFiles() {
-    selectedFiles = [];
-    pickEntries = [];
+    queueItems = [];
     document.getElementById('fileList').style.display = 'none';
     hideActionAndResult();
 }
@@ -230,14 +248,12 @@ function clearFiles() {
 // ===== 检查是否可开始 =====
 function checkReady() {
     var actionSection = document.getElementById('actionSection');
-    var hasAny = selectedFiles.length > 0 || pickEntries.length > 0;
-    actionSection.style.display = hasAny ? 'block' : 'none';
+    actionSection.style.display = queueItems.length > 0 ? 'block' : 'none';
 }
 
 // ===== 开始转换 =====
 function startConvert() {
-    var hasAny = selectedFiles.length > 0 || pickEntries.length > 0;
-    if (!hasAny) {
+    if (queueItems.length === 0) {
         showToast('请先上传文件', 'error');
         return;
     }
@@ -256,12 +272,22 @@ function startConvert() {
         }
         formData.append('output_mode', outputMode);
     }
-    selectedFiles.forEach(function (f) {
-        formData.append('files', f);
+    // v2.3.8：按队列顺序提交（文件与文件夹可交错），并附 order 序列化顺序，
+    // 后端按此顺序处理——merge 模式下合并 PDF 的页面排序即此顺序。
+    var fIdx = 0, pIdx = 0;
+    var order = [];
+    queueItems.forEach(function (it) {
+        if (it.kind === 'file') {
+            formData.append('files', it.file);
+            order.push('f' + fIdx);
+            fIdx++;
+        } else {
+            formData.append('pick_ids', it.pick_id);
+            order.push('p' + pIdx);
+            pIdx++;
+        }
     });
-    pickEntries.forEach(function (p) {
-        formData.append('pick_ids', p.pick_id);
-    });
+    formData.append('order', JSON.stringify(order));
 
     // 显示进度区
     document.getElementById('progressSection').style.display = 'block';

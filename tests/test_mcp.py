@@ -974,8 +974,16 @@ class TestMissingParamsAndWait(unittest.TestCase):
 
         converter.batch_convert = fake
         try:
+            # v2.3.8 强制两阶段：首次调用恒为预览
             text, is_error = tool_registry.call_tool('convert_pdf_to_word', {
                 'file_paths': [self.pdf],
+            })
+            self.assertFalse(is_error)
+            preview = json.loads(text)
+            self.assertEqual(preview['status'], 'waiting_confirm')
+            # 确认后（无 wait）立即返回 task_id
+            text, is_error = tool_registry.call_tool('convert_pdf_to_word', {
+                'confirm_task_id': preview['task_id'],
             })
             self.assertFalse(is_error)
             payload = json.loads(text)
@@ -1000,8 +1008,13 @@ class TestMissingParamsAndWait(unittest.TestCase):
 
         converter.batch_convert = fake
         try:
+            # v2.3.8 两阶段：预览 → 确认时带 wait_seconds 一次性等待
+            text, _ = tool_registry.call_tool('convert_pdf_to_word', {
+                'file_paths': [self.pdf],
+            })
+            tid = json.loads(text)['task_id']
             text, is_error = tool_registry.call_tool('convert_pdf_to_word', {
-                'file_paths': [self.pdf], 'wait_seconds': 20,
+                'confirm_task_id': tid, 'wait_seconds': 20,
             })
             self.assertFalse(is_error)
             payload = json.loads(text)
@@ -1026,8 +1039,13 @@ class TestMissingParamsAndWait(unittest.TestCase):
 
         converter.batch_convert = slow
         try:
+            # v2.3.8 两阶段：确认时带 wait_seconds=1，任务慢于等待 → 降级返回
+            text, _ = tool_registry.call_tool('convert_pdf_to_word', {
+                'file_paths': [self.pdf],
+            })
+            tid = json.loads(text)['task_id']
             text, is_error = tool_registry.call_tool('convert_pdf_to_word', {
-                'file_paths': [self.pdf], 'wait_seconds': 1,
+                'confirm_task_id': tid, 'wait_seconds': 1,
             })
             self.assertTrue(is_error)
             payload = json.loads(text)
@@ -1051,8 +1069,13 @@ class TestMissingParamsAndWait(unittest.TestCase):
 
         converter.batch_convert = boom
         try:
+            # v2.3.8 两阶段：预览 → 确认带 wait，失败路径经确认触发
+            text, _ = tool_registry.call_tool('convert_pdf_to_word', {
+                'file_paths': [self.pdf],
+            })
+            tid = json.loads(text)['task_id']
             text, is_error = tool_registry.call_tool('convert_pdf_to_word', {
-                'file_paths': [self.pdf], 'wait_seconds': 20,
+                'confirm_task_id': tid, 'wait_seconds': 20,
             })
             self.assertTrue(is_error)
             payload = json.loads(text)

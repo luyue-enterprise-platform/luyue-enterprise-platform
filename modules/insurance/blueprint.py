@@ -413,7 +413,15 @@ def _rebuild_result(task_id):
     if contract_notes:
         logger.info(f'[task:{task_id}] 合同比对提示 {len(contract_notes)} 条，年度列重算: {year_cols}')
     excel_filename = f'申报重点群体税收优惠政策总台账_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
-    excel_path = os.path.join(OUTPUT_DIR, excel_filename)
+    # v2.3.8：Excel 台账写入任务独立目录 outputs/<task_id>/，与「参保证明/」
+    # 「操作记录.json」同层。此前总台账与年度台账直接写 outputs/ 根目录，
+    # 历史任务与本次任务的产物混在同一层、无法区分（MCP 与桌面端同病）。
+    # 年度台账由 generate_excel 按 output_path 所在目录落盘，随迁自动隔离。
+    excel_dir = os.path.join(OUTPUT_DIR, task_id)
+    os.makedirs(excel_dir, exist_ok=True)
+    # 针刺：该日志字面量进 co_consts，供 _verify_exe_code.py 打包校验
+    logger.info(f'[task:{task_id}] v2.3.8 台账写入任务独立目录 outputs/任务ID/')
+    excel_path = os.path.join(excel_dir, excel_filename)
     gen_result = generate_excel(persons, excel_path, roster=roster,
                                 company_name=company_name, year_range=year_range,
                                 stats=(person_stats, year_cols), tax_mode=tax_mode)

@@ -150,13 +150,16 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
+# v2.3.8：onefile → onedir。onefile 每次启动把 ~340MB 解压到 %TEMP%\_MEI
+# 并从临时目录加载 DLL，实测该环境使 onnxruntime 推理效率降为 1/4
+# （同机同码：onefile 14.3s/张 vs onedir 3.7s/张，2026-09-11 实测）。
+# onedir 后 DLL 常驻安装目录（_internal），速度与源码环境持平，
+# 且启动不再有解压等待。安装器改为整目录打包（见 installer.iss）。
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name=NAME,
     debug=False,
     bootloader_ignore_signals=False,
@@ -171,4 +174,15 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=ICON_FILE if os.path.isfile(ICON_FILE) else None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name=NAME,
 )

@@ -9,7 +9,7 @@
 
 #define MyAppName "鲁岳企业服务·综合智能平台"
 #define MyAppShortName "LY重点群体涉税申报综合智能平台"
-#define MyAppVersion "2.3.7"
+#define MyAppVersion "2.3.8"
 #define MyAppPublisher "鲁岳企业服务"
 #define MyAppURL "https://github.com/luyue-enterprise-platform/luyue-enterprise-platform"
 #define MyAppExeName "鲁岳企业服务_综合智能平台.exe"
@@ -72,8 +72,11 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 Name: "startup"; Description: "加入开机启动（可选）"; GroupDescription: "其他快捷方式:"
 
 [Files]
-; 主程序 EXE
-Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; 主程序（v2.3.8 起 onedir 模式：PyInstaller 输出 dist\鲁岳企业服务_综合智能平台\
+; 目录，含主 EXE + _internal\ 依赖树，须整目录递归打包到 {app}。
+; onedir 后 DLL 常驻安装目录，免去 onefile 每次启动解压 ~340MB 到 %TEMP%，
+; 且 onnxruntime OCR 推理实测提速约 3.8 倍（onefile 14.3s/张 vs onedir 3.7s/张））
+Source: "dist\鲁岳企业服务_综合智能平台\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; 配置文件（云端认证）— 始终覆盖：每次安装写入最新认证服务器地址，
 ; 确保老用户升级后自动恢复远程认证（认证服务器迁移时必须更新此文件，不能 onlyifdoesntexist）
 Source: "auth_config.json"; DestDir: "{app}"; Flags: ignoreversion

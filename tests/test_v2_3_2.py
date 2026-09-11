@@ -431,12 +431,16 @@ class TestEffectiveParamsEcho(unittest.TestCase):
         return template_engine.get_provinces()[0]['province_code']
 
     def test_insurance_submit_echoes_effective_params(self):
-        with mock.patch.object(adapters, 'start_insurance', lambda *a, **k: None):
+        # v2.3.8 强制两阶段：首次调用（不传 preview_only）恒为预览，
+        # effective_params 在预览响应中回显
+        with mock.patch.object(adapters, 'start_insurance') as m:
             text, is_err = tools.tool_insurance_calculate({
                 'file_paths': [self.img], 'province': self._province_code()})
+            m.assert_not_called()
         self.assertFalse(is_err, text)
         data = _payload(text)
         self.created_tasks.append(data['task_id'])
+        self.assertEqual(data['status'], 'waiting_confirm')
         eff = data.get('effective_params')
         self.assertIsNotNone(eff)
         self.assertEqual(eff['province'], self._province_code())
@@ -460,16 +464,18 @@ class TestEffectiveParamsEcho(unittest.TestCase):
         roster = os.path.join(self.tmp, 'r.csv')
         with open(roster, 'w', encoding='utf-8-sig') as f:
             f.write('序号,姓名\n1,张三\n')
-        with mock.patch.object(adapters, 'start_contract', lambda *a, **k: None):
+        # v2.3.8 强制两阶段：首次调用恒为生成计划，不执行重命名
+        with mock.patch.object(adapters, 'start_contract') as m:
             text, is_err = tools.tool_contract_organize({
                 'file_paths': [self.img], 'roster_path': roster})
+            m.assert_not_called()
         self.assertFalse(is_err, text)
         data = _payload(text)
         self.created_tasks.append(data['task_id'])
+        self.assertEqual(data['status'], 'waiting_confirm')
         eff = data.get('effective_params')
         self.assertIsNotNone(eff)
         self.assertEqual(eff['roster_path'], roster)
-        self.assertFalse(eff['preview_only'])
 
 
 if __name__ == '__main__':

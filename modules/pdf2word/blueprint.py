@@ -11,6 +11,8 @@ v2.0.0 新增：
 import os
 import sys
 import uuid
+import json
+import re
 import zipfile
 import shutil
 import logging
@@ -77,6 +79,33 @@ def index():
 
 # ---------- 上传并转换 ----------
 
+_ORDER_TOKEN_RE = re.compile(r'^([fp])(\d+)$')
+
+
+def _parse_order(raw):
+    """解析前端 order 字段（v2.3.8 手动排序）。
+
+    order 为 JSON 数组（如 ["f0","p1","f1"]）：f<i> 指第 i 个上传文件、
+    p<j> 指第 j 个 pick_id（文件夹选择），允许文件与文件夹交错排列；
+    用于确定转换与合并 PDF 的处理顺序。非法/缺失输入一律返回 None，
+    调用方回退旧行为（先全部文件、再全部文件夹），绝不抛异常。
+    """
+    if not raw:
+        return None
+    try:
+        arr = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(arr, list) or not arr:
+        return None
+    seq = []
+    for tok in arr:
+        m = _ORDER_TOKEN_RE.match(str(tok))
+        if not m:
+            return None
+        seq.append(('file' if m.group(1) == 'f' else 'pick', int(m.group(2))))
+    return seq
+
 @pdf2word_bp.route('/api/upload', methods=['POST'])
 def api_upload():
     """上传文件并启动后台转换任务
@@ -109,7 +138,8 @@ def api_upload():
     task_dir = os.path.join(UPLOAD_DIR, task_id)
     os.makedirs(task_dir, exist_ok=True)
 
-    # 保存上传文件（保持上传先后顺序；重名自动加序号防覆盖）
+    # 保存上传文件（v2.3.8：支持 order 统一顺序——文件与文件夹可交错；
+    # 重名自动加序号防覆盖）
     saved_paths = []
     skipped = []
     used_names = set()
@@ -126,31 +156,29 @@ def api_upload():
         save_fn(fp)
         return fp
 
-    if has_files:
-        for f in files:
-            if not f.filename:
-                continue
-            ext = os.path.splitext(f.filename)[1].lower()
-            if direction == 'pdf2word':
-                if ext != '.pdf':
-                    skipped.append({'name': f.filename, 'reason': '仅支持 PDF 文件'})
-                    continue
-            else:
-                if not to_pdf.is_supported(f.filename):
-                    skipped.append({'name': f.filename,
-                                    'reason': '不支持的格式 "%s"（支持：图片/Word/Excel/TXT/PDF）' % ext})
-                    continue
-            saved_paths.append(_save_into(task_dir, f.filename, f.save))
+    def _handle_upload_file(f):
+        """单个上传文件：格式校验通过则落盘入列，否则记入 skipped"""
+        if not f.filename:
+            return
+        ext = os.path.splitext(f.filename)[1].lower()
+        if direction == 'pdf2word':
+            if ext != '.pdf':
+                skipped.append({'name': f.filename, 'reason': '仅支持 PDF 文件'})
+                return
+        else:
+            if not to_pdf.is_supported(f.filename):
+                skipped.append({'name': f.filename,
+                                'reason': '不支持的格式 "%s"（支持：图片/Word/Excel/TXT/PDF）' % ext})
+                return
+        saved_paths.append(_save_into(task_dir, f.filename, f.save))
 
-    # 文件夹选择（pick_ids）：按递归解析顺序追加
-    with picked_folders_lock:
-        picks = [picked_folders.pop(pid, None) for pid in pick_ids]
-    for pick in picks:
+    def _handle_pick(pick):
+        """单个文件夹选择：按递归解析顺序追加其全部文件"""
         if not pick:
             # v2.1.1：失效的 pick（已被消费/服务重启/会话过期）明确提示，不再静默跳过
             skipped.append({'name': '一个文件夹选择',
                             'reason': '该文件夹选择已失效（可能已转换过或程序已重启），请移除后重新选择文件夹'})
-            continue
+            return
         for src_path in pick['files']:
             try:
                 saved_paths.append(
@@ -159,6 +187,36 @@ def api_upload():
             except Exception as e:
                 skipped.append({'name': os.path.basename(src_path),
                                 'reason': '复制失败: %s' % e})
+
+    # 文件夹选择（pick_ids）：先统一取出消费，处理顺序交由下方统一编排
+    with picked_folders_lock:
+        picks = [picked_folders.pop(pid, None) for pid in pick_ids]
+
+    order_seq = _parse_order(request.form.get('order'))
+    if order_seq:
+        # v2.3.8 手动排序：按前端清单顺序处理（文件与文件夹可交错）
+        done_files, done_picks = set(), set()
+        for kind, idx in order_seq:
+            if kind == 'file' and idx < len(files) and idx not in done_files:
+                done_files.add(idx)
+                _handle_upload_file(files[idx])
+            elif kind == 'pick' and idx < len(picks) and idx not in done_picks:
+                done_picks.add(idx)
+                _handle_pick(picks[idx])
+        # 兜底：order 未覆盖到的条目按旧顺序补齐，保证不丢文件
+        for i, f in enumerate(files):
+            if i not in done_files:
+                _handle_upload_file(f)
+        for j, pick in enumerate(picks):
+            if j not in done_picks:
+                _handle_pick(pick)
+    else:
+        # 旧行为：先全部上传文件（保持先后顺序），再全部文件夹（按 pick 顺序）
+        if has_files:
+            for f in files:
+                _handle_upload_file(f)
+        for pick in picks:
+            _handle_pick(pick)
 
     if not saved_paths:
         hint = '没有找到有效的 PDF 文件' if direction == 'pdf2word' else '没有找到可转换的文件'

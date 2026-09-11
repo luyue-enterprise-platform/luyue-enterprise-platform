@@ -46,7 +46,7 @@
                     <div class="mode-title">输出模式：</div>
                     <label class="mode-option">
                         <input type="radio" name="output_mode" value="merge" checked>
-                        <span>合并模式 — 按上传顺序合并为单个 PDF</span>
+                        <span>合并模式 — 按清单顺序合并为单个 PDF（清单可 ↑↓ 手动调整顺序）</span>
                     </label>
                     <label class="mode-option">
                         <input type="radio" name="output_mode" value="individual">
@@ -81,7 +81,7 @@
                         <span id="fileCount"></span>
                         <button class="btn-ghost btn-sm" onclick="clearFiles()">清空</button>
                     </div>
-                    <div class="file-items" id="fileItems"></div>
+                    <div class="file-items file-rows" id="fileItems"></div>
                 </div>
             </div>
         </section>

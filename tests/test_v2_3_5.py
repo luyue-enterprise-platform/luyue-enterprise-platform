@@ -268,31 +268,36 @@ class TestInsuranceConfirm(_Base):
 # ---------------------------------------------------------------- 缺陷回归
 
 class TestWaitPathRegression(_Base):
-    """原缺陷使 wait_seconds 永远走不到：effective 构造抛错在其之前"""
+    """原缺陷使 wait_seconds 永远走不到：effective 构造抛错在其之前。
 
-    def test_wait_seconds_reached_with_year_range(self):
+    v2.3.8 强制两阶段后，year_range 拼接只存在于预览 effective_params
+    （adapters.preview_insurance）与确认流程中，回归点随迁。
+    """
+
+    def test_wait_seconds_reached_at_confirm_stage(self):
+        text, _ = tool_registry.tool_insurance_calculate(self._preview_args())
+        tid = json.loads(text)['task_id']
         with mock.patch.object(adapters, 'start_insurance'):
             with mock.patch.object(tool_registry, '_wait_and_fetch',
                                    return_value=('{}', False)) as m:
-                args = self._preview_args()
-                args.pop('preview_only')
-                args['wait_seconds'] = 600
-                tool_registry.tool_insurance_calculate(args)
+                tool_registry.tool_insurance_calculate(
+                    {'confirm_task_id': tid, 'wait_seconds': 600})
                 m.assert_called_once()
 
-    def test_immediate_payload_carries_effective_params(self):
-        with mock.patch.object(adapters, 'start_insurance'):
-            args = self._preview_args()
-            args.pop('preview_only')
-            text, is_error = tool_registry.tool_insurance_calculate(args)
+    def test_preview_carries_effective_params(self):
+        # 不传 preview_only（v2.3.8 起首次调用恒为预览）
+        args = self._preview_args()
+        args.pop('preview_only')
+        text, is_error = tool_registry.tool_insurance_calculate(args)
         self.assertFalse(is_error)
-        eff = json.loads(text)['effective_params']
+        payload = json.loads(text)
+        self.assertEqual(payload['status'], 'waiting_confirm')
+        eff = payload['effective_params']
         self.assertEqual(eff['year_range'], '2023-01 ~ 2025-12')
 
     def test_no_year_range_uses_placeholder(self):
-        with mock.patch.object(adapters, 'start_insurance'):
-            text, is_error = tool_registry.tool_insurance_calculate({
-                'file_paths': [self.proofs_dir], 'province': '610000'})
+        text, is_error = tool_registry.tool_insurance_calculate({
+            'file_paths': [self.proofs_dir], 'province': '610000'})
         self.assertFalse(is_error)
         eff = json.loads(text)['effective_params']
         self.assertEqual(eff['year_range'], '参保数据全区间')
@@ -311,8 +316,11 @@ class TestToolSchema(unittest.TestCase):
 
     def test_description_mentions_two_phase(self):
         desc = tool_registry.TOOLS['insurance_calculate']['description']
-        self.assertIn('preview_only', desc)
+        # v2.3.8 强制两阶段：描述不再以 preview_only 为门面，
+        # 改为宣示「强制两阶段确认 + confirm_task_id 唯一执行入口」
+        self.assertIn('强制两阶段确认', desc)
         self.assertIn('confirm_task_id', desc)
+        self.assertIn('呈现给用户', desc)
 
 
 if __name__ == '__main__':
