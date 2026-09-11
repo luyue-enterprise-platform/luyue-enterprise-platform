@@ -34,6 +34,10 @@ CHECKS = {
         '_UPDATE_LAUNCH_DELAY_SEC 秒后才真正 start 安装器',
         # v1.1.56 cmd 启动器代码常量（ComSpec 兜底字面量）
         'cmd.exe',
+        # v2.3.7 关于系统·版本说明（portal 路由 docstring 针刺——portal.html 是
+        # 数据文件不进 PYZ，版本说明弹窗的落点以 app.py 传参侧字面量为准）
+        'v2.3.7 关于系统·版本说明',
+        'app_changelog',
     ],
     # 注：launcher.py 是 PyInstaller 入口脚本，编入 bootloader 而非 PYZ，
     # 无法用 PYZ 提取针刺——其 v1.1.56 互斥/清理逻辑由 tests/test_v1_1_56.py 静态断言

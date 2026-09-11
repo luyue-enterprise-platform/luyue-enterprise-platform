@@ -290,11 +290,15 @@ def logout():
 @app.route('/')
 @login_required
 def portal():
+    """门户首页（v2.3.7 关于系统·版本说明：向模板传入版本动态数据，
+    由「关于系统 → 版本说明」弹窗渲染当前版本号与更新日志及内置使用说明）"""
     return render_template('portal.html',
         username=session.get('username', ''),
         is_admin=session.get('is_admin', False),
         app_version=APP_VERSION.get('version', '1.0.0'),
-        version_code=APP_VERSION.get('version_code', 100))
+        version_code=APP_VERSION.get('version_code', 100),
+        release_date=APP_VERSION.get('release_date', ''),
+        app_changelog=APP_VERSION.get('changelog', []))
 
 
 # ============ 版本检查 API ============

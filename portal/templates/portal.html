@@ -44,6 +44,9 @@
                 <div class="dropdown-menu" role="menu" data-page-node-id="PGcAyWFr2bqoJGC91Chrjh">
                     <button type="button" class="dropdown-item" role="menuitem"
                             onclick="dropdownAction('ddAbout', openAboutModal)" data-page-node-id="OrS1zncKz9AqZxpNELpwNs">📖 功能介绍</button>
+                    <!-- 版本说明（v2.3.7）：内置完整使用说明，版本信息动态读取 version.json -->
+                    <button type="button" class="dropdown-item" role="menuitem" id="btnVersionInfo"
+                            onclick="dropdownAction('ddAbout', openVersionInfoModal)" data-page-node-id="LuyueVerInfoEntry2026a">📋 版本说明</button>
                     <button type="button" class="dropdown-item" role="menuitem" id="btnCheckUpdate"
                             onclick="dropdownAction('ddAbout', function(){ checkAppUpdate(true); })" data-page-node-id="RP3aRbfN0hPhacjCkhEssl">🔄 版本更新</button>
                     <!-- MCP模块入口（v2.3.1 从模块宫格迁入）：路由/权限不变，仅入口位置调整 -->
@@ -269,6 +272,93 @@
         </div>
     </div>
 
+    <!-- 版本说明弹窗（关于系统 → 版本说明）：版本信息动态读取 + 内置完整使用说明 -->
+    <div class="modal-overlay" id="versionInfoModal" style="display:none;" data-page-node-id="LuyueVerInfoModal2026a">
+        <div class="modal-box modal-wide" data-page-node-id="LuyueVerInfoBox2026a">
+            <h3 data-page-node-id="LuyueVerInfoTitle2026a">版本说明 — 平台使用说明</h3>
+            <div class="modal-body about-body" data-page-node-id="LuyueVerInfoBody2026a">
+                <section class="about-section" data-page-node-id="LuyueVerInfoSecVer2026a">
+                    <h4 data-page-node-id="LuyueVerInfoHVer2026a">🔖 版本信息</h4>
+                    <ul data-page-node-id="LuyueVerInfoUlVer2026a">
+                        <li data-page-node-id="LuyueVerInfoLiVer12026a">当前版本：<b data-page-node-id="LuyueVerInfoB12026a">v{{ app_version }}</b>（版本号 {{ version_code }}）{% if release_date %}，发布日期 {{ release_date }}{% endif %}；</li>
+                        <li data-page-node-id="LuyueVerInfoLiVer22026a">平台一体化集成五大能力：社保智能核算、劳动合同整理、PDF 转 Word、医保参保证明下载、MCP 智能服务端；</li>
+                        <li data-page-node-id="LuyueVerInfoLiVer32026a">每个版本发布前均通过全量自动化测试验证，支持在线自动升级。</li>
+                    </ul>
+                </section>
+                {% if app_changelog %}
+                <section class="about-section" data-page-node-id="LuyueVerInfoSecLog2026a">
+                    <h4 data-page-node-id="LuyueVerInfoHLog2026a">🆕 本版更新内容</h4>
+                    <ul data-page-node-id="LuyueVerInfoUlLog2026a">
+                        {% for line in app_changelog %}
+                        <li data-page-node-id="LuyueVerInfoLiLog2026a">{{ line }}</li>
+                        {% endfor %}
+                    </ul>
+                </section>
+                {% endif %}
+                <section class="about-section" data-page-node-id="LuyueVerInfoSecIns2026a">
+                    <h4 data-page-node-id="LuyueVerInfoHIns2026a">📊 社保批量统计智能核算系统</h4>
+                    <p style="margin:4px 0 8px;color:#666;" data-page-node-id="LuyueVerInfoPIns1a">面向重点群体就业税收优惠申报，自动完成参保证明的识别、统计与核算。</p>
+                    <ol data-page-node-id="LuyueVerInfoOlIns1a">
+                        <li data-page-node-id="LuyueVerInfoLIns1a1">进入模块后选择参保所在<b>省份</b>与<b>税种类型</b>（退税 / 抵税）；</li>
+                        <li data-page-node-id="LuyueVerInfoLIns1a2">上传员工<b>花名册</b>（Excel）——花名册为统计唯一基准，按身份证号唯一匹配；</li>
+                        <li data-page-node-id="LuyueVerInfoLIns1a3">上传社保权益记录单<b>图片或 PDF</b>（支持文件夹批量导入），系统自动 OCR 识别；</li>
+                        <li data-page-node-id="LuyueVerInfoLIns1a4">自动统计四险（养老 / 失业 / 医疗 / 工伤）<b>重叠月数</b>，结合劳动合同区间计算<b>有效参保期</b>，中断信息自动剔除；</li>
+                        <li data-page-node-id="LuyueVerInfoLIns1a5">一键生成<b>退税核算 Excel 台账</b>（总台账 / 年度台账），并自动整理归档证明文件；花名册外与识别异常的图片保留原名、单独标注待处理。</li>
+                    </ol>
+                </section>
+                <section class="about-section" data-page-node-id="LuyueVerInfoSecIns2a">
+                    <h4 data-page-node-id="LuyueVerInfoHIns2a">📋 劳动合同图片整理系统</h4>
+                    <p style="margin:4px 0 8px;color:#666;" data-page-node-id="LuyueVerInfoPIns2a">按花名册顺序批量整理合同影像，支持 PDF 转图片、同人编号。</p>
+                    <ol data-page-node-id="LuyueVerInfoOlIns2a">
+                        <li data-page-node-id="LuyueVerInfoLIns2a1">上传人员<b>花名册</b>（Excel），系统解析人员顺序；</li>
+                        <li data-page-node-id="LuyueVerInfoLIns2a2">上传劳动合同<b>图片或 PDF</b>（上传卡片支持展开 / 折叠，便于大批量操作）；</li>
+                        <li data-page-node-id="LuyueVerInfoLIns2a3">系统按花名册顺序<b>自动重命名</b>，同一人多文件自动追加序号编号；</li>
+                        <li data-page-node-id="LuyueVerInfoLIns2a4">下载整理后的文件包，重名与未匹配文件单独标注待处理。</li>
+                    </ol>
+                </section>
+                <section class="about-section" data-page-node-id="LuyueVerInfoSecIns3a">
+                    <h4 data-page-node-id="LuyueVerInfoHIns3a">📄 批量 PDF 转 WORD 系统</h4>
+                    <p style="margin:4px 0 8px;color:#666;" data-page-node-id="LuyueVerInfoPIns3a">双向批量转换：PDF 转 Word（保留排版），或图片 / Word / Excel / TXT 转 PDF。</p>
+                    <ol data-page-node-id="LuyueVerInfoOlIns3a">
+                        <li data-page-node-id="LuyueVerInfoLIns3a1">选择转换方向后上传文件或<b>整个文件夹</b>（自动递归扫描）；</li>
+                        <li data-page-node-id="LuyueVerInfoLIns3a2">转 PDF 时可选择<b>合并模式</b>（按顺序合成单个 PDF）或<b>独立模式</b>（逐文件一一对应）；</li>
+                        <li data-page-node-id="LuyueVerInfoLIns3a3">转换自动生成<b>校验报告</b>，结果一键打包下载；单个文件失败不影响整体任务。</li>
+                    </ol>
+                </section>
+                <section class="about-section" data-page-node-id="LuyueVerInfoSecIns4a">
+                    <h4 data-page-node-id="LuyueVerInfoHIns4a">🏥 医保参保证明批量下载系统</h4>
+                    <p style="margin:4px 0 8px;color:#666;" data-page-node-id="LuyueVerInfoPIns4a">面向陕西医保网厅，逐人查询并批量下载职工参保证明。</p>
+                    <ol data-page-node-id="LuyueVerInfoOlIns4a">
+                        <li data-page-node-id="LuyueVerInfoLIns4a1">上传员工<b>花名册</b>；</li>
+                        <li data-page-node-id="LuyueVerInfoLIns4a2">系统自动打开陕西医保网厅，完成登录；</li>
+                        <li data-page-node-id="LuyueVerInfoLIns4a3">逐人查询并自动下载<b>参保证明 PDF</b>，以姓名命名、归档到日期文件夹。</li>
+                    </ol>
+                </section>
+                <section class="about-section" data-page-node-id="LuyueVerInfoSecIns5a">
+                    <h4 data-page-node-id="LuyueVerInfoHIns5a">🔌 MCP 智能服务端</h4>
+                    <p style="margin:4px 0 8px;color:#666;" data-page-node-id="LuyueVerInfoPIns5a">允许 AI 助手通过 MCP 协议直接调用平台能力（对话即操作），入口见"关于系统 → MCP模块"。</p>
+                    <ul data-page-node-id="LuyueVerInfoUlIns5a">
+                        <li data-page-node-id="LuyueVerInfoLIns5a1">提供 7 个工具：省份查询、社保核算、PDF转Word、转PDF、合同整理、任务状态、任务结果；</li>
+                        <li data-page-node-id="LuyueVerInfoLIns5a2"><b>两阶段预览确认</b>：先提交预览（秒级返回，只做份数清点与花名册概览），核对无误后再正式执行；确认时可修正省份、税种、统计年月与花名册；</li>
+                        <li data-page-node-id="LuyueVerInfoLIns5a3"><b>隐私保护</b>：结果只返回摘要与文件卡片，含身份证号的明细一律落盘为文件；独立 Token 鉴权，支持总开关。</li>
+                    </ul>
+                </section>
+                <section class="about-section" data-page-node-id="LuyueVerInfoSecTip2026a">
+                    <h4 data-page-node-id="LuyueVerInfoHTip2026a">💡 使用提示</h4>
+                    <ul data-page-node-id="LuyueVerInfoUlTip2026a">
+                        <li data-page-node-id="LuyueVerInfoLTip1a">批量核算任务执行期间请<b>保持平台开启</b>，任务不支持中途取消与断点续跑；</li>
+                        <li data-page-node-id="LuyueVerInfoLTip2a">大批量任务建议先通过 MCP 预览功能核对参数，再正式执行；</li>
+                        <li data-page-node-id="LuyueVerInfoLTip3a">"关于系统 → 版本更新"可在线检查并升级新版本，升级全程自动完成；</li>
+                        <li data-page-node-id="LuyueVerInfoLTip4a">各模块页面右上角均提供"返回首页"入口。</li>
+                    </ul>
+                </section>
+            </div>
+            <div class="modal-actions" data-page-node-id="LuyueVerInfoAct2026a">
+                <button class="btn-primary" onclick="closeVersionInfoModal()" data-page-node-id="LuyueVerInfoBtn2026a">我知道了</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast提示 -->
     <div class="toast" id="toast" data-page-node-id="Ou5yAxBQQBb5O8MNmjAh0E"></div>
 
@@ -349,6 +439,15 @@
 
     function closeAboutModal() {
         document.getElementById('aboutModal').style.display = 'none';
+    }
+
+    // ======== 版本说明（关于系统 → 版本说明） ========
+    function openVersionInfoModal() {
+        document.getElementById('versionInfoModal').style.display = 'flex';
+    }
+
+    function closeVersionInfoModal() {
+        document.getElementById('versionInfoModal').style.display = 'none';
     }
 
     // ======== 修改密码 ========
@@ -561,6 +660,12 @@
     if (aboutModalEl) {
         aboutModalEl.addEventListener('click', function(e) {
             if (e.target === this) closeAboutModal();
+        });
+    }
+    var versionInfoModalEl = document.getElementById('versionInfoModal');
+    if (versionInfoModalEl) {
+        versionInfoModalEl.addEventListener('click', function(e) {
+            if (e.target === this) closeVersionInfoModal();
         });
     }
 

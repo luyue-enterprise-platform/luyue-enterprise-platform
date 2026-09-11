@@ -113,6 +113,53 @@ class TestAboutDropdown(unittest.TestCase):
         self.assertIn('function closeAboutModal', html)
 
 
+class TestVersionInfoModal(unittest.TestCase):
+    """关于系统 → 版本说明：版本信息 + 内置完整使用说明（v2.3.7）"""
+
+    def test_version_info_dropdown_entry(self):
+        """下拉入口存在且指向版本说明弹窗"""
+        html = _render()
+        self.assertIn('id="btnVersionInfo"', html)
+        self.assertIn("dropdownAction('ddAbout', openVersionInfoModal)", html)
+
+    def test_version_info_modal_structure(self):
+        """弹窗骨架、开关函数与遮罩关闭齐全"""
+        html = _render()
+        self.assertIn('id="versionInfoModal"', html)
+        self.assertIn('function openVersionInfoModal', html)
+        self.assertIn('function closeVersionInfoModal', html)
+        self.assertIn('closeVersionInfoModal()', html)
+
+    def test_version_dynamic_not_hardcoded(self):
+        """版本说明中的当前版本必须使用 Jinja 变量，禁止硬编码"""
+        with open(TEMPLATE_PATH, encoding='utf-8') as f:
+            src = f.read()
+        m = re.search(r'当前版本：<b[^>]*>([^<]+)</b>', src)
+        self.assertIsNotNone(m, '版本说明缺少"当前版本"元素')
+        self.assertIn('{{ app_version }}', m.group(1))
+
+    def test_version_info_renders_dynamic_values(self):
+        """渲染结果包含 version.json 的动态版本与更新内容"""
+        html = _render()
+        self.assertIn('v%s' % APP_VERSION.get('version', '1.0.0'), html)
+        changelog = APP_VERSION.get('changelog') or []
+        if changelog:
+            self.assertIn(changelog[0], html)
+
+    def test_version_info_contains_full_manual(self):
+        """使用说明按模块内置：五大能力 + MCP + 使用提示"""
+        html = _render()
+        for kw in ('版本信息', '社保批量统计智能核算系统', '劳动合同图片整理系统',
+                   '批量 PDF 转 WORD 系统', '医保参保证明批量下载系统',
+                   'MCP 智能服务端', '使用提示'):
+            self.assertIn(kw, html)
+
+    def test_usage_tips_cover_long_task_warning(self):
+        """长任务不可取消的提示必须保留"""
+        html = _render()
+        self.assertIn('保持平台开启', html)
+
+
 class TestLayoutAndInteraction(unittest.TestCase):
     """四、布局与交互脚本"""
 
