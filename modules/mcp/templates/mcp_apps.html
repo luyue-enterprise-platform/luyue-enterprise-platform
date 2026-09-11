@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>应用授权管理 - 鲁岳企业服务综合智能平台</title>
+    <link rel="stylesheet" href="{{ url_for('mcp.static', filename='css/style.css') }}">
+    <style>
+        .grant-row { display: flex; align-items: flex-start; gap: 12px; padding: 14px 0; border-bottom: 1px solid #eef2f7; }
+        .grant-row:last-child { border-bottom: none; }
+        .grant-icon { font-size: 26px; width: 40px; text-align: center; }
+        .grant-body { flex: 1; }
+        .grant-name { font-weight: 600; color: #24374d; font-size: 14.5px; }
+        .grant-meta { font-size: 12px; color: #8b9aab; margin-top: 3px; }
+        .scope-chip { display: inline-block; background: #eef2fa; color: #3d5273; border-radius: 4px; padding: 1px 7px; font-size: 11px; margin: 4px 4px 0 0; }
+        .scope-chip.sensitive { background: #fbe9da; color: #b0541f; }
+        .revoked { color: #b0541f; font-weight: 600; }
+        .btn-mini { border: none; border-radius: 8px; padding: 7px 14px; font-size: 12.5px; cursor: pointer; }
+        .btn-revoke { background: #fdeeee; color: #c0392b; }
+        .admin-form input[type=text], .admin-form select { width: 100%; padding: 8px 10px; border: 1px solid #d7e0ec; border-radius: 8px; font-size: 13px; margin-bottom: 8px; }
+        .secret-box { background: #f2f6fc; border: 1px dashed #b9cbe4; border-radius: 8px; padding: 10px; font-family: Consolas, monospace; font-size: 12.5px; word-break: break-all; margin: 8px 0; }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <span class="brand-icon">🔐</span>
+            <span class="brand-text">应用授权管理</span>
+        </div>
+        <div class="nav-actions">
+            <a class="btn-nav" href="/mcp/" title="MCP 服务端">🔌 MCP 服务端</a>
+            <a class="btn-nav" href="/" title="返回首页">🏠 返回首页</a>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <!-- 系统默认应用（兼容模式） -->
+        <section class="card">
+            <div class="card-header">
+                <span class="icon">⚙️</span>
+                <h2>系统默认应用（兼容模式）</h2>
+                <span class="badge {% if static_enabled %}on{% else %}off{% endif %}">{% if static_enabled %}使用中{% else %}已停用{% endif %}</span>
+            </div>
+            <p class="hint">
+                静态令牌通道：全权限，供 WorkBuddy 连接器等只支持静态令牌的客户端使用。
+                重新生成后旧令牌立即失效。
+            </p>
+            <div class="field">
+                <label>Bearer Token</label>
+                <div class="mono" id="staticToken" data-token="{{ static_token }}">••••••••••••••••••••••••••••••••</div>
+                <button class="btn secondary" onclick="toggleStatic()">显示</button>
+                <button class="btn secondary" onclick="copyStatic()">复制</button>
+            </div>
+        </section>
+
+        <!-- 已授权应用 -->
+        <section class="card">
+            <div class="card-header"><span class="icon">🔗</span><h2>已授权的第三方应用</h2></div>
+            {% if not grants %}
+                <p class="hint">暂无第三方应用授权记录。</p>
+            {% endif %}
+            {% for g in grants %}
+            <div class="grant-row">
+                <div class="grant-icon">{{ g.app_icon }}</div>
+                <div class="grant-body">
+                    <div class="grant-name">{{ g.app_name }}
+                        {% if g.revoked %}<span class="revoked">（已撤销）</span>{% endif %}
+                    </div>
+                    <div class="grant-meta">
+                        授权人：{{ g.username }} · 授权时间：{{ g.created_at or '-' }}
+                        {% if g.last_used_at %} · 最近调用：{{ g.last_used_at }}{% endif %}
+                    </div>
+                    <div>
+                        {% for s in g.scopes %}
+                        <span class="scope-chip {% if scopes.get(s, {}).get('sensitive') %}sensitive{% endif %}">{{ s }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% if not g.revoked %}
+                <button class="btn-mini btn-revoke" onclick="revokeGrant('{{ g.id }}', '{{ g.app_name }}')">撤销授权</button>
+                {% endif %}
+            </div>
+            {% endfor %}
+            <p class="hint">撤销后该应用的全部令牌立即失效，不影响其他应用与静态令牌通道。</p>
+        </section>
+
+        {% if is_admin %}
+        <!-- 管理员：应用登记 -->
+        <section class="card">
+            <div class="card-header"><span class="icon">📝</span><h2>登记第三方应用（管理员）</h2></div>
+            <div class="admin-form">
+                <input type="text" id="appName" placeholder="应用名称（展示于授权确认页）">
+                <input type="text" id="appIcon" placeholder="应用图标（emoji，默认 🔌）">
+                <input type="text" id="appRedirect" placeholder="回调地址白名单（逗号分隔；桌面/CLI 应用可留空走粘贴模式）">
+                <div style="margin: 10px 0 6px; font-size: 13px; color: #41526a;">可申请的权限范围：</div>
+                {% for s, meta in scopes.items() %}
+                    {% if s in ['provinces:read', 'tasks:submit', 'tasks:read', 'results:read'] %}
+                    <label style="display:block; font-size: 13px; color: #41526a; margin: 4px 0;">
+                        <input type="checkbox" value="{{ s }}" class="scope-check">
+                        {{ meta.title }}（<code>{{ s }}</code>）{% if meta.sensitive %}<span style="color:#b0541f;">· 高敏感</span>{% endif %}
+                    </label>
+                    {% endif %}
+                {% endfor %}
+                <label style="display:block; font-size: 13px; color: #8b9aab; margin: 6px 0;">
+                    <input type="checkbox" disabled>
+                    {{ scopes['roster:read'].title }}（<code>roster:read</code>）· 永不开放
+                </label>
+                <button class="btn" onclick="registerApp()">登记应用</button>
+            </div>
+            <div id="secretResult"></div>
+            {% if apps %}
+            <div style="margin-top: 14px;">
+                <div style="font-size:13px;color:#41526a;margin-bottom:6px;">已登记应用：</div>
+                {% for a in apps %}
+                <div class="grant-row">
+                    <div class="grant-icon">{{ a.icon }}</div>
+                    <div class="grant-body">
+                        <div class="grant-name">{{ a.name }}</div>
+                        <div class="grant-meta">client_id：{{ a.client_id }} ·
+                            {% if a.paste_mode %}粘贴模式{% else %}回调模式{% endif %}</div>
+                    </div>
+                    <button class="btn-mini btn-revoke" onclick="deleteApp('{{ a.client_id }}', '{{ a.name }}')">删除</button>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </section>
+        {% endif %}
+    </main>
+
+    <script>
+        function toggleStatic() {
+            var el = document.getElementById('staticToken');
+            var token = el.getAttribute('data-token');
+            if (el.innerText.indexOf('•') === 0) { el.innerText = token; } else { el.innerText = '•••••••••••••••••••••••••••••••'; }
+        }
+        function copyStatic() {
+            var token = document.getElementById('staticToken').getAttribute('data-token');
+            navigator.clipboard.writeText(token).then(function () { alert('已复制'); });
+        }
+        function revokeGrant(grantId, appName) {
+            if (!confirm('确认撤销「' + appName + '」的授权？撤销后其全部令牌立即失效。')) return;
+            fetch('/mcp/api/grants/revoke', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ grant_id: grantId })
+            }).then(function (r) { return r.json(); }).then(function (d) {
+                if (d.ok) { location.reload(); } else { alert(d.error || '撤销失败'); }
+            });
+        }
+        function registerApp() {
+            var name = document.getElementById('appName').value.trim();
+            if (!name) { alert('请填写应用名称'); return; }
+            var redirect = document.getElementById('appRedirect').value.trim();
+            var scopes = [];
+            document.querySelectorAll('.scope-check:checked').forEach(function (c) { scopes.push(c.value); });
+            if (!scopes.length) { alert('请至少勾选一个权限范围'); return; }
+            fetch('/mcp/api/apps/register', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    name: name,
+                    icon: document.getElementById('appIcon').value.trim() || '🔌',
+                    redirect_uris: redirect ? redirect.split(',').map(function (s) { return s.trim(); }).filter(Boolean) : [],
+                    scopes: scopes,
+                    paste_mode: !redirect
+                })
+            }).then(function (r) { return r.json(); }).then(function (d) {
+                if (d.error) { alert(d.error); return; }
+                document.getElementById('secretResult').innerHTML =
+                    '<div class="secret-box">client_id：<b>' + d.client_id + '</b><br>' +
+                    'client_secret（仅本次展示，请立即保存）：<b>' + d.client_secret + '</b></div>';
+            });
+        }
+        function deleteApp(clientId, name) {
+            if (!confirm('确认删除应用「' + name + '」？其全部授权与令牌即刻作废。')) return;
+            fetch('/mcp/api/apps/delete', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ client_id: clientId })
+            }).then(function (r) { return r.json(); }).then(function (d) {
+                if (d.ok) { location.reload(); } else { alert(d.error || '删除失败'); }
+            });
+        }
+    </script>
+</body>
+</html>

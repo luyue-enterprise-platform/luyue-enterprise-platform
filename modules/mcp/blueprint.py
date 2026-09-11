@@ -15,6 +15,17 @@ MCP 端点走 Bearer Token——AI 客户端无法完成浏览器登录，令牌
 落盘 <数据目录>/logs/mcp_access.log（滚动 5MB×3）并随根日志输出到控制台；
 用于区分「平台任务慢」与「AI 轮询回合慢」——access 日志里同 task 的调用间隔
 即 AI 侧节奏，elapsed_ms 即平台侧单次处理耗时。
+
+第三方应用授权直连（v2.5.0）：
+- GET  /mcp/oauth/authorize   授权确认页（登录态；校验 client/回调/scope/PKCE）
+- POST /mcp/oauth/authorize   同意/拒绝 → 签发授权码（回调 302 或粘贴模式展示）
+- POST /mcp/oauth/token       授权码换令牌 / 刷新令牌轮换（OAuth 2.0 + PKCE S256）
+- GET  /mcp/apps              应用授权管理页（登录态；授权列表+撤销+管理员登记）
+- POST /mcp/api/apps/register / delete        管理员登记/删除第三方应用
+- POST /mcp/api/grants/revoke 撤销授权（用户撤自己的，管理员可撤任意）
+
+双通道：静态令牌 =「系统默认应用（兼容模式）」全 scope（WorkBuddy 连接器等）；
+OAuth 令牌按授权 scope 受限。rpc() 先静态后 OAuth，scope 逐次拦截。
 """
 import json
 import logging
@@ -22,13 +33,14 @@ import os
 import time
 
 from flask import (
-    Blueprint, Response, jsonify, render_template, request, url_for
+    Blueprint, Response, jsonify, redirect, render_template, request, session,
+    url_for
 )
 
-from core.auth import login_required
+from core.auth import admin_required, login_required
 
 from . import __version__ as MCP_VERSION
-from .core import protocol, security, tools as tool_registry
+from .core import oauth, protocol, security, tools as tool_registry
 
 access_logger = logging.getLogger('mcp.access')
 
@@ -118,14 +130,48 @@ def index():
 
 @mcp_bp.route('/rpc', methods=['POST'])
 def rpc():
-    """MCP Streamable HTTP 端点：单端点 JSON-RPC 2.0"""
+    """MCP Streamable HTTP 端点：单端点 JSON-RPC 2.0
+
+    双通道鉴权（v2.5.0）：静态令牌（系统默认应用·兼容模式，全 scope）优先；
+    未命中再验 OAuth 访问令牌（按授权 scope 逐次拦截 tools/call）。
+    """
     if not security.is_enabled():
         return jsonify({'error': 'MCP 服务已停用，请在门户页启用'}), 403
 
     header = request.headers.get('Authorization', '') or ''
     token = header[7:].strip() if header.lower().startswith('bearer ') else ''
+    oauth_auth = None
     if not security.verify(token):
-        return jsonify({'error': '未授权：需要有效的 Bearer Token'}), 401
+        oauth_auth = oauth.authenticate(token)
+        if oauth_auth is None:
+            return jsonify({'error': '未授权：需要有效的 Bearer Token'}), 401
+
+    # scope 拦截（仅 OAuth 通道；静态令牌为系统默认应用，不受限）
+    if oauth_auth is not None:
+        try:
+            req = json.loads(request.get_data(as_text=True) or '{}')
+        except Exception:
+            req = {}
+        if isinstance(req, dict) and req.get('method') == 'tools/call':
+            tool_name = (req.get('params') or {}).get('name')
+            if oauth.required_scope(tool_name) is None:
+                oauth.audit('scope_denied', client_id=oauth_auth['client_id'],
+                            tool=tool_name, reason='not_open_to_oauth')
+                return jsonify({
+                    'error': '该工具不开放给第三方应用授权通道',
+                    'required_scope': None,
+                }), 403
+            if oauth.check_scope(oauth_auth, tool_name) is None:
+                oauth.audit('scope_denied', client_id=oauth_auth['client_id'],
+                            tool=tool_name,
+                            required=oauth.required_scope(tool_name))
+                return jsonify({
+                    'error': 'insufficient_scope',
+                    'error_description': '授权范围不足，请在应用授权管理中扩权后重新授权',
+                    'required_scope': oauth.required_scope(tool_name),
+                }), 403
+        oauth.audit('call', client_id=oauth_auth['client_id'],
+                    user=oauth_auth.get('username'))
 
     raw = request.get_data(as_text=True) or '{}'
     started = time.monotonic()
@@ -180,3 +226,151 @@ def api_toggle():
 def api_health():
     """免登录健康检查（仅返回是否启用，不泄露令牌）"""
     return jsonify({'ok': True, 'enabled': security.is_enabled()})
+
+
+# ---------------------------------------------------------------------------
+# 第三方应用授权直连（v2.5.0）— OAuth 2.0 授权码 + PKCE(S256)
+# ---------------------------------------------------------------------------
+
+def _authorize_params():
+    """从 query/form 提取授权请求参数"""
+    src = request.values
+    return {
+        'client_id': (src.get('client_id') or '').strip(),
+        'redirect_uri': (src.get('redirect_uri') or '').strip(),
+        'scope': (src.get('scope') or '').strip(),
+        'state': src.get('state') or '',
+        'code_challenge': (src.get('code_challenge') or '').strip(),
+        'code_challenge_method': (src.get('code_challenge_method') or 'S256').strip(),
+    }
+
+
+@mcp_bp.route('/oauth/authorize', methods=['GET', 'POST'])
+@login_required
+def oauth_authorize():
+    """授权确认页：GET 展示（预检不通过拒绝展示），POST 处理同意/拒绝"""
+    params = _authorize_params()
+    app, scopes, error = oauth.validate_authorize_request(
+        params['client_id'], params['redirect_uri'], params['scope'],
+        params['code_challenge'], params['code_challenge_method'])
+    if error:
+        # 不泄露内部细节、不提供重试按钮（防探测）
+        oauth.audit('authorize_rejected', client_id=params['client_id'],
+                    reason=error[0])
+        return render_template('oauth_result.html', kind='invalid',
+                               message='授权请求无效：' + error[1]), 400
+
+    if request.method == 'GET':
+        scope_cards = [dict(oauth.SCOPES[s], scope=s) for s in scopes]
+        return render_template('oauth_authorize.html', app=app,
+                               scopes=scope_cards, params=params)
+
+    # POST：用户决定
+    username = session.get('username') or ''
+    decision = (request.form.get('decision') or '').strip().lower()
+    if decision != 'allow':
+        oauth.record_denial(params['client_id'], username)
+        if params['redirect_uri']:
+            return redirect(_deny_redirect(params['redirect_uri'], params['state']))
+        return render_template('oauth_result.html', kind='denied')
+
+    code = oauth.create_authorization_code(
+        params['client_id'], username, scopes, params['code_challenge'])
+    if params['redirect_uri']:
+        # 回调模式：302 跳回应用（code + state）
+        sep = '&' if '?' in params['redirect_uri'] else '?'
+        url = '%s%scode=%s&state=%s' % (params['redirect_uri'], sep,
+                                         code, params['state'])
+        return redirect(url)
+    # 粘贴模式：页面展示授权码（一键复制 + 倒计时）
+    return render_template('oauth_result.html', kind='code', code=code,
+                           ttl_minutes=oauth.CODE_TTL_SECONDS // 60)
+
+
+def _deny_redirect(redirect_uri, state):
+    sep = '&' if '?' in redirect_uri else '?'
+    from urllib.parse import quote
+    return '%s%serror=access_denied&state=%s' % (redirect_uri, sep, quote(state or ''))
+
+
+@mcp_bp.route('/oauth/token', methods=['POST'])
+def oauth_token():
+    """令牌端点（无登录态）：授权码换令牌 / 刷新令牌轮换；标准 OAuth 错误契约"""
+    grant_type = (request.form.get('grant_type') or '').strip()
+    client_id = (request.form.get('client_id') or '').strip()
+    client_secret = request.form.get('client_secret') or ''
+    if grant_type == 'authorization_code':
+        result = oauth.exchange_code(
+            request.form.get('code') or '', client_id, client_secret,
+            request.form.get('code_verifier') or '')
+    elif grant_type == 'refresh_token':
+        result = oauth.refresh_access_token(
+            request.form.get('refresh_token') or '', client_id, client_secret)
+    else:
+        result = {'error': 'unsupported_grant_type',
+                  'error_description': '仅支持 authorization_code / refresh_token'}
+    if 'error' in result:
+        status = 401 if result['error'] == 'invalid_client' else 400
+        return jsonify(result), status
+    return jsonify(result)
+
+
+@mcp_bp.route('/apps')
+@login_required
+def apps_page():
+    """应用授权管理页：静态令牌单列为系统默认应用（兼容模式）"""
+    username = session.get('username') or ''
+    is_admin = bool(session.get('is_admin'))
+    grants = oauth.list_grants(username=None if is_admin else username)
+    return render_template(
+        'mcp_apps.html', grants=grants,
+        static_token=security.get_token(),
+        static_enabled=security.is_enabled(),
+        apps=oauth.list_apps() if is_admin else [],
+        scopes=oauth.SCOPES, is_admin=is_admin)
+
+
+@mcp_bp.route('/api/apps/register', methods=['POST'])
+@admin_required
+def api_apps_register():
+    """管理员登记第三方应用；client_secret 明文仅本次返回"""
+    data = request.get_json(silent=True) or request.form or {}
+    try:
+        meta, secret = oauth.register_app(
+            name=data.get('name'),
+            redirect_uris=[u.strip() for u in (data.get('redirect_uris') or [])
+                           if str(u).strip()],
+            scopes=data.get('scopes') or [],
+            paste_mode=str(data.get('paste_mode', 'true')).lower()
+            in ('1', 'true', 'yes', 'on'),
+            icon=data.get('icon') or '🔌')
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    meta['client_secret'] = secret
+    return jsonify(meta)
+
+
+@mcp_bp.route('/api/apps/delete', methods=['POST'])
+@admin_required
+def api_apps_delete():
+    data = request.get_json(silent=True) or request.form or {}
+    client_id = (data.get('client_id') or '').strip()
+    if not client_id:
+        return jsonify({'error': '缺少 client_id'}), 400
+    oauth.delete_app(client_id)
+    return jsonify({'ok': True})
+
+
+@mcp_bp.route('/api/grants/revoke', methods=['POST'])
+@login_required
+def api_grants_revoke():
+    """撤销授权：用户撤自己的；管理员可撤任意（令牌即刻失效）"""
+    data = request.get_json(silent=True) or request.form or {}
+    grant_id = (data.get('grant_id') or '').strip()
+    if not grant_id:
+        return jsonify({'error': '缺少 grant_id'}), 400
+    username = session.get('username') or ''
+    as_admin = bool(session.get('is_admin'))
+    if not oauth.revoke_grant(grant_id, username=username, as_admin=as_admin):
+        return jsonify({'error': '授权不存在或无权撤销'}), 404
+    return jsonify({'ok': True})

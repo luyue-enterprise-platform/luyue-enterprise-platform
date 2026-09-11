@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>授权确认 - 鲁岳企业服务综合智能平台</title>
+    <link rel="stylesheet" href="{{ url_for('mcp.static', filename='css/style.css') }}">
+    <style>
+        body { background: linear-gradient(160deg, #f4f7fb 0%, #e9eff7 100%); }
+        .consent-wrap { max-width: 560px; margin: 48px auto; padding: 0 16px; }
+        .consent-card {
+            background: #fff; border-radius: 14px; box-shadow: 0 8px 28px rgba(15,42,80,.12);
+            padding: 28px 26px;
+        }
+        .icons-row { display: flex; align-items: center; justify-content: center; gap: 18px; margin-bottom: 8px; }
+        .app-icon, .plat-icon {
+            width: 56px; height: 56px; border-radius: 14px; display: flex; align-items: center;
+            justify-content: center; font-size: 30px;
+        }
+        .app-icon { background: #eef2fa; }
+        .plat-icon { background: #e8f3ee; }
+        .link-line { color: #8aa0bd; font-size: 22px; }
+        .consent-title { text-align: center; font-size: 19px; font-weight: 600; color: #1c2b3a; margin: 10px 0 6px; }
+        .consent-sub { text-align: center; font-size: 12.5px; color: #6b7c90; margin-bottom: 18px; line-height: 1.6; }
+        .scope-card {
+            border: 1px solid #e3e9f2; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
+            background: #fafcff;
+        }
+        .scope-card.sensitive { background: #fdf6f2; border-color: #f0dccc; }
+        .scope-name { font-weight: 600; font-size: 14px; color: #24374d; }
+        .scope-tag { font-size: 11px; color: #b0541f; background: #fbe9da; border-radius: 4px; padding: 1px 6px; margin-left: 8px; }
+        .scope-usage { font-size: 12.5px; color: #55677c; margin-top: 4px; }
+        .scope-range { font-size: 12px; color: #8b9aab; margin-top: 2px; }
+        .btn-row { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+        .btn-allow, .btn-deny {
+            border: none; border-radius: 10px; padding: 13px 0; font-size: 15px; cursor: pointer; width: 100%;
+        }
+        .btn-allow { background: #2f6fed; color: #fff; font-weight: 600; }
+        .btn-allow:hover { background: #2560d8; }
+        .btn-deny { background: #eef1f6; color: #41526a; }
+        .btn-deny:hover { background: #e3e8f0; }
+        .consent-foot { text-align: center; font-size: 11.5px; color: #9aa8b8; margin-top: 16px; }
+    </style>
+</head>
+<body>
+    <div class="consent-wrap">
+        <div class="consent-card">
+            <div class="icons-row">
+                <div class="app-icon">{{ app.icon or '🔌' }}</div>
+                <div class="link-line">⇄</div>
+                <div class="plat-icon">🏢</div>
+            </div>
+            <div class="consent-title">授权「{{ app.name }}」应用</div>
+            <div class="consent-sub">
+                授权后，该应用将能使用以下权限。<br>
+                您可随时在「系统设置 → 应用授权管理」中撤销授权。
+            </div>
+
+            {% for s in scopes %}
+            <div class="scope-card {% if s.sensitive %}sensitive{% endif %}">
+                <div><span class="scope-name">{{ s.title }}</span>
+                    {% if s.sensitive %}<span class="scope-tag">涉及结果数据</span>{% endif %}
+                </div>
+                <div class="scope-usage">{{ s.usage }}</div>
+                <div class="scope-range">数据访问范围：{{ s.data_range }}</div>
+            </div>
+            {% endfor %}
+
+            <form method="post" class="btn-row">
+                <input type="hidden" name="client_id" value="{{ params.client_id }}">
+                <input type="hidden" name="redirect_uri" value="{{ params.redirect_uri }}">
+                <input type="hidden" name="scope" value="{{ params.scope }}">
+                <input type="hidden" name="state" value="{{ params.state }}">
+                <input type="hidden" name="code_challenge" value="{{ params.code_challenge }}">
+                <input type="hidden" name="code_challenge_method" value="{{ params.code_challenge_method }}">
+                <button type="submit" name="decision" value="allow" class="btn-allow">同 意 授 权</button>
+                <button type="submit" name="decision" value="deny" class="btn-deny">拒 绝</button>
+            </form>
+
+            <div class="consent-foot">鲁岳企业服务 · 隐私与数据说明：授权遵循最小必要原则，可随时撤销</div>
+        </div>
+    </div>
+</body>
+</html>
