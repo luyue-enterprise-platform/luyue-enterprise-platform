@@ -35,7 +35,11 @@ def set_intra_op_threads(n):
 
 
 def get_engine():
-    """懒加载OCR引擎（线程本地单例，避免重复加载模型）"""
+    """懒加载OCR引擎（线程本地单例，避免重复加载模型）
+
+    v2.4.0 模型热更新：外置模型（manifest 校验通过）优先于内置基线；
+    温更新约定——模型替换后须重启平台，才会走到这里加载新模型。
+    """
     engine = getattr(_engines, 'engine', None)
     if engine is None:
         from rapidocr_onnxruntime import RapidOCR
@@ -47,6 +51,14 @@ def get_engine():
                 'cls_intra_op_num_threads': _intra_op_threads,
                 'rec_intra_op_num_threads': _intra_op_threads,
             }
+        # v2.4.0 模型热更新：外置模型目录（manifest 校验通过）优先于内置基线；
+        # 校验失败/无外置模型 → 返回空 dict，引擎走 rapidocr 默认解析（内置基线）。
+        # 温更新约定：模型替换后须重启平台才会走到这里加载新模型。
+        try:
+            from core.model_store import engine_model_kwargs
+            kwargs.update(engine_model_kwargs())
+        except Exception:
+            pass  # 模型仓库异常不阻断 OCR：回退内置基线
         engine = RapidOCR(**kwargs)
         _engines.engine = engine
     return engine

@@ -49,6 +49,9 @@
                             onclick="dropdownAction('ddAbout', openVersionInfoModal)" data-page-node-id="LuyueVerInfoEntry2026a">📋 版本说明</button>
                     <button type="button" class="dropdown-item" role="menuitem" id="btnCheckUpdate"
                             onclick="dropdownAction('ddAbout', function(){ checkAppUpdate(true); })" data-page-node-id="RP3aRbfN0hPhacjCkhEssl">🔄 版本更新</button>
+                    <!-- OCR 模型热更新入口（v2.4.0）：模型与代码解耦，模型走独立更新通道 -->
+                    <button type="button" class="dropdown-item" role="menuitem" id="btnModelUpdate"
+                            onclick="dropdownAction('ddAbout', openModelUpdateModal)" data-page-node-id="LuyueModelUpdateEntry2026a">🧠 模型更新</button>
                     <!-- MCP模块入口（v2.3.1 从模块宫格迁入）：路由/权限不变，仅入口位置调整 -->
                     <a href="/mcp/" class="dropdown-item" role="menuitem" data-page-node-id="McpMenuLuyue2026Node01">🔌 MCP模块</a>
                 </div>
@@ -392,6 +395,43 @@
         </div>
     </div>
 
+    <!-- OCR 模型更新弹窗（v2.4.0 模型热更新）：当前模型 / 检查更新 / 下载进度 / 回滚 -->
+    <div class="modal-overlay" id="modelUpdateModal" style="display:none;" data-page-node-id="LuyueModelUpdateModal2026a">
+        <div class="modal-box modal-wide" data-page-node-id="LuyueModelUpdateBox2026a">
+            <h3 data-page-node-id="LuyueModelUpdateTitle2026a">OCR 模型更新</h3>
+            <div class="modal-body" data-page-node-id="LuyueModelUpdateBody2026a">
+                <p style="margin-bottom:10px;" data-page-node-id="LuyueModelCurWrap2026a">
+                    当前模型版本：<strong id="modelCurVer" data-page-node-id="LuyueModelCurVer2026a"></strong>
+                    <span id="modelCurSource" style="color:#999;font-size:12px;" data-page-node-id="LuyueModelCurSrc2026a"></span>
+                    <span id="modelCurVerified" style="font-size:12px;" data-page-node-id="LuyueModelCurVfy2026a"></span>
+                </p>
+                <div id="modelCurIssues" style="display:none;background:#FFF3E0;padding:10px 14px;border-radius:8px;border:1px solid #FFCC80;font-size:12px;color:#B26A00;margin-bottom:10px;" data-page-node-id="LuyueModelCurIss2026a"></div>
+                <div id="modelRemoteInfo" style="display:none;background:#F8FAFC;padding:14px;border-radius:8px;border:1px solid #E8ECF0;max-height:140px;overflow-y:auto;" data-page-node-id="LuyueModelRemote2026a">
+                    <strong style="display:block;margin-bottom:6px;color:#555;" data-page-node-id="LuyueModelRemoteLbl2026a">远端模型：</strong>
+                    <div id="modelRemoteDetail" style="font-size:13px;color:#666;line-height:1.7;white-space:pre-wrap;" data-page-node-id="LuyueModelRemoteDtl2026a"></div>
+                </div>
+                <div id="modelProgressWrap" style="display:none;margin-top:12px;" data-page-node-id="LuyueModelProgWrap2026a">
+                    <div style="background:#E8ECF0;border-radius:6px;height:14px;overflow:hidden;" data-page-node-id="LuyueModelProgBarBg2026a">
+                        <div id="modelProgressBar" style="height:100%;width:0%;background:#2E5C8A;transition:width .3s;" data-page-node-id="LuyueModelProgBar2026a"></div>
+                    </div>
+                    <p id="modelProgressText" style="margin-top:8px;font-size:13px;color:#555;" data-page-node-id="LuyueModelProgTxt2026a">准备下载...</p>
+                </div>
+                <p id="modelRestartHint" style="display:none;margin-top:12px;padding:10px 14px;background:#E8F5E9;border:1px solid #A5D6A7;border-radius:8px;font-size:13px;color:#1B5E20;" data-page-node-id="LuyueModelRestart2026a">
+                    模型已就绪：请关闭并重新打开平台，新模型将在重启后加载生效（温更新，不重装软件）。
+                </p>
+                <p style="margin-top:10px;font-size:12px;color:#999;" data-page-node-id="LuyueModelHint2026a">
+                    模型与软件版本相互独立：更新模型无需重装软件，更新完重启平台即可生效；校验或下载失败会自动回退当前可用版本，不影响正常使用。
+                </p>
+            </div>
+            <div class="modal-actions" data-page-node-id="LuyueModelActions2026a">
+                <button class="btn-ghost" id="btnModelRollback" style="display:none;" data-page-node-id="LuyueModelRollBtn2026a">回滚上一版模型</button>
+                <button class="btn-ghost" onclick="closeModelUpdateModal()" data-page-node-id="LuyueModelCloseBtn2026a">关闭</button>
+                <button class="btn-primary" id="btnModelCheck" data-page-node-id="LuyueModelCheckBtn2026a">检查模型更新</button>
+                <button class="btn-primary" id="btnModelStart" style="display:none;" data-page-node-id="LuyueModelStartBtn2026a">下载并应用新模型</button>
+            </div>
+        </div>
+    </div>
+
     <script>
     // ======== 标题栏下拉菜单（账号管理 / 关于系统） ========
     function toggleDropdown(id, e) {
@@ -449,6 +489,186 @@
     function closeVersionInfoModal() {
         document.getElementById('versionInfoModal').style.display = 'none';
     }
+
+    // ======== OCR 模型热更新（v2.4.0）：模型与代码解耦，独立更新通道 ========
+    var _modelPollTimer = null;
+    var _modelUpdateAvailable = false;
+    var _modelRestartHandled = false;  // 防重入：restart_required 只刷新一次状态，避免 loadModelStatus ↔ applyModelUpdateState 互调成环
+
+    function openModelUpdateModal() {
+        document.getElementById('modelUpdateModal').style.display = 'flex';
+        _modelRestartHandled = false;
+        loadModelStatus();
+    }
+
+    function closeModelUpdateModal() {
+        document.getElementById('modelUpdateModal').style.display = 'none';
+        stopModelPoll();
+    }
+
+    function stopModelPoll() {
+        if (_modelPollTimer) { clearInterval(_modelPollTimer); _modelPollTimer = null; }
+    }
+
+    function setModelProgress(percent, text) {
+        document.getElementById('modelProgressWrap').style.display = 'block';
+        document.getElementById('modelProgressBar').style.width = percent + '%';
+        document.getElementById('modelProgressText').textContent = text;
+    }
+
+    // 当前模型状态：版本 / 来源（内置基线 or 外置热更新）/ 校验结果
+    function loadModelStatus() {
+        fetch('/api/model/status')
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (!data.ok || !data.model) { showToast('模型状态读取失败'); return; }
+                var m = data.model;
+                document.getElementById('modelCurVer').textContent = m.model_version || '出厂内置';
+                document.getElementById('modelCurSource').textContent = '（来源：' + (m.source || '未知') + '）';
+                var vfy = document.getElementById('modelCurVerified');
+                if (m.verified) {
+                    vfy.innerHTML = ' <span style="color:#27AE60;">✓ 校验通过</span>';
+                } else {
+                    vfy.innerHTML = ' <span style="color:#E74C3C;">✗ 校验失败（已自动回退内置基线）</span>';
+                }
+                var issEl = document.getElementById('modelCurIssues');
+                if (m.issues && m.issues.length) {
+                    issEl.style.display = 'block';
+                    issEl.textContent = '校验问题：' + m.issues.join('；');
+                } else {
+                    issEl.style.display = 'none';
+                }
+                // 回滚按钮：仅外置模型（有 backup 的前提是至少热更新过一次）
+                document.getElementById('btnModelRollback').style.display =
+                    (m.source === '外置模型') ? '' : 'none';
+                // 若已有进行中/已完成的更新任务，接入进度显示
+                applyModelUpdateState(data.update || {});
+            })
+            .catch(function(err) { showToast('模型状态读取失败: ' + err.message); });
+    }
+
+    function checkModelUpdate() {
+        var btn = document.getElementById('btnModelCheck');
+        btn.disabled = true; btn.textContent = '检查中...';
+        fetch('/api/model/check', { method: 'POST' })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                btn.disabled = false; btn.textContent = '检查模型更新';
+                var info = document.getElementById('modelRemoteInfo');
+                var detail = document.getElementById('modelRemoteDetail');
+                var startBtn = document.getElementById('btnModelStart');
+                if (!data.ok) {
+                    info.style.display = 'block';
+                    detail.textContent = data.error || '检查失败，请稍后重试';
+                    startBtn.style.display = 'none';
+                    return;
+                }
+                info.style.display = 'block';
+                if (data.update_available) {
+                    _modelUpdateAvailable = true;
+                    detail.textContent = '发现新模型 v' + (data.remote_version || '?') +
+                        '（当前 ' + (data.local_version || '出厂内置') + '）' +
+                        (data.notes ? '\n更新说明：' + data.notes : '');
+                    startBtn.style.display = '';
+                    startBtn.disabled = false;
+                    startBtn.textContent = '下载并应用新模型';
+                } else {
+                    _modelUpdateAvailable = false;
+                    detail.textContent = data.error || ('已是最新模型版本（v' + (data.remote_version || '?') + '）');
+                    startBtn.style.display = 'none';
+                }
+            })
+            .catch(function(err) {
+                btn.disabled = false; btn.textContent = '检查模型更新';
+                showToast('检查模型更新失败: ' + err.message);
+            });
+    }
+
+    function startModelUpdate() {
+        var btn = document.getElementById('btnModelStart');
+        btn.disabled = true; btn.textContent = '更新中...';
+        _modelRestartHandled = false;
+        fetch('/api/model/start_update', { method: 'POST' })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (!data.ok) {
+                    btn.disabled = false; btn.textContent = '重试更新';
+                    showToast(data.error || '启动模型更新失败');
+                    return;
+                }
+                pollModelProgress();
+            })
+            .catch(function(err) {
+                btn.disabled = false; btn.textContent = '重试更新';
+                showToast('网络异常: ' + err.message);
+            });
+    }
+
+    function pollModelProgress() {
+        stopModelPoll();
+        _modelPollTimer = setInterval(function() {
+            fetch('/api/model/update_progress').then(function(res) { return res.json(); })
+                .then(function(st) { applyModelUpdateState(st); })
+                .catch(function() {});
+        }, 1000);
+    }
+
+    // 按后端状态机渲染进度区（checking/downloading/verifying/applying/restart_required/error）
+    function applyModelUpdateState(st) {
+        if (!st || !st.status) return;
+        var restartHint = document.getElementById('modelRestartHint');
+        var startBtn = document.getElementById('btnModelStart');
+        if (st.status === 'downloading') {
+            restartHint.style.display = 'none';
+            var mb = (st.downloaded / 1048576).toFixed(1);
+            var totalMb = st.total ? (st.total / 1048576).toFixed(1) : '?';
+            setModelProgress(st.percent || 0,
+                '正在下载模型包 ' + mb + 'MB / ' + totalMb + 'MB（' + (st.percent || 0) + '%）...');
+            pollModelProgress();
+        } else if (st.status === 'verifying') {
+            setModelProgress(100, '下载完成，正在校验模型完整性（SHA256）...');
+        } else if (st.status === 'applying') {
+            setModelProgress(100, '校验通过，正在应用新模型...');
+        } else if (st.status === 'restart_required') {
+            stopModelPoll();
+            setModelProgress(100, '新模型已就绪。');
+            restartHint.style.display = 'block';
+            startBtn.style.display = 'none';
+            if (!_modelRestartHandled) {
+                _modelRestartHandled = true;
+                loadModelStatus();  // 刷新当前版本为刚应用的新版（仅一次，防互调成环）
+            }
+        } else if (st.status === 'error') {
+            stopModelPoll();
+            setModelProgress(0, '更新失败：' + (st.last_error || '未知原因') + '。当前可用模型不受影响。');
+            startBtn.style.display = '';
+            startBtn.disabled = false;
+            startBtn.textContent = '重试更新';
+        }
+    }
+
+    function rollbackModel() {
+        if (!window.confirm('确定回滚到上一版模型吗？回滚后需重启平台才生效。')) return;
+        fetch('/api/model/rollback', { method: 'POST' })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (data.ok) {
+                    showToast('已回滚到 ' + (data.rolled_back_to || '上一版') + '，重启平台后生效', 'success');
+                    document.getElementById('modelRestartHint').style.display = 'block';
+                    loadModelStatus();
+                } else {
+                    showToast(data.error || '回滚失败');
+                }
+            })
+            .catch(function(err) { showToast('回滚失败: ' + err.message); });
+    }
+
+    document.getElementById('btnModelCheck').addEventListener('click', checkModelUpdate);
+    document.getElementById('btnModelStart').addEventListener('click', function() {
+        if (!_modelUpdateAvailable) { showToast('请先检查模型更新'); return; }
+        startModelUpdate();
+    });
+    document.getElementById('btnModelRollback').addEventListener('click', rollbackModel);
 
     // ======== 修改密码 ========
     function openPwdModal() {
@@ -666,6 +886,12 @@
     if (versionInfoModalEl) {
         versionInfoModalEl.addEventListener('click', function(e) {
             if (e.target === this) closeVersionInfoModal();
+        });
+    }
+    var modelUpdateModalEl = document.getElementById('modelUpdateModal');
+    if (modelUpdateModalEl) {
+        modelUpdateModalEl.addEventListener('click', function(e) {
+            if (e.target === this) closeModelUpdateModal();
         });
     }
 

@@ -39,6 +39,11 @@ CHECKS = {
         # 数据文件不进 PYZ，版本说明弹窗的落点以 app.py 传参侧字面量为准）
         'v2.3.7 关于系统·版本说明',
         'app_changelog',
+        # v2.4.0 OCR 模型热更新 API（路由常量 + docstring 针刺）
+        '/api/model/status',
+        '/api/model/start_update',
+        '当前模型状态 + 更新任务状态（远端检查须显式触发）',
+        '启动后台模型更新：下载 → 校验 → 原子轮换 → 提示重启',
     ],
     # 注：launcher.py 是 PyInstaller 入口脚本，编入 bootloader 而非 PYZ，
     # 无法用 PYZ 提取针刺——其 v1.1.56 互斥/清理逻辑由 tests/test_v1_1_56.py 静态断言
@@ -255,6 +260,26 @@ CHECKS = {
         'det_intra_op_num_threads',
         'cls_intra_op_num_threads',
         'rec_intra_op_num_threads',
+        # v2.4.0 模型热更新接入（get_engine docstring 针刺）
+        '外置模型（manifest 校验通过）优先于内置基线',
+    ],
+    # v2.4.0 模型热更新基建：模型仓库（外置目录/manifest 校验/原子轮换/回滚）
+    # ⚠️ '模型校验不符…' 格式串在本机 Python 编译期被按 %s 占位符切分成多个常量，
+    #    针刺不得跨占位符，取占位符之间的整段片段
+    'core.model_store': [
+        'OCR 模型仓库（v2.4.0 模型热更新基建·阶段一）',
+        '没有可回滚的历史模型版本',
+        '模型校验不符（期望',
+        '模型声明缺失（file/sha256）',
+        'det_model_path',
+    ],
+    # v2.4.0 模型热更新器（远端清单检查/白名单/后台下载校验应用）
+    'core.model_updater': [
+        'OCR 模型热更新器（v2.4.0 阶段一）',
+        '/ocr_model/manifest.json',
+        '模型包下载地址不合法（不在白名单内），已拒绝',
+        '模型包 SHA256 校验失败，文件可能被篡改或损坏',
+        '模型包含法条目',
     ],
     # v2.3.1 需求4：合同整理同一人多图全角编号（1）（2）（3），首张必带（1）
     # （⚠️ f-string 片段如 （{idx + 1}） 不可作针刺，须用 docstring/日志字面量）

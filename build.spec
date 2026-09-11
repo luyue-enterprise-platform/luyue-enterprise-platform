@@ -131,6 +131,8 @@ a = Analysis(
         'modules.mcp.core.protocol', 'modules.mcp.core.security',
         'modules.mcp.core.tools', 'modules.mcp.core.tasks',
         'modules.mcp.core.adapters',
+        # v2.4.0 OCR 模型热更新（app.py 端点内延迟导入，显式声明保险）
+        'core.model_store', 'core.model_updater',
         'modules.insurance.blueprint', 'modules.insurance.core.template_engine',
         'modules.insurance.core.roster_parser',
         'modules.pdf2word.core.converter', 'modules.pdf2word.core.to_pdf',

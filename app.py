@@ -526,6 +526,61 @@ def api_update_progress():
         return jsonify({'ok': True, **_update_state})
 
 
+# ============ OCR 模型热更新 API（v2.4.0，登录保护） ============
+# 模型与代码解耦：模型包走独立更新通道，替换后重启生效（温更新），
+# 软件发版仅负责功能变化。详见《OCR模型迭代机制技术方案分析.md》。
+
+@app.route('/api/model/status', methods=['GET'])
+@login_required
+def api_model_status():
+    """当前模型状态 + 更新任务状态（远端检查须显式触发）"""
+    from core import model_store, model_updater
+    info = model_store.current_model_info()
+    return jsonify({'ok': True, 'model': info,
+                    'update': model_updater.snapshot(),
+                    'manifest_url': model_updater.MANIFEST_URL})
+
+
+@app.route('/api/model/check', methods=['POST'])
+@login_required
+def api_model_check():
+    """检查远端是否有可用模型更新（同步，秒级）"""
+    from core import model_updater
+    result = model_updater.check_remote(APP_VERSION.get('version_code') or 0)
+    result['update_state'] = model_updater.snapshot()
+    return jsonify({'ok': bool(result.get('ok')), **result})
+
+
+@app.route('/api/model/start_update', methods=['POST'])
+@login_required
+def api_model_start_update():
+    """启动后台模型更新：下载 → 校验 → 原子轮换 → 提示重启"""
+    from core import model_updater
+    ok, err = model_updater.start_update(APP_VERSION.get('version_code') or 0)
+    if not ok:
+        return jsonify({'ok': False, 'error': err}), 409
+    return jsonify({'ok': True})
+
+
+@app.route('/api/model/update_progress', methods=['GET'])
+@login_required
+def api_model_update_progress():
+    """查询模型更新进度"""
+    from core import model_updater
+    return jsonify({'ok': True, **model_updater.snapshot()})
+
+
+@app.route('/api/model/rollback', methods=['POST'])
+@login_required
+def api_model_rollback():
+    """回滚到上一版模型（须重启后生效）"""
+    from core import model_updater
+    ok, info = model_updater.do_rollback()
+    if not ok:
+        return jsonify({'ok': False, 'error': info}), 400
+    return jsonify({'ok': True, 'rolled_back_to': info})
+
+
 # ============ 修改密码 API（门户 + 子模块共用） ============
 @app.route('/api/change_password', methods=['POST'])
 @login_required
