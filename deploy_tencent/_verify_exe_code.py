@@ -186,6 +186,10 @@ CHECKS = {
     ],
     'modules.mcp.core.tasks': [
         'MCP 任务登记表',
+        # v2.4.1 防重复提交：执行指纹登记表（docstring 针刺）
+        '执行指纹登记表',
+        '登记执行指纹（任务即将开始执行时调用）',
+        '指向终态/waiting_confirm 任务的指纹属残留',
     ],
     'modules.mcp.blueprint': [
         'MCP 服务端 — Flask Blueprint',
@@ -233,6 +237,14 @@ CHECKS = {
         '不得由调用方代替用户决定',
         '转换预览已生成，尚未执行任何转换，等待确认文件清单与输出方式',
         '返回内容安全化（v2.3.8）',
+        # v2.4.1 防重复提交 + 超时转轮询（字面量/docstring 针刺，均不跨 %s 占位符）
+        '同参数任务重复提交的拦截响应（v2.4.1）',
+        'duplicate_submission_blocked',
+        '同参数任务正在执行中，本次确认已被拦截、未创建新任务',
+        'still_running',
+        'do_not_resubmit',
+        '切勿重新提交同一批文件',
+        '（v2.4.1 起同参数重复确认会被拦截）',
     ],
     'modules.mcp.core.adapters': [
         'MCP 业务能力适配器',

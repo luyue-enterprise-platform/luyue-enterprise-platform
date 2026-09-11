@@ -211,6 +211,50 @@ def _err_payload(msg, task, suggestion=None):
     return json.dumps(payload, ensure_ascii=False, indent=2), True
 
 
+def _exec_fingerprint(capability, file_paths, **extra):
+    """执行指纹（v2.4.1 防重复提交）：能力 + 排序后的绝对路径集 + 关键参数。
+
+    同一批文件、同一套参数 = 同指纹；用于在确认执行前识别
+    "已有同参数任务在跑"，拦截 AI 超时误重试造成的重复提交。
+    """
+    import hashlib
+    h = hashlib.sha256()
+    h.update(str(capability).encode('utf-8'))
+    for p in sorted(os.path.abspath(str(p)) for p in (file_paths or [])):
+        h.update(p.encode('utf-8'))
+    for k in sorted(extra):
+        h.update(('%s=%r' % (k, extra[k])).encode('utf-8'))
+    return h.hexdigest()
+
+
+def _duplicate_running_payload(existing_id, blocked_task, wait_seconds):
+    """同参数任务重复提交的拦截响应（v2.4.1）。
+
+    不创建新任务，直接指向正在执行的既有任务：
+    - wait_seconds>0：转挂到既有任务上等待（结果同 envelope 返回）；
+    - 否则返回明确指引：轮询既有任务，切勿再次重复提交。
+    """
+    if wait_seconds > 0:
+        return _wait_and_fetch(existing_id, wait_seconds)
+    return _ok({
+        'task_id': existing_id,
+        'capability': blocked_task.get('capability'),
+        'status': 'processing',
+        'duplicate_submission_blocked': True,
+        'blocked_confirm_id': blocked_task.get('task_id'),
+        'message': '同参数任务正在执行中，本次确认已被拦截、未创建新任务',
+        'current': blocked_task.get('current'),
+        'total': blocked_task.get('total'),
+        'progress': blocked_task.get('progress'),
+        'elapsed_sec': _elapsed(tasks.get(existing_id) or blocked_task),
+        'hint': ('切勿重复提交同一批文件——重复任务会并发抢占 CPU 互相拖慢'
+                 '（平台为单进程串行设计）。请调用 get_task_status 传 task_id '
+                 '轮询既有任务进度（建议间隔 30-60 秒），状态变为 success 后调用 '
+                 'get_task_result 取精简摘要与文件卡片；如需 Server 等待，'
+                 '确认时可传 wait_seconds=600-1200'),
+    })
+
+
 def _sync_insurance(task):
     """社保任务：回读原生进度；原生完成后物化产物（落盘+卡片），只回精简视图"""
     if task.get('capability') != 'insurance' or not task.get('native_task_id'):
@@ -346,12 +390,30 @@ def _wait_and_fetch_inner(task_id, wait_seconds):
                 suggestion='调用 contract_organize 传 confirm_task_id=%s 与 choices '
                            '确认执行' % task_id)
         if time.monotonic() >= deadline:
-            return _err_payload(
-                'Server 已内部等待 %d 秒，任务仍在处理中'
-                '（任务未失败，仍在后台运行，结果完成后照常落盘）' % wait_seconds, task,
-                suggestion='可稍后调用 get_task_status 轮询进度，完成后调用 '
-                           'get_task_result 一次性取精简摘要与文件卡片；'
-                           '大批量任务建议提交时携带 wait_seconds=600-1200')
+            # v2.4.1 超时降级改非错误返回：isError 会让调用方 AI 误判失败
+            # 而整批重新提交（产生重复任务并发抢占 CPU）。改为成功 envelope +
+            # still_running 状态 + 明确"转轮询、勿重提"指令。
+            existing = tasks.get(task_id) or task
+            return _ok({
+                'task_id': task_id,
+                'capability': existing.get('capability'),
+                'status': 'still_running',
+                'message': 'Server 已内部等待 %d 秒，任务仍在处理中'
+                           '（任务未失败，仍在后台运行，结果完成后照常落盘）'
+                           % wait_seconds,
+                'current': existing.get('current'),
+                'total': existing.get('total'),
+                'progress': existing.get('progress'),
+                'elapsed_sec': _elapsed(existing),
+                'elapsed_human': _elapsed_human(_elapsed(existing)),
+                'do_not_resubmit': True,
+                'how_to_poll': ('切勿重新提交同一批文件——重复任务会并发抢占 CPU '
+                                '互相拖慢（v2.4.1 防重复提交）。请调用 get_task_status '
+                                '传 task_id 轮询进度（建议间隔 30-60 秒），状态变为 '
+                                'success 后调用 get_task_result 一次性取精简摘要与'
+                                '文件卡片；下次提交可直接携带 wait_seconds=600-1200 '
+                                '由 Server 内部等待'),
+            })
         time.sleep(POLL_INTERVAL_SEC)
 
 
@@ -585,11 +647,25 @@ def _insurance_confirm(confirm_id, args):
                 'issue': str(e),
                 'how_to_fix': '年月均为整数，且起始不得晚于截止（如 2023-01 至 2025-12）',
             }], [])
+    # v2.4.1 防重复提交：执行指纹去重——同参数任务正在执行时拦截本次确认，
+    # 指向既有任务（AI 超时误重试会产生重复任务并发抢占 CPU，互相拖慢）
+    pending = task.get('pending_insurance') or {}
+    fp = _exec_fingerprint(
+        'insurance', pending.get('file_paths') or [],
+        province=overrides.get('province') or pending.get('province'),
+        tax_mode=overrides.get('tax_mode') or pending.get('tax_mode') or '退税',
+        roster_path=overrides.get('roster_path') or pending.get('roster_path'),
+        year_range=overrides.get('year_range') if overrides.get('year_range')
+        is not None else pending.get('year_range'))
+    dup_id = tasks.find_active_by_fingerprint(fp)
+    if dup_id and dup_id != confirm_id:
+        return _duplicate_running_payload(dup_id, task, wait_seconds)
     try:
         adapters.confirm_insurance(confirm_id, overrides)
     except Exception as e:
         return _err_payload('确认执行失败: %s' % e, task,
                             suggestion='任务可能已确认过或预览数据缺失，可重新预览')
+    tasks.register_fingerprint(fp, confirm_id)
     if wait_seconds > 0:
         return _wait_and_fetch(confirm_id, wait_seconds)
     return _immediate_payload(
@@ -764,6 +840,12 @@ def _pdf2word_confirm(confirm_id, args):
                               "不改动则省略，沿用预览值",
             }], [])
         output_mode = om
+    # v2.4.1 防重复提交：同批文件 + 同方向 + 同输出方式的任务在执行中则拦截
+    fp = _exec_fingerprint('pdf2word', file_paths, direction=direction,
+                           output_mode=output_mode)
+    dup_id = tasks.find_active_by_fingerprint(fp)
+    if dup_id and dup_id != confirm_id:
+        return _duplicate_running_payload(dup_id, task, wait_seconds)
     tasks.update(confirm_id, pending_pdf2word=None)
     try:
         adapters.start_pdf2word(confirm_id, file_paths, direction=direction,
@@ -771,6 +853,7 @@ def _pdf2word_confirm(confirm_id, args):
     except Exception as e:
         return _err_payload('确认执行失败: %s' % e, task,
                             suggestion='可重新提交 file_paths 生成新预览')
+    tasks.register_fingerprint(fp, confirm_id)
     effective = {'confirm_task_id': confirm_id, 'direction': direction,
                  'wait_seconds': wait_seconds}
     if direction == 'topdf':
@@ -870,11 +953,20 @@ def _contract_confirm(confirm_id, args):
     wait_issue, wait_seconds = _check_wait(args)
     if wait_issue:
         return _missing_payload([wait_issue], [])
+    # v2.4.1 防重复提交：同批文件 + 同花名册的任务在执行中则拦截
+    # （重命名会移动原文件，重复执行本就无意义且互相干扰）
+    pending_ct = task.get('pending_contract') or {}
+    fp = _exec_fingerprint('contract', pending_ct.get('file_paths') or [],
+                           roster_path=pending_ct.get('roster_path'))
+    dup_id = tasks.find_active_by_fingerprint(fp)
+    if dup_id and dup_id != confirm_id:
+        return _duplicate_running_payload(dup_id, task, wait_seconds)
     try:
         adapters.confirm_contract(confirm_id, choices)
     except Exception as e:
         return _err_payload('确认执行失败: %s' % e, task,
                             suggestion='任务可能已确认过或计划数据缺失，可重新预览')
+    tasks.register_fingerprint(fp, confirm_id)
     if wait_seconds > 0:
         return _wait_and_fetch(confirm_id, wait_seconds)
     return _immediate_payload(
@@ -929,8 +1021,9 @@ def tool_get_task_status(args):
     if task.get('status') in ('pending', 'processing') and (sec or 0) > STALE_AFTER_SEC:
         view['stale'] = True
         view['stale_hint'] = ('任务已运行 %s 仍在进行，超过 %d 分钟可视为异常；'
-                              '可继续轮询或重新提交' % (_elapsed_human(sec),
-                                                  STALE_AFTER_SEC // 60))
+                              '请继续轮询或联系处理，不要重复提交同一批文件'
+                              '（v2.4.1 起同参数重复确认会被拦截）'
+                              % (_elapsed_human(sec), STALE_AFTER_SEC // 60))
     else:
         view['stale'] = False
     if task.get('status') == 'waiting_confirm':

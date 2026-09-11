@@ -6,6 +6,10 @@
 
 社保能力直接复用宿模块原生任务表（modules.insurance.blueprint.tasks），
 本表通过 native_task_id 记录映射，查询时由原生解析器实时回读进度。
+
+v2.4.1 防重复提交：执行指纹登记表——同一批参数的任务正在执行时，
+后续同参数确认被拦截并指向既有任务，避免 AI 超时误重试导致
+重复任务并发抢占 CPU（onnxruntime 单会话已吃满核，多开净负优化）。
 """
 import threading
 import uuid
@@ -14,8 +18,41 @@ from datetime import datetime
 _LOCK = threading.Lock()
 _TASKS = {}
 
+# 执行指纹 -> task_id（仅登记"已开始执行"的任务；任务到达终态自动清除）
+_FINGERPRINTS = {}
+
 # 状态：pending / processing / success / error / cancelled
 _TERMINAL = ('success', 'error', 'cancelled')
+
+
+def register_fingerprint(fingerprint, task_id):
+    """登记执行指纹（任务即将开始执行时调用）"""
+    with _LOCK:
+        _FINGERPRINTS[fingerprint] = task_id
+
+
+def find_active_by_fingerprint(fingerprint):
+    """查找同指纹且仍在执行（pending/processing）的任务；无则返回 None。
+
+    指向终态/waiting_confirm 任务的指纹属残留，顺手清理（自愈）。
+    """
+    with _LOCK:
+        tid = _FINGERPRINTS.get(fingerprint)
+        if not tid:
+            return None
+        task = _TASKS.get(tid)
+        if task and task.get('status') in ('pending', 'processing'):
+            return tid
+        _FINGERPRINTS.pop(fingerprint, None)
+        return None
+
+
+def _clear_fingerprints_of(task_id):
+    """清除指向该任务的全部指纹（终态时调用）"""
+    with _LOCK:
+        for fp, tid in list(_FINGERPRINTS.items()):
+            if tid == task_id:
+                _FINGERPRINTS.pop(fp, None)
 
 
 def create(capability, params=None):
@@ -69,11 +106,13 @@ def set_native(task_id, native_id):
 
 
 def finish(task_id, result=None, message='处理完成'):
+    _clear_fingerprints_of(task_id)
     return update(task_id, status='success', result=result, message=message,
                   current=(get(task_id) or {}).get('total') or 0, progress=100)
 
 
 def fail(task_id, error, message='处理失败'):
+    _clear_fingerprints_of(task_id)
     return update(task_id, status='error', error=str(error), message=message)
 
 

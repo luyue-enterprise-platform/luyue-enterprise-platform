@@ -1047,13 +1047,16 @@ class TestMissingParamsAndWait(unittest.TestCase):
             text, is_error = tool_registry.call_tool('convert_pdf_to_word', {
                 'confirm_task_id': tid, 'wait_seconds': 1,
             })
-            self.assertTrue(is_error)
+            # v2.4.1：超时降级改非错误返回（isError 会诱发调用方整批重提），
+            # 以 still_running + do_not_resubmit + 轮询指引替代
+            self.assertFalse(is_error)
             payload = json.loads(text)
-            # 降级信息明确：仍在处理中、未失败、给出建议
-            self.assertIn('仍在处理中', payload['error'])
-            self.assertIn('未失败', payload['error'])
-            self.assertEqual(payload['status'], 'processing')
-            self.assertIn('suggestion', payload)
+            self.assertEqual(payload['status'], 'still_running')
+            self.assertTrue(payload['do_not_resubmit'])
+            self.assertIn('仍在处理中', payload['message'])
+            self.assertIn('未失败', payload['message'])
+            self.assertIn('get_task_status', payload['how_to_poll'])
+            self.assertIn('切勿重新提交', payload['how_to_poll'])
             # 任务仍在后台运行并最终完成
             t = _wait_task(payload['task_id'], timeout=15)
             self.assertEqual(t['status'], 'success')
