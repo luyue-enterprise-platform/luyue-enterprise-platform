@@ -111,7 +111,9 @@ def _get_contract_display(person, roster_index):
 
 # ============ 导入保险系统核心模块 ============
 from modules.insurance.core.ocr_engine import pdf_to_images
-from modules.insurance.core.data_parser import parse_ocr_result, parse_ocr_result_from_image, group_by_person, extract_company_name
+from modules.insurance.core.data_parser import (parse_ocr_result, parse_ocr_result_from_image,
+                                               parse_ocr_result_from_image_multi,
+                                               group_by_person, extract_company_name)
 from modules.insurance.core import template_engine
 from modules.insurance.core.stats_calculator import calc_all_stats, get_overlap_years, apply_stat_range_clamp
 from modules.insurance.core.contract_overlap import apply_contract_to_stats, contract_display_text
@@ -612,31 +614,40 @@ def _ocr_one_image(fp, province_code, display_name, source_origin):
     """单张图片 OCR + 解析 + 字段装配（线程安全：引擎线程本地、无共享写）
 
     成功/失败均返回结构统一的 dict（失败带 error），异常绝不抛出线程外。
+
+    v2.6.0 一单多险：江苏/浙江一张证明单覆盖养老/工伤/失业三险，
+    经 parse_ocr_result_from_image_multi 展开为多条记录后逐条装配，
+    返回 list[dict]（陕西等单险省份恒为单元素列表，行为不变）。
     """
     try:
-        parsed = parse_ocr_result_from_image(fp, province_code=province_code)
-        parsed['filename'] = display_name
-        parsed['_source_path'] = fp  # 保留源文件路径供整理使用
-        parsed['_source_origin'] = source_origin  # 原始源文件名，用于PDF多页去重
-        logger.info(
-            f'[ocr] {display_name} → '
-            f'险种={parsed.get("insurance_type")}, '
-            f'姓名={parsed.get("name")}, '
-            f'时间段={parsed.get("period")}, '
-            f'单位={parsed.get("company_name")}'
-        )
-        return parsed
+        parsed_list = parse_ocr_result_from_image_multi(fp, province_code=province_code)
+        if not parsed_list:
+            parsed_list = [{}]
+        out = []
+        for parsed in parsed_list:
+            parsed['filename'] = display_name
+            parsed['_source_path'] = fp  # 保留源文件路径供整理使用
+            parsed['_source_origin'] = source_origin  # 原始源文件名，用于PDF多页去重
+            logger.info(
+                f'[ocr] {display_name} → '
+                f'险种={parsed.get("insurance_type")}, '
+                f'姓名={parsed.get("name")}, '
+                f'时间段={parsed.get("period")}, '
+                f'单位={parsed.get("company_name")}'
+            )
+            out.append(parsed)
+        return out
     except Exception as e:
         err_msg = str(e)
         logger.error(f'[ocr] 识别 {display_name} 失败: {err_msg}\n{traceback.format_exc()}')
-        return {
+        return [{
             'filename': display_name,
             'error': err_msg,
             'name': '', 'idcard': '',
             'insurance_type': None, 'period': None, 'raw_text': '',
             '_source_path': fp,
             '_source_origin': source_origin
-        }
+        }]
 
 
 def _ocr_all_items(task_id, all_items, province_code):
@@ -717,13 +728,14 @@ def _ocr_all_items(task_id, all_items, province_code):
             done_futs, _ = wait(in_flight.keys(), return_when=FIRST_COMPLETED)
             for fut in done_futs:
                 idx = in_flight.pop(fut)
-                parsed = fut.result()  # _ocr_one_image 不抛异常
-                results[idx] = parsed
+                parsed_list = fut.result()  # _ocr_one_image 不抛异常，恒返回 list
+                results[idx] = parsed_list
                 done += 1
                 with tasks_lock:
                     tasks[task_id]['current'] = done
+                    _fname = parsed_list[0].get('filename') if parsed_list else ''
                     tasks[task_id]['message'] = (
-                        f'正在识别 ({done}/{total}): {parsed.get("filename")}')
+                        f'正在识别 ({done}/{total}): {_fname}')
             if _ctl() == 'cancelled':
                 cancelled = True
                 break
@@ -808,12 +820,18 @@ def process_task(task_id, file_paths, roster, roster_company='', roster_source_p
 
         # v2.3.2：OCR 主循环并行化——多线程识别（有界窗口，保留取消/暂停语义），
         # 结果按 all_items 原序归位；返回 None 表示任务已取消。
+        # v2.6.0：每张图返回 list（一单多险展开，江苏/浙江三险合并单会返回多条），
+        # 此处展平为一维记录列表；单险省份每张一条，与改造前等价。
         # 注意 extend 而非赋值：PDF 转换阶段的失败记录已先入 ocr_results。
         _t_ocr = time.monotonic()
         parallel_results = _ocr_all_items(task_id, all_items, province_code)
         if parallel_results is None:
             return
-        ocr_results.extend(parallel_results)
+        for _group in parallel_results:
+            if isinstance(_group, list):
+                ocr_results.extend(_group)
+            elif _group is not None:
+                ocr_results.append(_group)
         _ocr_sec = time.monotonic() - _t_ocr
         logger.info(f'[task:{task_id}] [耗时] OCR识别阶段 {_ocr_sec:.1f}s'
                     f'（{len(all_items)} 张，均 {_ocr_sec / max(1, len(all_items)):.1f}s/张）')
@@ -1951,11 +1969,13 @@ def retry_task(task_id):
     retry_province = old_result.get('_province_code', template_engine.DEFAULT_PROVINCE)
     for display_name, fp, source_origin in all_items:
         try:
-            parsed = parse_ocr_result_from_image(fp, province_code=retry_province)
-            parsed['filename'] = display_name
-            parsed['_source_path'] = fp
-            parsed['_source_origin'] = source_origin
-            new_results.append(parsed)
+            # v2.6.0：一单多险展开（江苏/浙江返回多条），单险省份恒一条
+            parsed_list = parse_ocr_result_from_image_multi(fp, province_code=retry_province)
+            for parsed in parsed_list:
+                parsed['filename'] = display_name
+                parsed['_source_path'] = fp
+                parsed['_source_origin'] = source_origin
+                new_results.append(parsed)
         except Exception as e:
             new_failed.append({
                 'filename': display_name,

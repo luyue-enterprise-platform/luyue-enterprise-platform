@@ -210,10 +210,13 @@ class TestExternalTemplates(unittest.TestCase):
         self._write('nofields.json', {'template_id': 'x', 'version': 1})  # 缺 province_code
         provinces = te.get_provinces()
         codes = [p['province_code'] for p in provinces]
-        self.assertEqual(codes, ['610000'])  # 只剩内置陕西
+        # v2.6.0：内置模板为 陕西/江苏/浙江，外置坏模板不得混入
+        self.assertEqual(codes, ['610000', '320000', '330000'])
 
     def test_registry_hot_reload_on_change(self):
-        self.assertEqual([p['province_code'] for p in te.get_provinces()], ['610000'])
+        # v2.6.0：内置模板 陕西+江苏+浙江（陕西默认置顶）
+        self.assertEqual([p['province_code'] for p in te.get_provinces()],
+                         ['610000', '320000', '330000'])
         self._write('henan.json', {
             'template_id': '410000_si', 'province_code': '410000',
             'province_name': '河南', 'anchors': [], 'parser': 'regex', 'fields': {},

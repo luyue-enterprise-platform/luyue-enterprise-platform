@@ -1060,6 +1060,73 @@ def parse_ocr_result_from_image(image_path, province_code=None):
     }
 
 
+def parse_ocr_result_from_image_multi(image_path, province_code=None):
+    """对图片进行 OCR 并解析，返回记录列表（v2.6.0 一单多险支持）
+
+    与 parse_ocr_result_from_image 的区别：江苏/浙江一张证明单同时覆盖
+    养老/工伤/失业三险，需展开为多条记录（每条 insurance_type 不同）。
+    单险省份（含兼容模式 province_code=None）恒返回单元素列表，
+    行为与 parse_ocr_result_from_image 完全一致。
+
+    Args:
+        image_path: 图片文件路径
+        province_code: 省份码（None = 兼容模式，走原有陕西逻辑）
+
+    Returns:
+        list[dict]: 每条记录结构与 parse_ocr_result 相同
+    """
+    from modules.insurance.core.ocr_engine import ocr_image
+
+    items = ocr_image(image_path)
+    if not items:
+        return [{
+            'insurance_type': None,
+            'name': '',
+            'idcard': '',
+            'period': None,
+            'company_name': '',
+            'raw_text': '',
+        }]
+
+    raw_text = _items_to_raw_text(items)
+
+    # 省份路由模式：模板引擎负责择优 + 解析 + 一单多险展开
+    if province_code is not None:
+        from modules.insurance.core import template_engine
+        tpl, _score, err = template_engine.match_template(raw_text, province_code)
+        if tpl is None:
+            return [{
+                'insurance_type': None, 'name': '', 'idcard': '',
+                'company_name': '', 'period': None, 'raw_text': raw_text,
+                'error': err,
+            }]
+        return tpl.parse_multi(raw_text, items=items)
+
+    # 兼容模式：不做省份路由，按原有陕西逻辑解析（单条记录）
+    return [{
+        'insurance_type': detect_insurance_type(raw_text),
+        'name': extract_name(raw_text),
+        'idcard': extract_idcard(raw_text),
+        'period': get_full_period_from_items(items),
+        'company_name': extract_company_name(raw_text),
+        'raw_text': raw_text,
+    }]
+
+
+def _items_to_raw_text(items):
+    """把 OCR items（含 x/y 坐标）还原为按行拼接的文本（与 ocr_to_text 一致）"""
+    from collections import defaultdict
+    line_groups = defaultdict(list)
+    for it in items:
+        bucket = round(it['y'] / 15)
+        line_groups[bucket].append(it)
+    lines = []
+    for bucket in sorted(line_groups.keys()):
+        sorted_items = sorted(line_groups[bucket], key=lambda it: it['x'])
+        lines.append(' '.join(it['text'] for it in sorted_items))
+    return '\n'.join(lines)
+
+
 def group_by_person(records):
     """
     将多条OCR解析记录按人员分组（姓名+身份证号）

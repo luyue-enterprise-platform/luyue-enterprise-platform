@@ -157,18 +157,21 @@ class TestParallelOcrItems(unittest.TestCase):
         return [('name%d.jpg' % i, 'path%d' % i, 'origin%d' % i) for i in range(n)]
 
     def test_results_keep_input_order_under_parallel(self):
-        """完成顺序打乱时，结果仍按 all_items 原序归位"""
+        """完成顺序打乱时，结果仍按 all_items 原序归位（v2.6.0 起每项为 list）"""
         def fake_parse(fp, province_code=None):
             idx = int(fp.replace('path', ''))
             time.sleep((8 - idx) * 0.02)  # 后面的先完成
-            return {'insurance_type': '养老', 'name': 'n%d' % idx,
-                    'period': None, 'company_name': ''}
+            return [{'insurance_type': '养老', 'name': 'n%d' % idx,
+                     'period': None, 'company_name': ''}]
 
-        with mock.patch.object(ins_bp, 'parse_ocr_result_from_image', fake_parse):
+        with mock.patch.object(ins_bp, 'parse_ocr_result_from_image_multi', fake_parse):
             results = ins_bp._ocr_all_items(self.task_id, self._items(8), None)
 
         self.assertEqual(len(results), 8)
-        for i, r in enumerate(results):
+        for i, group in enumerate(results):
+            self.assertIsInstance(group, list)
+            self.assertEqual(len(group), 1)
+            r = group[0]
             self.assertEqual(r['filename'], 'name%d.jpg' % i)
             self.assertEqual(r['_source_path'], 'path%d' % i)
             self.assertEqual(r['_source_origin'], 'origin%d' % i)
@@ -177,21 +180,39 @@ class TestParallelOcrItems(unittest.TestCase):
             self.assertEqual(ins_bp.tasks[self.task_id]['current'], 8)
 
     def test_error_isolated_to_single_image(self):
-        """单张识别异常不影响其他图片，错误记录在原位"""
+        """单张识别异常不影响其他图片，错误记录在原位（v2.6.0 起每项为 list）"""
         def fake_parse(fp, province_code=None):
             if fp == 'path3':
                 raise RuntimeError('引擎崩溃')
-            return {'insurance_type': None, 'name': 'x', 'period': None,
-                    'company_name': ''}
+            return [{'insurance_type': None, 'name': 'x', 'period': None,
+                     'company_name': ''}]
 
-        with mock.patch.object(ins_bp, 'parse_ocr_result_from_image', fake_parse):
+        with mock.patch.object(ins_bp, 'parse_ocr_result_from_image_multi', fake_parse):
             results = ins_bp._ocr_all_items(self.task_id, self._items(6), None)
 
         self.assertEqual(len(results), 6)
-        self.assertEqual(results[3]['error'], '引擎崩溃')
-        self.assertEqual(results[3]['filename'], 'name3.jpg')
+        self.assertEqual(results[3][0]['error'], '引擎崩溃')
+        self.assertEqual(results[3][0]['filename'], 'name3.jpg')
         for i in (0, 1, 2, 4, 5):
-            self.assertNotIn('error', results[i])
+            self.assertNotIn('error', results[i][0])
+
+    def test_multi_insurance_expands_to_multiple_records(self):
+        """v2.6.0 一单多险：一张图返回多条记录时，结果组内保留全部记录"""
+        def fake_parse(fp, province_code=None):
+            return [
+                {'insurance_type': '养老保险', 'name': '张三', 'period': None, 'company_name': ''},
+                {'insurance_type': '工伤保险', 'name': '张三', 'period': None, 'company_name': ''},
+                {'insurance_type': '失业保险', 'name': '张三', 'period': None, 'company_name': ''},
+            ]
+
+        with mock.patch.object(ins_bp, 'parse_ocr_result_from_image_multi', fake_parse):
+            results = ins_bp._ocr_all_items(self.task_id, self._items(2), None)
+
+        self.assertEqual(len(results), 2)
+        for group in results:
+            self.assertEqual(len(group), 3)
+            self.assertEqual([r['insurance_type'] for r in group],
+                             ['养老保险', '工伤保险', '失业保险'])
 
     def test_cancel_stops_and_returns_none(self):
         """识别中取消：停止派新活、状态回写 cancelled、返回 None"""
@@ -200,10 +221,10 @@ class TestParallelOcrItems(unittest.TestCase):
                 with ins_bp.tasks_lock:
                     ins_bp.tasks[self.task_id]['cancelled'] = True
             time.sleep(0.01)
-            return {'insurance_type': None, 'name': 'x', 'period': None,
-                    'company_name': ''}
+            return [{'insurance_type': None, 'name': 'x', 'period': None,
+                     'company_name': ''}]
 
-        with mock.patch.object(ins_bp, 'parse_ocr_result_from_image', fake_parse):
+        with mock.patch.object(ins_bp, 'parse_ocr_result_from_image_multi', fake_parse):
             results = ins_bp._ocr_all_items(self.task_id, self._items(10), None)
 
         self.assertIsNone(results)
